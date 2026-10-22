@@ -176,3 +176,25 @@ targets.
 a record whose highest covered session seq is strictly greater than the seq
 of the event that recalled the invalidated id. For delivered sets, "admitted
 after" compares local admission sequence numbers.
+
+## Tenant policy
+
+**Q34. Equal-sequence tamper.** "Equal `Seq` with a different id is a tamper
+event" does not say which policy applies. Keeping the first one seen would
+make the outcome depend on arrival order. This module marks the chain
+tampered and fails closed (as stale) until a policy with a higher sequence
+arrives.
+
+**Q35. Blocked-repo globs.** The glob syntax of `remote_glob` and
+`allow_repos` is not specified. This module uses Go `path.Match` syntax over
+the normalized remote. A malformed blocked-repo glob blocks everything; a
+malformed allow glob allows nothing.
+
+**Q36. "Invalid" policy state.** "If none is valid, the node behaves as
+stale." This module reports `invalid` (fail closed) only when a policy was
+offered and none verified; a node that never received a policy has no tenant
+restrictions.
+
+**Q37. Monotonic input.** Trusted time takes the monotonic reading as a
+millisecond count supplied by the caller, since Go does not expose its
+monotonic clock as a number.
