@@ -31,3 +31,79 @@ so this matters only for the general gate.
 **Q5. Trailing whitespace.** "Reject trailing data" is read as: JSON
 whitespace after the value is allowed, anything else is rejected. A byte
 order mark is rejected.
+
+## Record envelope
+
+**Q6. Empty structs in the header.** The specification's Go sketch writes
+`subj` and `trust` without `omitempty` and `links` with it, while the prose
+says "empty optional fields are omitted, never null". Go never omits a
+struct for `omitempty`. This module omits every empty optional field,
+including empty `subj`, `trust` and `links` objects. Parse re-encodes the
+decoded header and requires the same bytes, so a header that writes an empty
+object or a zero value (`"findings":0`) is rejected as non-canonical.
+
+**Q7. Member-name case.** Go's decoder matches member names without regard
+to case. Parse rejects any header or body member whose spelling differs from
+the defined name, so no reader sees a field the author's bytes do not
+literally carry.
+
+**Q8. Redaction profile per kind.** Not stated per kind. This module requires
+`push-metadata` exactly for the `session` and `task` export variants
+(`prov: derived`) and `local` for every other record, including control
+records and policies.
+
+**Q9. Call reference alphabet.** "base32" is read as the RFC 4648 alphabet,
+lowercased: `m1.` followed by ten characters of `[a-z2-7]`.
+
+**Q10. Event id anchor.** The anchor object always carries every field of its
+form (`native_item_id`, `inner`, `part`, or `path`, `line`, `block`, `inner`,
+`part`), zero values included, so two implementations cannot disagree about
+omission. `line`, `block`, `inner` and `part` are integers.
+
+**Q11. Header-only kinds.** The specification mentions header-only kinds,
+but every kind in the union names a body type. This module requires a body
+reference on every record; "header-only" is read as a record whose body
+bytes are absent (never received, or purged). Its id is unchanged.
+
+**Q12. Request conclusion LID.** The LID uses `request_key`, but the
+conclusion body's `request` field is described as the redacted prompt text
+(at most 1000 bytes), not the request key. The receiver therefore cannot
+recompute this LID and does not check it. A body field carrying the request
+key would close this.
+
+**Q13. Provenance of key operations.** The matrix gives `key_op` no
+provenance. This module requires `prov: user` for key operations from every
+signer role.
+
+**Q14. Owner-scoped LIDs at admission.** The owner comes from the verified
+signer, so `Parse` cannot recompute task, checkpoint, pause, explicit
+conclusion and rollup LIDs. The signature verifier recomputes and checks
+them once it knows the signer.
+
+**Q15. Machine id of service-signed records.** Service-signed (`gateway`)
+checkpoints have no machine, yet the checkpoint LID includes
+`author.machine_id`. This module allows an empty machine id for service
+signers and hashes the empty string.
+
+**Q16. Control records carry no links.** Control records are "never
+versioned"; this module rejects any `links` on them.
+
+**Q17. Ruleset behaviour encoding.** The behaviour hash is over "the JCS list
+of outputs of Redact, Argument and each profile over the corpus". This
+module fixes the list as `[entry id, function, output]` triples: one per
+entry in corpus order (`redact` for text entries, `argument` for argument
+entries), then one per (profile, entry) with profiles sorted by name and
+function `profile:<name>`. The real engine lives in another module whose
+epoch API is not yet released, so the golden test over the real engine runs
+in the node; this module tests the measurement with a stand-in engine.
+
+**Q18. Revoke reasons.** The enum is not listed. This module accepts
+`compromised` (which cascades), `lost` and `user_request`; `conflict` is
+reserved for the key-state fold.
+
+**Q19. Session end consistency.** `end` and `ended_at` are required to be
+set together.
+
+**Q20. zstd bodies.** Bodies travel zstd-compressed, but zstd is not in the
+Go standard library. The contract module takes decompressed body bytes; the
+transport layer decompresses and must stop at 1 MiB + 1 byte.
