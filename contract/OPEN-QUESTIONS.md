@@ -142,3 +142,37 @@ service key of a tenant the node has pinned at login.
 added pins itself, as specified. That choice depends on arrival order; it is
 a local trust decision, and a node that already pins a genesis is
 order-independent.
+
+## Invalidation
+
+**Q28. "Its own records" for retraction.** Read as records whose verified
+signer has the same owner (the same genesis for devices, the same tenant for
+service keys), so a rotated device can still retract what it wrote before
+the rotation. This grants nothing an erasure by the same identity could not
+already do.
+
+**Q29. Ids listed before the record arrives.** Retraction and withdrawal
+list exact ids. This module applies a listed id whenever the record arrives,
+not only if it was present when the control was applied, so the outcome does
+not depend on arrival order. The authority check runs when the record is
+known.
+
+**Q30. Withdrawal with `all`.** Applied to the records present when the
+withdrawal was applied. Records that arrive later with the same grant are
+re-issued content and stay live (no lift in v1). This is the one input whose
+effect depends on local order, by design.
+
+**Q31. One id, several controls.** When several controls invalidate the same
+id, the tomb keeps the strongest kind (erased, then withdrawn, then
+retracted) and, among equals, the smallest control id as the cause, so the
+tomb row is the same on every replica.
+
+**Q32. TSK closure bound.** R5.4 says a TSK-signed control never purges a
+record whose grants lack its tenant. This module applies that bound to the
+whole closure of a TSK-signed erasure or withdrawal, not only to its direct
+targets.
+
+**Q33. Lineage-hold boundaries.** "Covering seq after that event" is read as
+a record whose highest covered session seq is strictly greater than the seq
+of the event that recalled the invalidated id. For delivered sets, "admitted
+after" compares local admission sequence numbers.
