@@ -509,8 +509,8 @@ func validateKeyOpShape(b *KeyOpBody) error {
 	if len(b.Parents) > MaxKeyOpParents || !uniqueHex64(b.Parents) {
 		return bad("key_op: parents must be at most %d distinct record ids", MaxKeyOpParents)
 	}
-	if (b.Op == OpGenesis) != (len(b.Parents) == 0) {
-		return bad("key_op: parents are empty exactly for genesis")
+	if root := b.Op == OpGenesis || b.Op == OpTenantKey; root != (len(b.Parents) == 0) {
+		return bad("key_op: parents are empty exactly for genesis and tenant_key")
 	}
 	switch b.Op {
 	case OpGenesis, OpDeviceAdd, OpDeviceRotate, OpDeviceRevoke:

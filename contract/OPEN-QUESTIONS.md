@@ -107,3 +107,38 @@ set together.
 **Q20. zstd bodies.** Bodies travel zstd-compressed, but zstd is not in the
 Go standard library. The contract module takes decompressed body bytes; the
 transport layer decompresses and must stop at 1 MiB + 1 byte.
+
+## Signing and keys
+
+**Q21. Tenant key roots.** `Parents` is "empty only for genesis", but a
+`tenant_key` op is pinned from the login response and has no keyring
+history either. This module allows empty parents exactly for `genesis` and
+`tenant_key`; `tenant_key_rotate` names the op it rotates from as a parent.
+
+**Q22. Compromise cascade depth.** "A `compromised` revoke of K also revokes
+every key whose `device_add` was authorized only by K." This module applies
+the cascade transitively (a key revoked by cascade cascades in turn) and only
+through `device_add`, not through rotations authorized by K.
+
+**Q23. Revocation time.** §4.4 compares a receipt's `accepted_at` with
+`revoked_at`, which is not defined. This module uses the smallest header
+`at` among the ops that revoke the key, and for the admission-order test the
+smallest local admission sequence among those ops. A revoke op's `at` is
+author-asserted.
+
+**Q24. Signature count on key operations.** Exactly the required signatures
+are accepted: one for `genesis`, `device_revoke`, `tenant_key` and
+`tenant_key_rotate`, two for `device_add` and `device_rotate`. Extra
+signatures are rejected.
+
+**Q25. Machine on service-signed records.** The machine check applies to
+device keys. This module also requires service and policy signed records
+(and key ops authored by them) to carry no machine id.
+
+**Q26. Device revocation by a service key.** "OR TSK" is read as any active
+service key of a tenant the node has pinned at login.
+
+**Q27. Genesis pinning order.** With no pinned genesis the first genesis op
+added pins itself, as specified. That choice depends on arrival order; it is
+a local trust decision, and a node that already pins a genesis is
+order-independent.
