@@ -84,7 +84,7 @@ func TestOpenerRefusesSymlinksPermissionsAndSpecialFiles(t *testing.T) {
 			c.home = c.root
 			bindIdentity(t, c, &u, syntheticSession)
 			b, err := prepare(context.Background(), c, u, allow)
-			if err == nil || len(b.observations) != 0 || !strings.HasPrefix(err.Error(), "capture preparation held: ") || strings.Contains(err.Error(), c.root) {
+			if err == nil || len(b.observations) != 0 || !strings.HasPrefix(err.Error(), "capture held: ") || strings.Contains(err.Error(), c.root) {
 				t.Fatalf("unsafe file exposed content/error: %v", err)
 			}
 		})
@@ -169,7 +169,7 @@ func TestHeldDescriptorNeverFollowsReplacementAndRejectsChanges(t *testing.T) {
 				}
 				return nil
 			})
-			if err == nil || err.Error() != "capture preparation held: source_changed" {
+			if err == nil || err.Error() != "capture held: source_changed" {
 				t.Fatalf("changed source not held: %v", err)
 			}
 		})
@@ -194,7 +194,7 @@ func TestFramerLimitsAndCancellationAreAtomicForPreparation(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	b, err = prepare(ctx, c, u, func(context.Context, sourceOccurrence) (bool, error) { cancel(); return false, nil })
+	b, err = prepare(ctx, c, u, func(context.Context, sourceOccurrence) (gateState, error) { cancel(); return gateState{}, nil })
 	requireHeld(t, b, err, "cancelled")
 	c, u = fixture(t, "claude-code", []byte(good+good))
 	h, err := openUnit(c.root, u.relative)
@@ -205,7 +205,7 @@ func TestFramerLimitsAndCancellationAreAtomicForPreparation(t *testing.T) {
 	ctx, cancel = context.WithCancel(context.Background())
 	n := 0
 	err = frameUnit(ctx, h, func(int, []byte) error { n++; cancel(); return nil })
-	if err == nil || err.Error() != "capture preparation held: cancelled" || n != 1 {
+	if err == nil || err.Error() != "capture held: cancelled" || n != 1 {
 		t.Fatal("cancel did not stop bounded read", err, n)
 	}
 }

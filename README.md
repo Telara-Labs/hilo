@@ -8,9 +8,12 @@ and trust reducers, policy freshness, and pure sync/bundle/replay gates.
 The contract reuses the published TAP canonicalizer. Its behavioral golden tests
 also exercise the published TAP redactor. It does not contain a running memory
 node, filesystem spool, hosted endpoint, transport credentials or age encryption
-adapter. A private SQLite adapter is being developed under
-`contract/internal/node/`; its implementation and acceptance gates are separate
-from the passing pure contract checks.
+adapter. Private components under `contract/internal/node/` include a
+single-owner SQLite store and a narrow Claude/Codex JSONL capture pipeline.
+Capture uses held file descriptors, redaction before sealing, and atomic
+store admission with progress and retry receipts. These components have
+separate implementation and acceptance gates. They do not provide an
+installed collector, model-facing MCP server, synchronization or a running node.
 
 Private development temporarily shares a Go module between the contract and
 runtime. The pinned SQLite dependency requires Go 1.26. Pure packages have a

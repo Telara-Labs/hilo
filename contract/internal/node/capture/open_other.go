@@ -2,7 +2,10 @@
 
 package capture
 
-import "os"
+import (
+	"os"
+	"time"
+)
 
 type openedUnitHandle struct {
 	file    *os.File
@@ -12,3 +15,4 @@ type openedUnitHandle struct {
 func openUnit(string, string) (*openedUnitHandle, error) { return nil, hold("unsupported_platform") }
 func (*openedUnitHandle) close()                         {}
 func (*openedUnitHandle) stable() bool                   { return false }
+func (*openedUnitHandle) quiet(time.Time) bool           { return false }

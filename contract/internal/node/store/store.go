@@ -82,6 +82,7 @@ type ScrubResult struct {
 }
 
 type Store struct {
+	instanceID     string
 	poisoned       bool
 	barrierAttempt bool
 	mu             sync.Mutex
@@ -182,13 +183,17 @@ func (s *Store) Close() error {
 }
 
 // write serializes connections and checks authority only after acquiring SQLite's writer.
-func (s *Store) write(ctx context.Context, f func() error) error {
+func (s *Store) write(ctx context.Context, f func() error) error { return s.writeMode(ctx, false, f) }
+func (s *Store) writeMode(ctx context.Context, capture bool, f func() error) (result error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return failure("closed")
 	}
 	if s.poisoned {
+		if capture {
+			return failure("outcome_unknown")
+		}
 		return failure("unavailable")
 	}
 	if _, err := s.conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
@@ -197,7 +202,10 @@ func (s *Store) write(ctx context.Context, f func() error) error {
 	committed := false
 	defer func() {
 		if !committed {
-			s.conn.ExecContext(context.Background(), "ROLLBACK")
+			if _, err := s.conn.ExecContext(context.Background(), "ROLLBACK"); err != nil && capture {
+				s.poisoned = true
+				result = failure("outcome_unknown")
+			}
 		}
 	}()
 	var refused error
@@ -209,16 +217,22 @@ func (s *Store) write(ctx context.Context, f func() error) error {
 		}
 	}
 	if _, err := s.conn.ExecContext(ctx, "COMMIT"); err != nil {
-		if s.barrierAttempt {
+		if capture || s.barrierAttempt {
 			s.poisoned = true
+		}
+		if capture {
+			return failure("outcome_unknown")
 		}
 		return failure("storage_error")
 	}
 	committed = true
 	s.barrierAttempt = false
 	if err := s.secureFiles(); err != nil {
-		if refused != nil {
+		if capture || refused != nil {
 			s.poisoned = true
+		}
+		if capture {
+			return failure("outcome_unknown")
 		}
 		return err
 	}

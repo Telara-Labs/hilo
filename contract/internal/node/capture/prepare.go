@@ -1,10 +1,9 @@
-// Package capture contains preparation, not capture admission. There is no
-// durable progress, seal, signature, or successful-capture API in this package.
+// Package capture reads bounded private local transcripts and submits protected
+// chunk/session plans through the store's fenced atomic producer transaction.
 package capture
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -25,10 +24,25 @@ const (
 
 // All errors are fixed codes. Never wrap parser, filesystem, policy, or native
 // errors, whose messages can contain a path, transcript, or credential.
-func hold(code string) error { return errors.New("capture preparation held: " + code) }
+func hold(code string) error { return &Error{code: code} }
+
+// Error never includes transcript text, paths, parser errors or secret material.
+type Error struct{ code string }
+
+func (e *Error) Error() string { return "capture held: " + e.code }
+func Code(err error) string {
+	if err == nil {
+		return ""
+	}
+	if e, ok := err.(*Error); ok {
+		return e.code
+	}
+	return "capture_failure"
+}
 
 type sourceOccurrence struct{ source, session, owner, machine string }
-type preOpenGate func(context.Context, sourceOccurrence) (suppressed bool, err error)
+type gateState struct{ suppressed, ownerBlocked bool }
+type preOpenGate func(context.Context, sourceOccurrence) (gateState, error)
 
 type preparationConfig struct {
 	root, home, owner, machine string
@@ -45,6 +59,8 @@ type position struct{ line, block, inner int }
 type field struct {
 	name, text          string
 	argument, truncated bool
+	nativeKind          string
+	fullRedactedBytes   int
 }
 type preparedObservation struct {
 	kind, nativeID, callID string
@@ -58,8 +74,9 @@ type preparedBatch struct {
 	client, reader, ruleset string
 	// Local file ownership proves permission to read, not native truth. These
 	// fixed values cannot be selected by any native JSON field.
-	provenance   string
-	observations []preparedObservation
+	provenance                      string
+	observations                    []preparedObservation
+	nativeSession, homeRelativeUnit string
 }
 
 // localPolicy is an immutable, fixed local ruleset, not a caller-provided
@@ -152,43 +169,56 @@ func occurrence(c preparationConfig, u unitLocator, native string) (sourceOccurr
 }
 
 func prepare(ctx context.Context, c preparationConfig, u unitLocator, gate preOpenGate) (preparedBatch, error) {
+	b, h, err := prepareHeld(ctx, c, u, gate)
+	if h != nil {
+		h.close()
+	}
+	return b, err
+}
+
+func prepareHeld(ctx context.Context, c preparationConfig, u unitLocator, gate preOpenGate) (preparedBatch, *openedUnitHandle, error) {
 	var empty preparedBatch
 	if ctx == nil || ctx.Err() != nil {
-		return empty, hold("cancelled")
+		return empty, nil, hold("cancelled")
 	}
 	if !c.enabled {
-		return empty, hold("no_capture")
+		return empty, nil, hold("no_capture")
 	}
 	if !c.policy.selected {
-		return empty, hold("unsupported_policy")
+		return empty, nil, hold("unsupported_policy")
 	}
 	if gate == nil {
-		return empty, hold("missing_gate")
+		return empty, nil, hold("missing_gate")
 	}
 	native, err := resolve(c, u)
 	if err != nil {
-		return empty, err
+		return empty, nil, err
 	}
 	occ, err := occurrence(c, u, native)
 	if err != nil {
-		return empty, err
+		return empty, nil, err
 	}
-	suppressed, err := gate(ctx, occ)
+	state, err := gate(ctx, occ)
 	if err != nil {
-		return empty, hold("gate_unavailable")
+		return empty, nil, hold("gate_unavailable")
 	}
-	if suppressed {
-		return empty, hold("suppressed")
+	if state.ownerBlocked {
+		return empty, nil, hold("owner_blocked")
+	}
+	if state.suppressed {
+		return empty, nil, hold("suppressed")
 	}
 	if ctx.Err() != nil {
-		return empty, hold("cancelled")
+		return empty, nil, hold("cancelled")
 	}
 	h, err := openUnit(c.root, u.relative)
 	if err != nil {
-		return empty, err
+		return empty, nil, err
 	}
-	defer h.close()
 	batch := preparedBatch{occurrence: occ, client: u.client, reader: readerVersion, ruleset: localPolicyID, provenance: "untrusted_local_file"}
+	batch.nativeSession = native
+	batch.homeRelativeUnit, _ = filepath.Rel(c.home, filepath.Join(c.root, u.relative))
+	batch.homeRelativeUnit = filepath.ToSlash(batch.homeRelativeUnit)
 	err = frameUnit(ctx, h, func(line int, b []byte) error {
 		if err := strictJSON(b); err != nil {
 			return err
@@ -216,9 +246,10 @@ func prepare(ctx context.Context, c preparationConfig, u unitLocator, gate preOp
 		return nil
 	})
 	if err != nil {
-		return empty, err
+		h.close()
+		return empty, nil, err
 	}
-	return batch, nil
+	return batch, h, nil
 }
 
 // Input fields are complete native values. This function never calls TAP's
@@ -239,6 +270,7 @@ func redactObservation(o preparedObservation, policy fullFieldRules) (preparedOb
 		} else {
 			text = policy.text(f.text)
 		}
+		o.fields[i].fullRedactedBytes = len(text)
 		o.fields[i].text, o.fields[i].truncated = bound(text, maxText)
 	}
 	return o, nil

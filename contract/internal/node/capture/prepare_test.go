@@ -62,10 +62,10 @@ func bindIdentity(t *testing.T, c preparationConfig, u *unitLocator, native stri
 		t.Fatal(err)
 	}
 }
-func allow(context.Context, sourceOccurrence) (bool, error) { return false, nil }
+func allow(context.Context, sourceOccurrence) (gateState, error) { return gateState{}, nil }
 func requireHeld(t *testing.T, b preparedBatch, err error, code string) {
 	t.Helper()
-	if err == nil || err.Error() != "capture preparation held: "+code {
+	if err == nil || err.Error() != "capture held: "+code {
 		t.Fatalf("want fixed hold %s, got %v", code, err)
 	}
 	if !reflect.DeepEqual(b, preparedBatch{}) {
@@ -138,12 +138,12 @@ func TestPreOpenFenceAndIdentityFailuresDoNotOpen(t *testing.T) {
 	// The file does not exist. A filesystem error instead of the required gate
 	// result demonstrates an impermissible open before the policy/fence check.
 	calls := 0
-	gate := func(_ context.Context, occ sourceOccurrence) (bool, error) {
+	gate := func(_ context.Context, occ sourceOccurrence) (gateState, error) {
 		calls++
 		if occ != (sourceOccurrence{u.source, u.session, c.owner, c.machine}) {
 			t.Fatal("wrong fence occurrence")
 		}
-		return true, nil
+		return gateState{suppressed: true}, nil
 	}
 	b, err := prepare(context.Background(), c, u, gate)
 	requireHeld(t, b, err, "suppressed")
@@ -152,8 +152,8 @@ func TestPreOpenFenceAndIdentityFailuresDoNotOpen(t *testing.T) {
 	}
 	b, err = prepare(context.Background(), c, u, nil)
 	requireHeld(t, b, err, "missing_gate")
-	b, err = prepare(context.Background(), c, u, func(context.Context, sourceOccurrence) (bool, error) {
-		return false, errors.New("secret provider message")
+	b, err = prepare(context.Background(), c, u, func(context.Context, sourceOccurrence) (gateState, error) {
+		return gateState{}, errors.New("secret provider message")
 	})
 	requireHeld(t, b, err, "gate_unavailable")
 	c.enabled = false
@@ -218,7 +218,7 @@ func TestCanonicalIdentityMismatchHoldsBeforeGateOrOpen(t *testing.T) {
 				c.home = filepath.Dir(c.home)
 			}
 			calls := 0
-			b, err := prepare(context.Background(), c, u, func(context.Context, sourceOccurrence) (bool, error) { calls++; return false, nil })
+			b, err := prepare(context.Background(), c, u, func(context.Context, sourceOccurrence) (gateState, error) { calls++; return gateState{}, nil })
 			requireHeld(t, b, err, "identity_mismatch")
 			if calls != 0 {
 				t.Fatal("mismatched occurrence reached gate/open")
@@ -239,9 +239,9 @@ func TestCopiedSourceStillChecksSameSuppressedSessionBeforeOpen(t *testing.T) {
 	// The new path does not even exist. Session suppression must win before
 	// the opener touches the copied source regardless of its new source key.
 	calls := 0
-	b, err := prepare(context.Background(), c, u, func(_ context.Context, occ sourceOccurrence) (bool, error) {
+	b, err := prepare(context.Background(), c, u, func(_ context.Context, occ sourceOccurrence) (gateState, error) {
 		calls++
-		return occ.session == erasedSession, nil
+		return gateState{suppressed: occ.session == erasedSession}, nil
 	})
 	requireHeld(t, b, err, "suppressed")
 	if calls != 1 {

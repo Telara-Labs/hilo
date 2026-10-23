@@ -13,6 +13,8 @@ import (
 func TestLateOccurrenceBulkBarrierIsDurableMetadataOnly(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
+	producer := producerFor(w, "separate committed producer observation")
+	committedReceipt := producer.commit()
 	event := w.event("privacy_barrier_shared_copy")
 	original := w.chunk(event)
 	header := original
@@ -37,6 +39,15 @@ func TestLateOccurrenceBulkBarrierIsDurableMetadataOnly(t *testing.T) {
 	var fixed *Error
 	if !errors.As(e, &fixed) || fixed.Code != "bulk_confirmation_required" || !fixed.OwnerBlocked {
 		t.Fatal("missing committed barrier refusal", e)
+	}
+	replay, replayErr := w.s.Capture(ctx, producer.q, func(*CaptureTxn) (CommitPlan, error) { t.Fatal("owner barrier retry minted"); return CommitPlan{}, nil })
+	if replayErr != nil || replay.Status != "prior_transition_committed" || replay.TransitionID != committedReceipt.TransitionID {
+		t.Fatal("owner barrier lost immutable receipt", replay, replayErr)
+	}
+	for _, ref := range replay.ActualRecordRefs {
+		if replay.CurrentAvailability[ref.ID] != "owner_blocked" {
+			t.Fatal("barrier receipt claimed eligibility", replay.CurrentAvailability)
+		}
 	}
 	var seq, budget, bodies, events int
 	var gen int64

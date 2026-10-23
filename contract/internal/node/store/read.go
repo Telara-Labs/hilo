@@ -6,6 +6,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
 	"github.com/Telara-Labs/telara-memory/contract/view"
+	"math"
 )
 
 // Snapshot is inspection only. It neither renders a model response nor records delivery.
@@ -127,6 +128,9 @@ func (s *Store) Reindex(ctx context.Context) error {
 		if _, err = s.effectDelta(ctx, d); err != nil {
 			return err
 		}
+		if d.generation == math.MaxInt64 {
+			return failure("ordinal_limit")
+		}
 		d.generation++
 		if _, err = s.conn.ExecContext(ctx, "UPDATE meta SET generation=? WHERE singleton=1", d.generation); err != nil {
 			return failure("storage_error")
@@ -153,6 +157,9 @@ func (s *Store) PublishProjection(ctx context.Context, t JobToken, p Projection)
 		}
 		if d.blocked {
 			return ownerBlocked()
+		}
+		if d.generation == math.MaxInt64 {
+			return failure("ordinal_limit")
 		}
 		x := d.byID[t.RecordID]
 		if x == nil || x.generation != t.Generation || x.state != string(invalidate.Live) || x.sigStatus != sig.StatusVerified || x.rec.Body == nil {

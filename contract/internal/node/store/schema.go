@@ -54,5 +54,5 @@ func (s *Store) initialize(ctx context.Context) error {
 	if s.conn.QueryRowContext(ctx, "SELECT v FROM search_config WHERE k='secure-delete'").Scan(&secure) != nil || secure != 1 {
 		return failure("unsafe_sqlite")
 	}
-	return nil
+	return s.initializeCapture(ctx)
 }

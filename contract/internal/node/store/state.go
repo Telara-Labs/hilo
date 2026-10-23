@@ -28,22 +28,25 @@ type stored struct {
 	state                   string
 }
 type databaseState struct {
-	blocked             bool
-	retained            map[string][]invalidate.Tomb
-	bans                map[occurrence]map[string]bool
-	records             []*stored
-	byID                map[string]*stored
-	kr                  *sig.Keyring
-	model               *invalidate.Model
-	eval                *invalidate.Eval
-	facts               map[string]view.EventFacts
-	generation, nextSeq int64
+	blocked                             bool
+	retained                            map[string][]invalidate.Tomb
+	bans                                map[occurrence]map[string]bool
+	records                             []*stored
+	byID                                map[string]*stored
+	kr                                  *sig.Keyring
+	model                               *invalidate.Model
+	eval                                *invalidate.Eval
+	facts                               map[string]view.EventFacts
+	generation, nextSeq, authorityEpoch int64
 }
 
 func (s *Store) load(ctx context.Context) (*databaseState, error) {
 	d := &databaseState{byID: map[string]*stored{}, facts: map[string]view.EventFacts{}}
-	if s.conn.QueryRowContext(ctx, "SELECT generation,next_seq FROM meta WHERE singleton=1").Scan(&d.generation, &d.nextSeq) != nil {
+	if s.conn.QueryRowContext(ctx, "SELECT generation,next_seq,authority_epoch FROM meta WHERE singleton=1").Scan(&d.generation, &d.nextSeq, &d.authorityEpoch) != nil {
 		return nil, failure("storage_error")
+	}
+	if d.generation < 0 || d.nextSeq <= 0 || d.authorityEpoch < 0 {
+		return nil, failure("corrupt_database")
 	}
 	rows, err := s.conn.QueryContext(ctx, "SELECT r.id,r.header,r.sigs,r.owner,r.seq,r.generation,r.state,EXISTS(SELECT 1 FROM body_seen z WHERE z.id=r.id),b.body FROM record r LEFT JOIN record_body b ON b.id=r.id ORDER BY r.seq")
 	if err != nil {

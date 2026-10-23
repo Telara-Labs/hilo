@@ -120,13 +120,27 @@ func arguments(b []byte) ([]field, error) {
 	for _, k := range keys {
 		// Keep structured types and complete nested objects. Argument performs
 		// named semantic redaction on this full value before any byte bound.
-		value := string(m[k])
+		raw := bytes.TrimSpace(m[k])
+		kind := "number"
+		switch raw[0] {
+		case '"':
+			kind = "string"
+		case '{':
+			kind = "object"
+		case '[':
+			kind = "array"
+		case 't', 'f':
+			kind = "bool"
+		case 'n':
+			kind = "null"
+		}
+		value := string(raw)
 		if len(m[k]) > 0 && m[k][0] == '"' {
 			if json.Unmarshal(m[k], &value) != nil {
 				return nil, hold("native_shape")
 			}
 		}
-		out = append(out, field{name: k, text: value, argument: true})
+		out = append(out, field{name: k, text: value, argument: true, nativeKind: kind})
 	}
 	return out, nil
 }
@@ -446,7 +460,7 @@ func decodeCodex(b []byte, line int, nativeSession string) ([]preparedObservatio
 		}
 		// Preserve argv boundaries as full structured JSON, not a joined shell
 		// command. Semantic argument redaction runs before display bounds.
-		base.fields = []field{{name: "command", text: string(a["command"]), argument: true}, {name: "tool", text: "local_shell"}}
+		base.fields = []field{{name: "command", text: string(a["command"]), argument: true, nativeKind: "array"}, {name: "tool", text: "local_shell"}}
 		return []preparedObservation{base}, nil
 	case "function_call_output":
 		base.kind = "tool_result"

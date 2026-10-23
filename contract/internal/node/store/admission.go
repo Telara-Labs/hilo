@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"github.com/Telara-Labs/telara-memory/contract/view"
+	"math"
 
 	"github.com/Telara-Labs/telara-memory/contract/invalidate"
 	"github.com/Telara-Labs/telara-memory/contract/jcs"
@@ -78,59 +80,11 @@ func (s *Store) Append(ctx context.Context, in SignedRecord) (AdmissionResult, e
 			result = AdmissionResult{ID: r.ID, Sequence: old.seq, Generation: old.generation, State: old.state, Duplicate: true}
 			return nil
 		}
-		x := &stored{rec: r, sigs: signatures, owner: s.opts.PinnedGenesisID, seq: d.nextSeq, generation: d.generation + 1}
-		st := d.kr.State()
-		if r.Header.Type == record.KindKeyOp {
-			body := r.Body.(*record.KeyOpBody)
-			if body.Genesis != s.opts.PinnedGenesisID {
-				return failure("unsupported_context")
-			}
-			op := &sig.KeyOp{Rec: r, Body: body, Sigs: signatures, AdmittedSeq: x.seq}
-			checked := sig.VerifyKeyOp(d.kr, op)
-			if checked.Err != nil || checked.Status == sig.OpInvalid || checked.Status == sig.OpIgnored || checked.Status == sig.OpHeldGenesis {
-				return failure("invalid_record")
-			}
-		} else {
-			res := sig.VerifyRecord(r, signatures, st, sig.Context{Route: record.RouteLocal})
-			if res.Status != sig.StatusVerified || res.Owner != s.opts.PinnedGenesisID || r.Header.Author.MachineID != s.opts.LocalMachineID {
-				return failure("unauthorized_record")
-			}
-			if r.Header.Type == record.KindErasure || r.Header.Type == record.KindRetraction {
-				if res.Key == nil || res.Key.Status != sig.KeyActive {
-					return failure("unauthorized_control")
-				}
-			}
-		}
-		if b, ok := r.Body.(*record.ErasureBody); ok {
-			if len(b.Selectors.Tasks)+len(b.Selectors.Sessions)+len(b.Selectors.LIDs)+len(b.Selectors.Sources) > 0 {
-				return failure("bulk_confirmation_required")
-			}
-		}
-		material(x)
-		d.records = append(d.records, x)
-		d.byID[r.ID] = x
-		if err = d.rebuild(s.opts); err != nil {
-			return err
-		}
-		// All candidate closure and bulk accounting happen before any candidate SQL writes.
-		effects, err := s.effectDelta(ctx, d)
+		x, err := s.prepareNew(d, r, signatures)
 		if err != nil {
-			return s.refuseBulk(ctx, d, err)
-		}
-		if err = s.insertRecord(ctx, x); err != nil {
 			return err
 		}
-		d.nextSeq++
-		d.generation++
-		if _, err = s.conn.ExecContext(ctx, "UPDATE meta SET next_seq=?,generation=?,authority_epoch=authority_epoch+? WHERE singleton=1", d.nextSeq, d.generation, boolInt(r.Header.Type == record.KindKeyOp)); err != nil {
-			return failure("storage_error")
-		}
-		for _, p := range effects {
-			if _, err = s.conn.ExecContext(ctx, "INSERT INTO erasure_effect(control,target,author) VALUES(?,?,?)", p[0], p[1], p[2]); err != nil {
-				return failure("storage_error")
-			}
-		}
-		if err = s.persistState(ctx, d); err != nil {
+		if err = s.persistPrepared(ctx, d, []*stored{x}); err != nil {
 			return err
 		}
 		result = AdmissionResult{ID: r.ID, Sequence: x.seq, Generation: x.generation, State: x.state}
@@ -272,6 +226,9 @@ func (s *Store) effectDelta(ctx context.Context, d *databaseState) ([][3]string,
 }
 
 func (s *Store) enrichBody(ctx context.Context, d *databaseState, x *stored, r *record.Record) (AdmissionResult, error) {
+	if d.generation == math.MaxInt64 {
+		return AdmissionResult{}, failure("ordinal_limit")
+	}
 	res := sig.VerifyRecord(r, x.sigs, d.kr.State(), sig.Context{Route: record.RouteLocal, AdmittedSeq: x.seq})
 	if res.Status != sig.StatusVerified || res.Owner != x.owner || r.Header.Author.MachineID != s.opts.LocalMachineID {
 		return AdmissionResult{}, failure("unauthorized_record")
@@ -309,4 +266,105 @@ func (s *Store) enrichBody(ctx context.Context, d *databaseState, x *stored, r *
 		return AdmissionResult{}, err
 	}
 	return AdmissionResult{ID: r.ID, Sequence: x.seq, Generation: x.generation, State: x.state, Duplicate: true}, nil
+}
+
+// prepareNew and persistPrepared are the single admission path for Append and
+// trusted producer batches. All candidate state is checked before candidate SQL.
+func (s *Store) prepareNew(d *databaseState, r *record.Record, signatures []record.Signature) (*stored, error) {
+	if d.nextSeq == math.MaxInt64 || d.generation == math.MaxInt64 {
+		return nil, failure("ordinal_limit")
+	}
+	if d.byID[r.ID] != nil {
+		return nil, failure("duplicate_record")
+	}
+	x := &stored{rec: r, sigs: signatures, owner: s.opts.PinnedGenesisID, seq: d.nextSeq, generation: d.generation + 1}
+	if err := s.verifyCandidate(d, r, signatures, x.seq); err != nil {
+		return nil, err
+	}
+
+	if r.Header.Type == record.KindKeyOp {
+		d.authorityEpoch++
+	}
+	material(x)
+	d.records = append(d.records, x)
+	d.byID[r.ID] = x
+	d.nextSeq++
+	d.generation++
+	if err := d.rebuild(s.opts); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+func (s *Store) persistPrepared(ctx context.Context, d *databaseState, added []*stored) error {
+	// Reducer errors, including malformed causal state, must precede SQL writes.
+	sessions := map[string]bool{}
+	for _, x := range d.records {
+		if x.rec.Header.Subj.SessionKey != "" {
+			sessions[x.rec.Header.Subj.SessionKey] = true
+		}
+	}
+	for sk := range sessions {
+		f := d.facts[sk]
+		if f.V == 0 {
+			f.V = record.Version
+		}
+		if _, err := view.SessionView(d.observed(), nil, nil, sk, f); err != nil {
+			return failure("invalid_causal_state")
+		}
+	}
+	effects, err := s.effectDelta(ctx, d)
+	if err != nil {
+		return s.refuseBulk(ctx, d, err)
+	}
+	for _, x := range added {
+		if err = s.insertRecord(ctx, x); err != nil {
+			return err
+		}
+	}
+	if _, err = s.conn.ExecContext(ctx, "UPDATE meta SET next_seq=?,generation=?,authority_epoch=? WHERE singleton=1", d.nextSeq, d.generation, d.authorityEpoch); err != nil {
+		return failure("storage_error")
+	}
+	for _, p := range effects {
+		if _, err = s.conn.ExecContext(ctx, "INSERT INTO erasure_effect(control,target,author) VALUES(?,?,?)", p[0], p[1], p[2]); err != nil {
+			return failure("storage_error")
+		}
+	}
+	return s.persistState(ctx, d)
+}
+
+// verifyCandidate is shared by ordinary admission and producer verification,
+// including a full candidate whose identity is already retained in SQL.
+func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures []record.Signature, sequence int64) error {
+	st := d.kr.State()
+	if r.Header.Type == record.KindKeyOp {
+		if d.authorityEpoch == math.MaxInt64 {
+			return failure("ordinal_limit")
+		}
+		body := r.Body.(*record.KeyOpBody)
+		if body.Genesis != s.opts.PinnedGenesisID {
+			return failure("unsupported_context")
+		}
+		op := &sig.KeyOp{Rec: r, Body: body, Sigs: signatures, AdmittedSeq: sequence}
+		checked := sig.VerifyKeyOp(d.kr, op)
+		if checked.Err != nil || checked.Status == sig.OpInvalid || checked.Status == sig.OpIgnored || checked.Status == sig.OpHeldGenesis {
+			return failure("invalid_record")
+		}
+	} else {
+		res := sig.VerifyRecord(r, signatures, st, sig.Context{Route: record.RouteLocal})
+		if res.Status != sig.StatusVerified || res.Owner != s.opts.PinnedGenesisID || r.Header.Author.MachineID != s.opts.LocalMachineID {
+			return failure("unauthorized_record")
+		}
+		if r.Header.Type == record.KindErasure || r.Header.Type == record.KindRetraction {
+			if res.Key == nil || res.Key.Status != sig.KeyActive {
+				return failure("unauthorized_control")
+			}
+		}
+	}
+	if b, ok := r.Body.(*record.ErasureBody); ok {
+		if len(b.Selectors.Tasks)+len(b.Selectors.Sessions)+len(b.Selectors.LIDs)+len(b.Selectors.Sources) > 0 {
+			return failure("bulk_confirmation_required")
+		}
+	}
+
+	return nil
 }
