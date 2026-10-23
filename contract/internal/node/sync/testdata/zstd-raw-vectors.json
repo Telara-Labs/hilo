@@ -1,0 +1,14 @@
+[
+  {
+    "size": 2,
+    "sha256": "8f57af307cdaefde1ff1733d3be84fbef78d65e516c78c743c0a7479530fe8df"
+  },
+  {
+    "size": 256,
+    "sha256": "f81bf5a5b53db0adc034dc3509e557364f5a408fdc1b80857e0e59af50774744"
+  },
+  {
+    "size": 131073,
+    "sha256": "073336a9b91e8c8c619a9aaa0d7130b3519f3538b513938120a9dd41cf79498d"
+  }
+]
