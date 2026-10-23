@@ -1,0 +1,19 @@
+{
+  "Client": "cursor",
+  "GOOS": "darwin",
+  "Home": "/Users/fixture",
+  "Executable": "/Users/fixture/bin/telara-memory",
+  "StateDir": "/Users/fixture/state",
+  "Location": {
+    "MCP": "/Users/fixture/.cursor/mcp.json",
+    "Hooks": "/Users/fixture/.cursor/hooks.json",
+    "Transcripts": "/Users/fixture/.cursor/projects",
+    "Extension": ""
+  },
+  "MCPBefore": "{\r\n \"userSetting\": true, \"mcpServers\": {\"unrelated\":{\"command\":\"other\"}}\r\n}\r\n",
+  "MCPAfter": "{\r\n \"userSetting\": true, \"mcpServers\": {\"unrelated\":{\"command\":\"other\"}}\r\n}\r\n",
+  "HooksBefore": "{\"userSetting\":true,\"hooks\":{\"Other\":[{\"command\":\"unrelated\"}]}}\n",
+  "HooksAfter": "{\"userSetting\":true,\"hooks\":{\"Other\":[{\"command\":\"unrelated\"}]}}\n",
+  "MCPSnippet": "{\n  \"mcpServers\": {\n    \"telara-memory\": {\n      \"args\": [\n        \"shim\",\n        \"--data-dir\",\n        \"/Users/fixture/state\"\n      ],\n      \"command\": \"/Users/fixture/bin/telara-memory\"\n    }\n  }\n}\n",
+  "HooksSnippet": "{\n  \"hooks\": {\n    \"afterAgentResponse\": [\n      {\n        \"command\": \"'/Users/fixture/bin/telara-memory' 'hook' '--client' 'cursor' '--home' '/Users/fixture' '--state-dir' '/Users/fixture/state' '--config-root' '/Users/fixture/.cursor'\",\n        \"timeout\": 1\n      }\n    ],\n    \"sessionEnd\": [\n      {\n        \"command\": \"'/Users/fixture/bin/telara-memory' 'hook' '--client' 'cursor' '--home' '/Users/fixture' '--state-dir' '/Users/fixture/state' '--config-root' '/Users/fixture/.cursor'\",\n        \"timeout\": 1\n      }\n    ],\n    \"sessionStart\": [\n      {\n        \"command\": \"'/Users/fixture/bin/telara-memory' 'hook' '--client' 'cursor' '--home' '/Users/fixture' '--state-dir' '/Users/fixture/state' '--config-root' '/Users/fixture/.cursor'\",\n        \"timeout\": 1\n      }\n    ],\n    \"stop\": [\n      {\n        \"command\": \"'/Users/fixture/bin/telara-memory' 'hook' '--client' 'cursor' '--home' '/Users/fixture' '--state-dir' '/Users/fixture/state' '--config-root' '/Users/fixture/.cursor'\",\n        \"timeout\": 1\n      }\n    ]\n  },\n  \"version\": 1\n}\n"
+}

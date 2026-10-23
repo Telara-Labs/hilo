@@ -1,0 +1,19 @@
+{
+  "Client": "cursor",
+  "GOOS": "windows",
+  "Home": "C:\\Users\\fixture",
+  "Executable": "C:\\Users\\fixture\\bin\\telara-memory.exe",
+  "StateDir": "C:\\Users\\fixture\\state",
+  "Location": {
+    "MCP": "C:\\Users\\fixture\\.cursor\\mcp.json",
+    "Hooks": "C:\\Users\\fixture\\.cursor\\hooks.json",
+    "Transcripts": "C:\\Users\\fixture\\.cursor\\projects",
+    "Extension": ""
+  },
+  "MCPBefore": "{\r\n \"userSetting\": true, \"mcpServers\": {\"unrelated\":{\"command\":\"other\"}}\r\n}\r\n",
+  "MCPAfter": "{\r\n \"userSetting\": true, \"mcpServers\": {\"unrelated\":{\"command\":\"other\"}}\r\n}\r\n",
+  "HooksBefore": "{\"userSetting\":true,\"hooks\":{\"Other\":[{\"command\":\"unrelated\"}]}}\n",
+  "HooksAfter": "{\"userSetting\":true,\"hooks\":{\"Other\":[{\"command\":\"unrelated\"}]}}\n",
+  "MCPSnippet": "{\n  \"mcpServers\": {\n    \"telara-memory\": {\n      \"args\": [\n        \"shim\",\n        \"--data-dir\",\n        \"C:\\\\Users\\\\fixture\\\\state\"\n      ],\n      \"command\": \"C:\\\\Users\\\\fixture\\\\bin\\\\telara-memory.exe\"\n    }\n  }\n}\n",
+  "HooksSnippet": "{\n  \"hooks\": {\n    \"afterAgentResponse\": [\n      {\n        \"command\": \"\\u0026 'C:\\\\Users\\\\fixture\\\\bin\\\\telara-memory.exe' 'hook' '--client' 'cursor' '--home' 'C:\\\\Users\\\\fixture' '--state-dir' 'C:\\\\Users\\\\fixture\\\\state' '--config-root' 'C:\\\\Users\\\\fixture\\\\.cursor'\",\n        \"timeout\": 1\n      }\n    ],\n    \"sessionEnd\": [\n      {\n        \"command\": \"\\u0026 'C:\\\\Users\\\\fixture\\\\bin\\\\telara-memory.exe' 'hook' '--client' 'cursor' '--home' 'C:\\\\Users\\\\fixture' '--state-dir' 'C:\\\\Users\\\\fixture\\\\state' '--config-root' 'C:\\\\Users\\\\fixture\\\\.cursor'\",\n        \"timeout\": 1\n      }\n    ],\n    \"sessionStart\": [\n      {\n        \"command\": \"\\u0026 'C:\\\\Users\\\\fixture\\\\bin\\\\telara-memory.exe' 'hook' '--client' 'cursor' '--home' 'C:\\\\Users\\\\fixture' '--state-dir' 'C:\\\\Users\\\\fixture\\\\state' '--config-root' 'C:\\\\Users\\\\fixture\\\\.cursor'\",\n        \"timeout\": 1\n      }\n    ],\n    \"stop\": [\n      {\n        \"command\": \"\\u0026 'C:\\\\Users\\\\fixture\\\\bin\\\\telara-memory.exe' 'hook' '--client' 'cursor' '--home' 'C:\\\\Users\\\\fixture' '--state-dir' 'C:\\\\Users\\\\fixture\\\\state' '--config-root' 'C:\\\\Users\\\\fixture\\\\.cursor'\",\n        \"timeout\": 1\n      }\n    ]\n  },\n  \"version\": 1\n}\n"
+}
