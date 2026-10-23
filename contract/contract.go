@@ -7,6 +7,18 @@ import _ "embed"
 
 // RedactCorpusV1 is testdata/redact-corpus-v1/corpus.json, the corpus the
 // ruleset behaviour fingerprint is computed over (record.Behavior).
-//
+var RedactCorpusV1 = RedactionCorpusV1()
+
 //go:embed testdata/redact-corpus-v1/corpus.json
-var RedactCorpusV1 []byte
+var redactionCorpusV1 string
+
+//go:embed testdata/redact-corpus-v1/actual-engine-golden.json
+var redactionGoldenV1 string
+
+// RedactionCorpusV1 returns an independent copy of the embedded corpus. Runtime
+// verification uses this immutable source rather than the compatibility variable.
+func RedactionCorpusV1() []byte { return []byte(redactionCorpusV1) }
+
+// RedactionGoldenV1 returns an independent copy of the pinned engine's expected
+// ruleset. It is contract data, not a caller-selected ruleset or runtime policy.
+func RedactionGoldenV1() []byte { return []byte(redactionGoldenV1) }

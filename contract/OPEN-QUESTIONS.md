@@ -83,10 +83,12 @@ questions are resolved as follows.
 Private development places runtime adapters under `internal/node/` in this
 module. Pure packages must not import them or their database dependencies.
 The combined module temporarily requires Go 1.26 for its pinned SQLite runtime;
-older compiler compatibility has not been proved. Before publication, split
-runtime dependencies into a separate module and verify pure consumers with
-the older supported compiler. Package isolation alone does not preserve an
-older module requirement.
+the earlier pure-only commit `de5bb533ea80` passed unit tests and vet with
+the actual Go 1.25.14 compiler in a clean export. This does not prove the
+combined module's older compiler compatibility. Before publication, split
+runtime dependencies into a separate module and verify the resulting pure
+module with the older supported compiler. Package isolation alone does not
+preserve an older module requirement.
 
 ## Adapter obligations
 

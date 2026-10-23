@@ -16,7 +16,10 @@ Private development temporarily shares a Go module between the contract and
 runtime. The pinned SQLite dependency requires Go 1.26. Pure packages have a
 tested dependency boundary against node and database packages, but this does
 not make the combined module consumable by Go 1.25. A separate runtime module
-and proof with the older supported compiler are required before publication.
+and proof of the resulting pure module with the older supported compiler are
+required before publication. The earlier pure-only commit `de5bb533ea80`
+passed unit tests and vet with the actual Go 1.25.14 compiler in a clean export.
+That result does not cover this temporary combined module.
 
 From `contract/`, run `GOWORK=off go test ./...` and `GOWORK=off go vet ./...`.
 The shared vector registry and frozen wire fixtures are in `contract/testdata/`.
