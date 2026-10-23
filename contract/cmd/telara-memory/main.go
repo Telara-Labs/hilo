@@ -4,67 +4,34 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
-	"time"
 
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/clients"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcp"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/shim"
 )
 
 func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage daemon|shim|status")
-	}
-	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	data := fs.String("data-dir", "", "Owner-only data directory")
-	dir := fs.String("run-dir", "", "Owner-only runtime directory")
-	start := fs.Bool("start", false, "Start unmanaged daemon for status")
-	if e := fs.Parse(args[1:]); e != nil || fs.NArg() != 0 {
 		return errors.New("invalid_arguments")
 	}
-	if args[0] != "daemon" && args[0] != "shim" && args[0] != "status" {
+	switch args[0] {
+	case "hook":
+		return runHook(ctx, args[1:], in)
+	case "clients":
+		return runClients(ctx, args[1:], out)
+	case "daemon", "managed-daemon", "shim", "install", "uninstall", "status", "register", "start", "stop", "upgrade":
+		return runService(ctx, args, out, in)
+	default:
 		return errors.New("invalid_command")
 	}
-	p, e := ipc.Resolve(*data, *dir)
-	if e != nil {
-		return errors.New("invalid_paths")
-	}
-	switch args[0] {
-	case "daemon":
-		e = daemon.Run(ctx, daemon.Config{Paths: p, Open: func(context.Context) (daemon.Backend, error) { return mcp.New(nil, nil), nil }})
-		if errors.Is(e, context.Canceled) {
-			return nil
-		}
-		return e
-	case "shim":
-		e = shim.Run(ctx, in, out, shim.Config{Paths: p, Start: func() error { return shim.Spawn(p) }})
-		if errors.Is(e, context.Canceled) {
-			return nil
-		}
-		return e
-	case "status":
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		if *start {
-			if e = shim.Ensure(ctx, p, func() error { return shim.Spawn(p) }); e != nil {
-				return e
-			}
-		}
-		status, e := daemon.Probe(ctx, p)
-		if e != nil {
-			return errors.New("daemon_unavailable")
-		}
-		return ipc.WriteFrame(out, status)
-	}
-	return nil
 }
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), stopSignals()...)
 	defer cancel()
@@ -78,6 +45,12 @@ func publicCode(e error) string {
 	if errors.As(e, &refused) {
 		return refused.Error()
 	}
+	for _, code := range []error{install.ErrUnavailable, install.ErrStopped, install.ErrUnverified, install.ErrUnsafe, install.ErrUpgrade, daemon.ErrSettlement,
+		clients.ErrOptions, clients.ErrUnsafe, clients.ErrConflict, clients.ErrMalformed, clients.ErrBusy} {
+		if errors.Is(e, code) {
+			return code.Error()
+		}
+	}
 	switch {
 	case errors.Is(e, ipc.ErrUnsafe):
 		return "unsafe_path"
@@ -89,7 +62,7 @@ func publicCode(e error) string {
 		return "invalid_frame"
 	}
 	switch e.Error() {
-	case "invalid_arguments", "invalid_command", "invalid_paths", "daemon_unavailable", "usage daemon|shim|status":
+	case "invalid_arguments", "invalid_command", "invalid_paths", "daemon_unavailable", "settlement_unknown", "release_inputs_required":
 		return e.Error()
 	}
 	return "daemon_error"

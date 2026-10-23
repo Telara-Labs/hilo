@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 )
 
@@ -73,11 +74,44 @@ type AutostartError struct{}
 
 func (*AutostartError) Error() string { return "autostart_unverified_install" }
 
-// Spawn fails closed. This source tree has no installed artifact verifier or
-// OS-specific identity-preserving launch adapter. os.Executable is not proof of
-// either installation or executable identity. Managed installs supply Config.Start
-// only after verifying and pinning their installed artifact through launch.
-func Spawn(p ipc.Paths) error { return &AutostartError{} }
+// Spawn delegates only to the verified owner installation's service manager.
+// It never clears stop intent or launches the current executable directly.
+func Spawn(p ipc.Paths) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	dir, err := install.DefaultDir()
+	if err != nil {
+		return &AutostartError{}
+	}
+	return spawnManaged(ctx, p, dir, install.Status, install.Autostart)
+}
+
+func spawnManaged(ctx context.Context, p ipc.Paths, dir string,
+	status func(context.Context, string) (install.Report, error),
+	autostart func(context.Context, string) error) error {
+	report, err := status(ctx, dir)
+	if errors.Is(err, install.ErrUnsafe) || errors.Is(err, install.ErrUnverified) ||
+		report.Record.DataDir != p.Data || report.Record.RunDir != p.Run {
+		return &AutostartError{}
+	}
+	if err != nil {
+		return err
+	}
+	return autostart(ctx, dir)
+}
+
+func autostartCode(err error) string {
+	var refused *AutostartError
+	if errors.As(err, &refused) {
+		return refused.Error()
+	}
+	for _, value := range []error{install.ErrUnavailable, install.ErrStopped, install.ErrUnverified, install.ErrUnsafe} {
+		if errors.Is(err, value) {
+			return value.Error()
+		}
+	}
+	return "daemon_unavailable"
+}
 
 type Config struct {
 	Paths ipc.Paths
@@ -225,11 +259,7 @@ func (cl *client) call(ctx context.Context, req daemon.Request) daemon.Response 
 	}
 	g, e := cl.connect(ctx)
 	if e != nil {
-		var refused *AutostartError
-		if errors.As(e, &refused) {
-			return diagnostic(req, refused.Error())
-		}
-		return diagnostic(req, "daemon_unavailable")
+		return diagnostic(req, autostartCode(e))
 	}
 	select {
 	case g.send <- struct{}{}:

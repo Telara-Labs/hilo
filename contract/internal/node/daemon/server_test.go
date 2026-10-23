@@ -99,3 +99,23 @@ func TestProtocolAndIdentityValidation(t *testing.T) {
 		t.Fatal("unwired store")
 	}
 }
+
+func TestReadinessRequiresSuccessfulBoundPeerStatus(t *testing.T) {
+	good := Response{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: map[string]any{"state": "running", "pid": float64(42), "resultType": "complete"}}
+	if !validStatus(good, 42) {
+		t.Fatal("valid status refused")
+	}
+	for _, out := range []Response{
+		{JSONRPC: "2.0", ID: json.RawMessage("1"), Error: &RPCError{Message: "unsupported_control"}},
+		{JSONRPC: "2.0", ID: json.RawMessage("2"), Result: good.Result},
+		{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: map[string]any{"state": "running", "pid": float64(43), "resultType": "complete"}},
+		{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: map[string]any{"state": "stopped", "pid": float64(42), "resultType": "complete"}},
+		{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: map[string]any{"state": "running", "pid": float64(42)}},
+		{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: "running"},
+		{JSONRPC: "1.0", ID: json.RawMessage("1"), Result: good.Result},
+	} {
+		if validStatus(out, 42) {
+			t.Fatal("unproven status accepted")
+		}
+	}
+}

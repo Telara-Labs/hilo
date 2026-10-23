@@ -16,7 +16,31 @@ import (
 
 type backend struct{ dir string }
 
-func (b *backend) Close() error { return nil }
+func (b *backend) Close() error {
+	if _, e := os.Stat(filepath.Join(b.dir, "fail-close")); e == nil {
+		os.WriteFile(filepath.Join(b.dir, "closing"), []byte("closing"), 0600)
+		if _, e := os.Stat(filepath.Join(b.dir, "allow-close")); e != nil {
+			return daemon.ErrSettlement
+		}
+	}
+
+	if lock, e := ipc.Lock(filepath.Join(b.dir, "db.lock")); e == nil {
+		lock.Close()
+		panic("close after lock release")
+	}
+	f, e := os.OpenFile(filepath.Join(b.dir, "checkpoint"), os.O_CREATE|os.O_WRONLY, 0600)
+	if e != nil {
+		return e
+	}
+	if _, e = f.WriteString("closed"); e == nil {
+		e = f.Sync()
+	}
+	ce := f.Close()
+	if e != nil {
+		return e
+	}
+	return ce
+}
 func (b *backend) Handle(ctx context.Context, h ipc.Hello, r daemon.Request) daemon.Response {
 	var params struct {
 		Name string `json:"name"`
@@ -26,6 +50,22 @@ func (b *backend) Handle(ctx context.Context, h ipc.Hello, r daemon.Request) dae
 		r.Method = "commit_then_die"
 	}
 	switch r.Method {
+	case "settle":
+		os.WriteFile(filepath.Join(b.dir, "entered"), []byte("entered"), 0600)
+		for {
+			if _, e := os.Stat(filepath.Join(b.dir, "release")); e == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				os.WriteFile(filepath.Join(b.dir, "premature-cancel"), []byte("cancelled"), 0600)
+				return daemon.Error(r.ID, "premature_cancel")
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+		os.WriteFile(filepath.Join(b.dir, "settled"), []byte("settled"), 0600)
+		return daemon.Response{JSONRPC: "2.0", ID: r.ID, Result: map[string]bool{"settled": true}}
+
 	case "hold":
 		<-ctx.Done()
 		return daemon.Error(r.ID, "canceled")
@@ -52,6 +92,9 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	e = daemon.Run(ctx, daemon.Config{Paths: p, Open: func(context.Context) (daemon.Backend, error) { return &backend{p.Data}, nil }})
+	if len(os.Args) > 3 && os.Args[3] == "linger" {
+		select {}
+	}
 	if e != nil && e != context.Canceled {
 		time.Sleep(time.Millisecond)
 		os.Exit(1)

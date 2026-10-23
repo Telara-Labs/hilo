@@ -2,5 +2,5 @@
 
 package shim
 
-// There is no verified installed-artifact launch adapter on this platform.
-// Spawn refuses unmanaged autostart rather than reopening an executable path.
+// Spawn uses the shared receipt verifier and the platform service manager.
+// No detached executable fallback is provided on this platform.

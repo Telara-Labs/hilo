@@ -20,7 +20,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcpcatalog"
 )
 
-const Version = "dev"
+var Version = "dev"
 
 // LatestProtocolVersion is the modern revision implemented by this node.
 const LatestProtocolVersion = "2026-07-28"
@@ -70,6 +70,9 @@ type Config struct {
 	Paths ipc.Paths
 	Open  Opener
 	Ready func()
+	// Verify revalidates managed startup authority under db.lock, before
+	// invalidating prior settlement or opening any storage or listener.
+	Verify func() error
 }
 
 func Error(id json.RawMessage, code string) Response {
@@ -155,11 +158,17 @@ func storeWired(backend Backend) bool {
 }
 
 func Probe(ctx context.Context, p ipc.Paths) (Response, error) {
+	ctx, cancel := context.WithTimeout(ctx, ipc.HandshakeTimeout)
+	defer cancel()
 	c, e := ipc.Dial(ctx, p)
 	if e != nil {
 		return Response{}, e
 	}
 	defer c.Close()
+	pid, e := ipc.Peer(c)
+	if e != nil {
+		return Response{}, e
+	}
 	if deadline, ok := ctx.Deadline(); ok {
 		if e = c.SetDeadline(deadline); e != nil {
 			return Response{}, e
@@ -190,7 +199,23 @@ func Probe(ctx context.Context, p ipc.Paths) (Response, error) {
 	}
 	var out Response
 	e = json.Unmarshal(b, &out)
-	return out, e
+	if e != nil {
+		return Response{}, e
+	}
+	if !validStatus(out, pid) {
+		return Response{}, ipc.ErrFrame
+	}
+	return out, nil
+}
+func validStatus(out Response, pid int) bool {
+	if out.JSONRPC != "2.0" || string(out.ID) != "1" || out.Error != nil {
+		return false
+	}
+	fields, ok := out.Result.(map[string]any)
+	if !ok {
+		return false
+	}
+	return fields["state"] == "running" && fields["pid"] == float64(pid) && fields["resultType"] == "complete"
 }
 func Run(ctx context.Context, cfg Config) error {
 	p := cfg.Paths
@@ -233,6 +258,14 @@ func Run(ctx context.Context, cfg Config) error {
 		return e
 	}
 	defer db.Close()
+	if cfg.Verify != nil {
+		if e = cfg.Verify(); e != nil {
+			return e
+		}
+	}
+	if e = writeSettlement(p, false); e != nil {
+		return e
+	}
 	l, e := ipc.Listen(p)
 	if e != nil {
 		return e
@@ -248,17 +281,18 @@ func Run(ctx context.Context, cfg Config) error {
 		if e != nil {
 			return e
 		}
-		defer func() {
+	}
+	life := &lifecycle{listener: l, active: map[net.Conn]bool{}}
+	defer func() {
+		if backend != nil {
 			for backend.Close() != nil {
 				time.Sleep(100 * time.Millisecond)
 			}
-		}()
-	}
-	// Release startup serialization only once the listener and backend are ready.
+		}
+		life.settled(p)
+	}()
 	start.Close()
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	active := map[net.Conn]bool{}
 	slots := make(chan struct{}, 64)
 	serving, cancelServing := context.WithCancel(ctx)
 	defer cancelServing()
@@ -268,11 +302,7 @@ func Run(ctx context.Context, cfg Config) error {
 		select {
 		case <-ctx.Done():
 			l.Close()
-			mu.Lock()
-			for c := range active {
-				c.Close()
-			}
-			mu.Unlock()
+			life.closeConnections()
 		case <-done:
 		}
 	}()
@@ -281,21 +311,20 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	var acceptErr error
 	for {
-		conn, e := l.Accept()
-		if e != nil {
-			if ctx.Err() != nil {
+		conn, err := l.Accept()
+		if err != nil {
+			if ctx.Err() != nil || life.isDraining() {
 				break
 			}
 			var temporary interface{ Temporary() bool }
-			if errors.As(e, &temporary) && temporary.Temporary() {
+			if errors.As(err, &temporary) && temporary.Temporary() {
 				select {
 				case <-ctx.Done():
 				case <-time.After(10 * time.Millisecond):
 				}
 				continue
 			}
-			acceptErr = e
-			cancelServing()
+			acceptErr = err
 			break
 		}
 		select {
@@ -304,30 +333,39 @@ func Run(ctx context.Context, cfg Config) error {
 			conn.Close()
 			continue
 		}
-		mu.Lock()
-		active[conn] = true
-		mu.Unlock()
-		wg.Add(1)
+		if !life.admit(func() { life.active[conn] = true; wg.Add(1) }) {
+			<-slots
+			conn.Close()
+			break
+		}
 		go func() {
 			defer wg.Done()
-			defer func() { <-slots; mu.Lock(); delete(active, conn); mu.Unlock(); conn.Close() }()
-			serve(serving, conn, backend)
+			transferred := false
+			defer func() {
+				<-slots
+				life.mu.Lock()
+				delete(life.active, conn)
+				life.mu.Unlock()
+				if !transferred {
+					conn.Close()
+				}
+			}()
+			transferred = serve(serving, conn, backend, life)
 		}()
 	}
-	cancelServing()
-	mu.Lock()
-	for c := range active {
-		c.Close()
+	if !life.isDraining() || ctx.Err() != nil {
+		cancelServing()
+		life.closeConnections()
 	}
-	mu.Unlock()
-	// Deliberately retain db.lock while any backend call is unsettled.
+	// A drain does not cancel in-flight requests or close their response writers.
 	wg.Wait()
 	if acceptErr != nil {
 		return acceptErr
 	}
 	return ctx.Err()
 }
-func serve(parent context.Context, c net.Conn, backend Backend) {
+
+func serve(parent context.Context, c net.Conn, backend Backend, life *lifecycle) (transferred bool) {
 	pid, e := ipc.Peer(c)
 	if e != nil {
 		return
@@ -335,6 +373,9 @@ func serve(parent context.Context, c net.Conn, backend Backend) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	if c.SetDeadline(time.Now().Add(ipc.HandshakeTimeout)) != nil {
+		return
+	}
+	if life.isDraining() {
 		return
 	}
 	r := bufio.NewReader(c)
@@ -353,7 +394,7 @@ func serve(parent context.Context, c net.Conn, backend Backend) {
 			V      int    `json:"v"`
 			Client string `json:"client"`
 		}
-		if ipc.DecodeStrict(b, &n) == nil && n.V == 1 && n.Client != "" {
+		if ipc.DecodeStrict(b, &n) == nil && n.V == 1 && n.Client != "" && !life.isDraining() {
 			if wake, ok := backend.(interface{ Nudge(string) }); ok {
 				wake.Nudge(n.Client)
 			}
@@ -376,6 +417,9 @@ func serve(parent context.Context, c net.Conn, backend Backend) {
 	if c.SetDeadline(time.Time{}) != nil {
 		return
 	}
+	if life.isDraining() {
+		return
+	}
 	var writeMu sync.Mutex
 	write := func(v any) error {
 		writeMu.Lock()
@@ -395,14 +439,25 @@ func serve(parent context.Context, c net.Conn, backend Backend) {
 	slots := make(chan struct{}, ipc.MaxInFlight)
 	var calls sync.WaitGroup
 	var pending Inflight
-	defer func() { cancel(); calls.Wait() }()
+	defer func() {
+		if !life.isDraining() {
+			cancel()
+		}
+		calls.Wait()
+		cancel()
+	}()
 	for {
 		b, e = ipc.ReadFrame(r)
 		if e != nil {
-			if !errors.Is(e, io.EOF) {
-				write(map[string]string{"error": "invalid_frame"})
+			if !life.isDraining() {
+				if !errors.Is(e, io.EOF) {
+					write(map[string]string{"error": "invalid_frame"})
+				}
+				cancel()
 			}
-			cancel()
+			return
+		}
+		if life.isDraining() {
 			return
 		}
 		req, e := parseForwarded(b)
@@ -416,6 +471,24 @@ func serve(parent context.Context, c net.Conn, backend Backend) {
 				pending.Cancel(id)
 			}
 			continue
+		}
+		if req.Method == "drain-and-exit" {
+			// The kernel peer and hello PID have already been verified. MCP callers,
+			// forwarded request envelopes and nonempty params cannot invoke control.
+			if h.Kind != "control" || len(req.OriginalID) != 0 || (len(req.Params) > 0 && string(req.Params) != "{}") {
+				if write(Error(req.ID, "unsupported_control")) != nil {
+					return
+				}
+				continue
+			}
+			if life.drain(c, req.ID) {
+				return true
+			}
+			write(Error(req.ID, "draining"))
+			return
+		}
+		if life.isDraining() {
+			return
 		}
 		// Setup and health checks never wait behind a store transaction or its
 		// admission slots. The shim uses the same handler without opening IPC.
@@ -440,14 +513,18 @@ func serve(parent context.Context, c net.Conn, backend Backend) {
 			cancel()
 			return
 		}
-		calls.Add(1)
+		if !life.admit(func() { calls.Add(1) }) {
+			flight.Finish()
+			<-slots
+			return
+		}
 		go func(req Request, flight *Flight) {
 			defer calls.Done()
 			defer flight.Finish()
 			defer func() { <-slots }()
 			var out Response
 			if req.Method == "status" {
-				out = Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"state": "running", "pid": os.Getpid(), "store_wired": storeWired(backend), "autostart": "refused_unverified_install"}}
+				out = Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"state": "running", "pid": os.Getpid(), "store_wired": storeWired(backend), "autostart": "reported_by_install_status"}}
 			} else if h.Kind != "mcp" {
 				out = Error(req.ID, "unsupported_control")
 			} else if backend == nil {

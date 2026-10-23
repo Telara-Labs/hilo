@@ -35,7 +35,12 @@ func TestMain(m *testing.M) {
 	binary = filepath.Join(dir, "telara-memory")
 	driver = filepath.Join(dir, "transport-driver")
 	for _, spec := range [][2]string{{binary, "."}, {driver, "../../internal/node/daemon/testdata/process"}} {
-		cmd := exec.Command("go", "build", "-p", "2", "-o", spec[0], spec[1])
+		buildArgs := []string{"build", "-p", "2"}
+		if processRace {
+			buildArgs = append(buildArgs, "-race")
+		}
+		buildArgs = append(buildArgs, "-o", spec[0], spec[1])
+		cmd := exec.Command("go", buildArgs...)
 		cmd.Env = append(os.Environ(), "GOWORK=off")
 		if out, e := cmd.CombinedOutput(); e != nil {
 			fmt.Fprintf(os.Stderr, "build %v %s", e, out)
@@ -124,7 +129,23 @@ func TestProcessConcurrentStarts(t *testing.T) {
 		ps = append(ps, launch(t, binary, args(p, "daemon")...))
 	}
 	waitReady(t, p)
-	time.Sleep(150 * time.Millisecond)
+	// Race-instrumented losing processes retain runtime teardown for about a
+	// second after Run has returned. Count actual exits, not runtime grace periods.
+	waitUntil := time.Now().Add(3 * time.Second)
+	for time.Now().Before(waitUntil) {
+		pending := 0
+		for _, pr := range ps {
+			select {
+			case <-pr.done:
+			default:
+				pending++
+			}
+		}
+		if pending == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	alive := 0
 	for _, pr := range ps {
 		select {
@@ -372,7 +393,7 @@ func TestProcessUnverifiedAutostartRefused(t *testing.T) {
 	p := testPaths(t)
 	cmd := exec.Command(binary, append(args(p, "status"), "--start")...)
 	out, e := cmd.CombinedOutput()
-	if e == nil || !bytes.Contains(out, []byte("autostart_unverified_install")) {
+	if e == nil || (!bytes.Contains(out, []byte("autostart_unverified_install")) && !bytes.Contains(out, []byte("unsafe_install"))) {
 		t.Fatalf("unverified launch %s %v", out, e)
 	}
 	if _, e = os.Lstat(p.Endpoint); !os.IsNotExist(e) {
