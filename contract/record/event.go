@@ -59,7 +59,10 @@ func validEventSalt(s string) bool {
 }
 
 // ReviseEvent mints a NEW logical revision with fresh internal CSPRNG entropy.
-// Unchanged retry/repack/transfer MUST copy the prior sealed event instead.
+// Unchanged committed or exposed retry/repack/transfer MUST copy the prior seal.
+// A private uncommitted candidate may be rebuilt only after the runtime proves
+// noncommit from recovered same-store transition history. Unknown settlement or
+// an unavailable committed body never permits resealing.
 func ReviseEvent(e Event, predecessors []string, saltKey []byte) (Event, error) {
 	return reviseEvent(e, predecessors, saltKey, rand.Reader)
 }

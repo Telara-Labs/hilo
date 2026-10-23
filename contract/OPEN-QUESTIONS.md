@@ -42,7 +42,11 @@ questions are resolved as follows.
 - Event revisions have a body-only salt derived from a fresh internal CSPRNG nonce
   mixed with the existing device salt key. Only the salt is persisted in the erasable
   event body; nonce/HMAC intermediates are discarded. Stored retries/repack copy the
-  exact prior seal. Equality witnesses and complete admitted presence facts retain
+  exact prior seal. Private unexposed candidates may be rebuilt only after recovered
+  same-store transition history proves noncommit; unknown settlement and unavailable
+  committed bodies never permit resealing. The runtime must retain committed transition
+  facts after erasure and check them before stale-progress refusal or minting. Restore
+  reconciliation is a separate unimplemented gate. Equality witnesses and complete admitted presence facts retain
   provenance, never salt/payload/hash witnesses. Active causal equality rebuilds from
   identity by least fixed point, so losing parent support deactivates dependent aliases.
   Every managed capture of an erased source occurrence is purged and recapture is
