@@ -219,7 +219,7 @@ func (cl *client) call(ctx context.Context, req daemon.Request) daemon.Response 
 	id := json.RawMessage(strconv.FormatUint(cl.seq.Add(1), 10))
 	wire := req
 	wire.ID = id
-	frame, e := ipc.EncodeFrame(wire)
+	frame, e := ipc.EncodeFrame(daemon.ForwardedRequest{Request: wire, ClientRequestID: req.ID})
 	if e != nil {
 		return diagnostic(req, "invalid_frame")
 	}
@@ -267,10 +267,35 @@ func (cl *client) call(ctx context.Context, req daemon.Request) daemon.Response 
 		}
 		return out
 	case <-ctx.Done():
-		cl.lost(g)
+		if errors.Is(ctx.Err(), context.Canceled) {
+			cl.cancelCall(g, id)
+		} else {
+			cl.lost(g)
+		}
 		return diagnostic(req, "outcome_unknown")
 	}
 }
+
+// cancelCall removes only this pending reply and forwards the multiplexed ID.
+// A cancelled call never closes a healthy connection or cancels its siblings.
+func (cl *client) cancelCall(g *generation, id json.RawMessage) {
+	g.mu.Lock()
+	delete(g.pending, string(id))
+	g.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), ipc.HandshakeTimeout)
+	defer cancel()
+	select {
+	case g.send <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
+	defer func() { <-g.send }()
+	raw, _ := json.Marshal(map[string]json.RawMessage{"requestId": id})
+	if g.c.SetWriteDeadline(time.Now().Add(ipc.HandshakeTimeout)) != nil || ipc.WriteFrame(g.c, daemon.Request{JSONRPC: "2.0", Method: "notifications/cancelled", Params: raw}) != nil {
+		cl.lost(g)
+	}
+}
+
 func Run(ctx context.Context, in io.Reader, out io.Writer, cfg Config) (result error) {
 	if f, ok := in.(*os.File); ok {
 		adapted, cleanup, e := cancelableFile(ctx, f)
@@ -313,6 +338,7 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, cfg Config) (result e
 	r := bufio.NewReader(in)
 	var writes sync.Mutex
 	var calls sync.WaitGroup
+	var pending daemon.Inflight
 	var writeErr error
 	defer func() {
 		calls.Wait()
@@ -356,6 +382,9 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, cfg Config) (result e
 			return e
 		}
 		if len(req.ID) == 0 {
+			if id, ok := daemon.CancellationID(req); ok {
+				pending.Cancel(id)
+			}
 			continue
 		}
 		if response, ok := daemon.Setup(req); ok {
@@ -372,7 +401,18 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, cfg Config) (result e
 			}
 			continue
 		}
+		flight, ok := pending.Begin(ctx, req.ID)
+		if !ok {
+			<-slots
+			return ipc.ErrFrame
+		}
 		calls.Add(1)
-		go func(req daemon.Request) { defer calls.Done(); defer func() { <-slots }(); write(cl.call(ctx, req)) }(req)
+		go func(req daemon.Request, flight *daemon.Flight) {
+			defer calls.Done()
+			defer flight.Finish()
+			defer func() { <-slots }()
+			response := cl.call(flight.Context, req)
+			flight.Reply(func() { write(response) })
+		}(req, flight)
 	}
 }

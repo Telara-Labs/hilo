@@ -13,6 +13,7 @@ import (
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcp"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/shim"
 )
 
@@ -37,7 +38,7 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 	}
 	switch args[0] {
 	case "daemon":
-		e = daemon.Run(ctx, daemon.Config{Paths: p})
+		e = daemon.Run(ctx, daemon.Config{Paths: p, Open: func(context.Context) (daemon.Backend, error) { return mcp.New(nil, nil), nil }})
 		if errors.Is(e, context.Canceled) {
 			return nil
 		}

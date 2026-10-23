@@ -308,7 +308,7 @@ func TestProcessShimSetupAndForward(t *testing.T) {
 	cmd := exec.Command(binary, args(p, "shim")...)
 	cmd.Stdin = strings.NewReader(input)
 	out, e := cmd.CombinedOutput()
-	if e != nil || !bytes.Contains(out, []byte(`"ok":true`)) || !bytes.Contains(out, []byte(`"tools":[]`)) {
+	if e != nil || !bytes.Contains(out, []byte(`"ok":true`)) || !bytes.Contains(out, []byte(`"name":"telara_task_list"`)) {
 		t.Fatalf("shim %s %v", out, e)
 	}
 }

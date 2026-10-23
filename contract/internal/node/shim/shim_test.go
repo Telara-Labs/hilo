@@ -5,21 +5,89 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcpcatalog"
 )
 
 func TestLocalSetupWithoutDaemon(t *testing.T) {
-	var out bytes.Buffer
-	e := Run(context.Background(), strings.NewReader("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}\n"), &out, Config{})
-	if e != nil || !strings.Contains(out.String(), "protocolVersion") || !strings.Contains(out.String(), `"tools":[]`) {
-		t.Fatalf("setup %s %v", out.String(), e)
+	for _, proposal := range []string{"2024-11-05", "2025-03-26", "2025-06-18", "2026-07-28", "2025-11-25", "2099-01-01", "unknown"} {
+		t.Run(proposal, func(t *testing.T) {
+			var out bytes.Buffer
+			// This would fail immediately if any setup request tried daemon startup.
+			starts := 0
+			cfg := Config{Start: func() error { starts++; return errors.New("must_not_start") }}
+			input := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":%q}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"ping"}
+`, proposal)
+			if e := Run(context.Background(), strings.NewReader(input), &out, cfg); e != nil {
+				t.Fatal(e)
+			}
+			decoder := json.NewDecoder(&out)
+			var init, catalog, ping daemon.Response
+			for _, response := range []*daemon.Response{&init, &catalog, &ping} {
+				if e := decoder.Decode(response); e != nil || response.Error != nil {
+					t.Fatal("offline setup failed", e)
+				}
+			}
+			wantVersion := proposal
+			if proposal != "2024-11-05" && proposal != "2025-03-26" && proposal != "2025-06-18" {
+				wantVersion = daemon.LatestLegacyProtocolVersion
+			}
+			if init.Result.(map[string]any)["protocolVersion"] != wantVersion {
+				t.Fatal("incorrect negotiated version")
+			}
+			raw, _ := json.Marshal(catalog.Result)
+			var listed struct {
+				Tools []mcpcatalog.Tool `json:"tools"`
+			}
+			if e := json.Unmarshal(raw, &listed); e != nil || len(listed.Tools) != 8 || !reflect.DeepEqual(listed.Tools, mcpcatalog.Tools()) {
+				t.Fatal("offline catalog differs from compiled schemas")
+			}
+			if string(ping.ID) != "3" || ping.Result.(map[string]any)["resultType"] != "complete" || starts != 0 {
+				t.Fatal("ping or local setup reached daemon")
+			}
+		})
 	}
+}
+
+func TestOpaqueIDKeepsOfflineSessionAlive(t *testing.T) {
+	secret := "ghp_" + strings.Repeat("a", 36)
+	input := new(bytes.Buffer)
+	for i, id := range []string{secret, "followup", strings.Repeat("x", 1024)} {
+		_ = json.NewEncoder(input).Encode(daemon.Request{JSONRPC: "2.0", ID: mustID(t, id), Method: []string{"initialize", "tools/list", "ping"}[i]})
+	}
+	var out bytes.Buffer
+	if err := Run(context.Background(), input, &out, Config{}); err != nil {
+		t.Fatal("opaque ID terminated session")
+	}
+	decoder := json.NewDecoder(&out)
+	for _, id := range []string{secret, "followup", strings.Repeat("x", 1024)} {
+		var response daemon.Response
+		if err := decoder.Decode(&response); err != nil || response.Error != nil {
+			t.Fatal("missing correlation response")
+		}
+		var got string
+		if json.Unmarshal(response.ID, &got) != nil || got != id {
+			t.Fatal("transport correlation changed")
+		}
+	}
+}
+func mustID(t *testing.T, id string) json.RawMessage {
+	t.Helper()
+	raw, e := json.Marshal(id)
+	if e != nil {
+		t.Fatal(e)
+	}
+	return raw
 }
 func TestMalformedStdio(t *testing.T) {
 	var out bytes.Buffer

@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "repository": "telara-inference",
+  "ref": "origin/main",
+  "commit": "a2db130624c04e8fffaa7a4d3552079dd4219eaf",
+  "source": "services/mcp-gateway/src/internal/engine/capabilities.go",
+  "source_sha256": "a20eb47c2bb45ef0b16b78a857e0e207cc97201ff888f9ff70062081126585fb",
+  "functions": [
+    "taskListDef",
+    "taskCreateDef",
+    "taskResumeDef",
+    "taskCheckpointDef",
+    "taskPauseDef",
+    "taskCompleteDef",
+    "knowledgeSearchDef",
+    "knowledgeGetContextDef"
+  ],
+  "capture": "literal source definitions, not live tools/list"
+}
