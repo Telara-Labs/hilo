@@ -1,0 +1,6 @@
+{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"id":"01990000-0000-4000-8000-000000000001","cwd":"/synthetic/project","cli_version":"fixture-v1","git":{"branch":"synthetic"}}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Inspect the fixture."},{"type":"input_text","text":"Keep this separate."}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"call_synthetic","name":"read_file","namespace":"fixture","arguments":"{\"path\":\"/synthetic/guide\",\"settings\":{\"count\":9007199254740993,\"enabled\":true}}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_synthetic","output":"Synthetic guide contents."}}
+{"type":"event_msg","payload":{"type":"mcp_tool_call_end","call_id":"call_synthetic","result":{"Ok":{"content":[{"type":"text","text":"Native success flag remains an untrusted observation."}],"isError":false}}}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The final prose does not imply verified completion."}]},"owner":"attacker","machine":"other","provenance":"gateway","Supports":["fabricated"]}

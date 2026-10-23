@@ -1,0 +1,14 @@
+//go:build !linux && !darwin
+
+package capture
+
+import "os"
+
+type openedUnitHandle struct {
+	file    *os.File
+	initial os.FileInfo
+}
+
+func openUnit(string, string) (*openedUnitHandle, error) { return nil, hold("unsupported_platform") }
+func (*openedUnitHandle) close()                         {}
+func (*openedUnitHandle) stable() bool                   { return false }

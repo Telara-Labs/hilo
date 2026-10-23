@@ -1,0 +1,262 @@
+// Package capture contains preparation, not capture admission. There is no
+// durable progress, seal, signature, or successful-capture API in this package.
+package capture
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	tapredact "github.com/Telara-Labs/TAP-Runtime/discover/redact"
+	"github.com/Telara-Labs/telara-memory/contract/record"
+)
+
+const (
+	maxFrame        = 8 << 20
+	maxUnit         = 64 << 20
+	maxObservations = 4096
+	maxText         = 64 << 10
+	maxArgs         = 256
+	readerVersion   = "native-jsonl-preparation/1"
+	localPolicyID   = "tap-discover/cd7b481855de/local"
+)
+
+// All errors are fixed codes. Never wrap parser, filesystem, policy, or native
+// errors, whose messages can contain a path, transcript, or credential.
+func hold(code string) error { return errors.New("capture preparation held: " + code) }
+
+type sourceOccurrence struct{ source, session, owner, machine string }
+type preOpenGate func(context.Context, sourceOccurrence) (suppressed bool, err error)
+
+type preparationConfig struct {
+	root, home, owner, machine string
+	enabled                    bool
+	policy                     localPolicy
+}
+type unitLocator struct {
+	client, relative, source, session string
+	// Resolved by the future trusted runtime from a durable mapping. It is
+	// an immutable value, never a mutable map or native content probe.
+	mappedSession string
+}
+type position struct{ line, block, inner int }
+type field struct {
+	name, text          string
+	argument, truncated bool
+}
+type preparedObservation struct {
+	kind, nativeID, callID string
+	position               position
+	fields                 []field
+	// This reports a literal native flag, never verified execution or success.
+	observedError bool
+}
+type preparedBatch struct {
+	occurrence              sourceOccurrence
+	client, reader, ruleset string
+	// Local file ownership proves permission to read, not native truth. These
+	// fixed values cannot be selected by any native JSON field.
+	provenance   string
+	observations []preparedObservation
+}
+
+// localPolicy is an immutable, fixed local ruleset, not a caller-provided
+// redaction callback. Other profiles and tenant overlays are unsupported.
+type localPolicy struct{ selected bool }
+
+func selectLocalPolicy(profile string, tenantOverlay bool) (localPolicy, error) {
+	if profile != "local" || tenantOverlay {
+		return localPolicy{}, hold("unsupported_policy")
+	}
+	return localPolicy{selected: true}, nil
+}
+func (localPolicy) text(s string) string           { return tapredact.Redact(s) }
+func (localPolicy) argument(name, s string) string { return tapredact.Argument(name, s) }
+
+type fullFieldRules interface {
+	text(string) string
+	argument(string, string) string
+}
+
+var safeToken = regexp.MustCompile(`^[A-Za-z0-9_.:/-]{1,200}$`)
+
+func identifier(s string) bool {
+	return s != "" && safeToken.MatchString(s) && tapredact.Redact(s) == s
+}
+
+func resolve(c preparationConfig, u unitLocator) (string, error) {
+	if u.client != "claude-code" && u.client != "codex" {
+		return "", hold("unsupported_client")
+	}
+	if !record.IsKeyID(c.owner) || !record.IsUUIDv4(c.machine) || !record.IsHex64(u.source) || !record.IsSessionKey(u.session) {
+		return "", hold("unresolved_identity")
+	}
+	if !filepath.IsAbs(c.root) || filepath.Clean(c.root) != c.root || !filepath.IsAbs(c.home) || filepath.Clean(c.home) != c.home || u.relative == "" || filepath.IsAbs(u.relative) || filepath.Clean(u.relative) != u.relative {
+		return "", hold("unsafe_path")
+	}
+	for _, p := range strings.Split(u.relative, string(filepath.Separator)) {
+		if p == "" || p == "." || p == ".." {
+			return "", hold("unsafe_path")
+		}
+	}
+	if filepath.Ext(u.relative) != ".jsonl" {
+		return "", hold("unsupported_format")
+	}
+	stem := strings.TrimSuffix(filepath.Base(u.relative), ".jsonl")
+	native := stem
+	if u.client == "codex" && len(stem) >= 36 {
+		native = stem[len(stem)-36:]
+	}
+	if !record.IsUUID(native) {
+		native = u.mappedSession
+		if !identifier(native) {
+			return "", hold("unresolved_session")
+		}
+	} else if u.mappedSession != "" && u.mappedSession != native {
+		return "", hold("identity_mismatch")
+	}
+	return native, nil
+}
+
+// Source/session keys are pure identities over trusted location/configuration,
+// never digests of transcript bytes. The gate must see exactly the identities
+// the resolved unit will carry, not independently supplied syntactic tokens.
+func occurrence(c preparationConfig, u unitLocator, native string) (sourceOccurrence, error) {
+	var empty sourceOccurrence
+	rootRel, err := filepath.Rel(c.home, c.root)
+	if err != nil || rootRel == ".." || strings.HasPrefix(rootRel, ".."+string(filepath.Separator)) {
+		return empty, hold("unsafe_path")
+	}
+	unit := filepath.ToSlash(filepath.Join(rootRel, u.relative))
+	if tapredact.Redact(unit) != unit {
+		return empty, hold("unsafe_path")
+	}
+	kind := record.NativeLocal
+	if record.IsUUID(native) {
+		kind = record.NativeGlobal
+	}
+	session, err := record.SessionKey(u.client, "local", kind, native, c.machine)
+	if err != nil {
+		return empty, hold("unresolved_identity")
+	}
+	source, err := record.SourceKey(u.client, c.machine, unit)
+	if err != nil {
+		return empty, hold("unresolved_identity")
+	}
+	if u.source != source || u.session != session {
+		return empty, hold("identity_mismatch")
+	}
+	return sourceOccurrence{source, session, c.owner, c.machine}, nil
+}
+
+func prepare(ctx context.Context, c preparationConfig, u unitLocator, gate preOpenGate) (preparedBatch, error) {
+	var empty preparedBatch
+	if ctx == nil || ctx.Err() != nil {
+		return empty, hold("cancelled")
+	}
+	if !c.enabled {
+		return empty, hold("no_capture")
+	}
+	if !c.policy.selected {
+		return empty, hold("unsupported_policy")
+	}
+	if gate == nil {
+		return empty, hold("missing_gate")
+	}
+	native, err := resolve(c, u)
+	if err != nil {
+		return empty, err
+	}
+	occ, err := occurrence(c, u, native)
+	if err != nil {
+		return empty, err
+	}
+	suppressed, err := gate(ctx, occ)
+	if err != nil {
+		return empty, hold("gate_unavailable")
+	}
+	if suppressed {
+		return empty, hold("suppressed")
+	}
+	if ctx.Err() != nil {
+		return empty, hold("cancelled")
+	}
+	h, err := openUnit(c.root, u.relative)
+	if err != nil {
+		return empty, err
+	}
+	defer h.close()
+	batch := preparedBatch{occurrence: occ, client: u.client, reader: readerVersion, ruleset: localPolicyID, provenance: "untrusted_local_file"}
+	err = frameUnit(ctx, h, func(line int, b []byte) error {
+		if err := strictJSON(b); err != nil {
+			return err
+		}
+		var observations []preparedObservation
+		var err error
+		if u.client == "claude-code" {
+			observations, err = decodeClaude(b, line, native)
+		} else {
+			observations, err = decodeCodex(b, line, native)
+		}
+		if err != nil {
+			return err
+		}
+		for _, o := range observations {
+			if len(batch.observations) >= maxObservations {
+				return hold("observation_limit")
+			}
+			clean, err := redactObservation(o, c.policy)
+			if err != nil {
+				return err
+			}
+			batch.observations = append(batch.observations, clean)
+		}
+		return nil
+	})
+	if err != nil {
+		return empty, err
+	}
+	return batch, nil
+}
+
+// Input fields are complete native values. This function never calls TAP's
+// Flatten/ClaudeEventsWith/CodexCall or an assembler/mining projection.
+func redactObservation(o preparedObservation, policy fullFieldRules) (preparedObservation, error) {
+	if len(o.fields) > maxArgs {
+		return preparedObservation{}, hold("field_limit")
+	}
+	for i, f := range o.fields {
+		// Field names may be dynamic argument keys. Never retain a secret name,
+		// nor redact an identity/name into a colliding stable identifier.
+		if len(f.name) > 200 || policy.text(f.name) != f.name {
+			return preparedObservation{}, hold("unsafe_field_name")
+		}
+		text := ""
+		if f.argument {
+			text = policy.argument(f.name, f.text)
+		} else {
+			text = policy.text(f.text)
+		}
+		o.fields[i].text, o.fields[i].truncated = bound(text, maxText)
+	}
+	return o, nil
+}
+
+func bound(s string, cap int) (string, bool) {
+	if len(s) <= cap {
+		return s, false
+	}
+	const marker = "\n[...elided...]\n"
+	head := (cap - len(marker)) / 2
+	tail := cap - len(marker) - head
+	for head > 0 && head < len(s) && (s[head]&0xc0) == 0x80 {
+		head--
+	}
+	start := len(s) - tail
+	for start < len(s) && (s[start]&0xc0) == 0x80 {
+		start++
+	}
+	return s[:head] + marker + s[start:], true
+}
