@@ -74,11 +74,21 @@ questions are resolved as follows.
   including explicit approval rows. Ruleset behavior is measured over the
   shared corpus with the actual published redactor and a pinned golden.
 
+## Temporary runtime boundary
+
+Private development places runtime adapters under `internal/node/` in this
+module. Pure packages must not import them or their database dependencies.
+The combined module temporarily requires Go 1.26 for its pinned SQLite runtime;
+older compiler compatibility has not been proved. Before publication, split
+runtime dependencies into a separate module and verify pure consumers with
+the older supported compiler. Package isolation alone does not preserve an
+older module requirement.
+
 ## Adapter obligations
 
 Pure helpers accept already authenticated, verified receiver facts. A caller
-must not derive those facts from untrusted transport labels. This module does
-not implement database transactions, physical cleanup, authenticated Date
+must not derive those facts from untrusted transport labels. The pure packages
+do not implement database transactions, physical cleanup, authenticated Date
 freshness, key storage, DPoP, age encryption, compression or filesystem I/O.
 Its in-memory models are single-transaction reference reducers, not concurrent
 stores. Adapters must persist authority facts and exposures, verify signatures
