@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>S-1-5-21-123</UserId></LogonTrigger></Triggers>
+<Principals><Principal id="Owner"><UserId>S-1-5-21-123</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+<Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>false</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure></Settings>
+<Actions Context="Owner"><Exec><Command>/Users/owner/Memory &amp; stuff/bin/node</Command><Arguments>&#34;managed-daemon&#34; &#34;--install-dir&#34; &#34;/Users/owner/Memory &amp; stuff/$cash%unit&#34;</Arguments></Exec></Actions>
+</Task>

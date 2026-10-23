@@ -1,0 +1,15 @@
+[Unit]
+Description=Local memory node
+StartLimitIntervalSec=180
+StartLimitBurst=3
+
+[Service]
+Type=exec
+ExecStart="/Users/owner/Memory & stuff/bin/node" "managed-daemon" "--install-dir" "/Users/owner/Memory & stuff/$$cash%%unit"
+Restart=on-failure
+RestartSec=30
+UMask=0077
+TimeoutStopSec=infinity
+
+[Install]
+WantedBy=default.target
