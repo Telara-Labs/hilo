@@ -110,7 +110,7 @@ func TestInvalidatedSuperseder(t *testing.T) {
 		t.Fatalf("A revived: %v", ids(hs))
 	}
 	// B's header purged: the index pair keeps A superseded
-	if hs := Heads([]Version{a, c}, []Pair{{From: b.ID, To: a.ID}}, L, record.KindTask); len(hs) != 0 {
+	if hs := Heads([]Version{a, c}, []Pair{{From: b.ID, To: a.ID, Owner: a.Owner, LID: a.LID, Type: a.Type}}, L, record.KindTask); len(hs) != 0 {
 		t.Fatalf("A revived after header purge: %v", ids(hs))
 	}
 }

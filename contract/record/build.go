@@ -18,6 +18,17 @@ func Build(h Header, body any, saltKey []byte) (*Record, error) {
 	if body == nil {
 		return nil, fmt.Errorf("build: a body is required")
 	}
+	if chunk, ok := body.(*ChunkBody); ok {
+		for i, e := range chunk.Events {
+			if e.Revision == "" {
+				v, err := ReviseEvent(e, e.Replaces, saltKey)
+				if err != nil {
+					return nil, err
+				}
+				chunk.Events[i] = v
+			}
+		}
+	}
 	if salted(h.Type) {
 		if !setSalt(body, "") {
 			return nil, fmt.Errorf("build: %T is not a salted body", body)

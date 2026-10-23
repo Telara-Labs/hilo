@@ -25,9 +25,13 @@ func (s SigStatus) Quarantined() bool { return s == StatusUnknownSigner || s == 
 // Context carries receiver-side facts VerifyRecord needs. None of it is part
 // of the record.
 type Context struct {
-	Route       record.Route
-	AdmittedSeq int64           // this node's admission order of the record
-	Receipt     *record.Receipt // hosted acceptance, if carried
+	SignerRole    record.Role   // default device; service/policy require trusted issuer
+	Issuer        TrustedIssuer // authenticated transport/pinned login, not record metadata
+	ReceiptIssuer TrustedIssuer // independent authenticated issuer of receipt
+	Route         record.Route
+	AdmittedSeq   int64           // this node's admission order of the record
+	Receipt       *record.Receipt // hosted acceptance, if carried
+	RecordID      string          // filled by VerifyRecord, never caller authority
 }
 
 // Result is the outcome of VerifyRecord.
@@ -49,6 +53,15 @@ func fail(s SigStatus, format string, a ...any) Result {
 // LID, and validity across rotation and revocation (§4.4). Retired keys
 // verify (R4.1). A record that fails is quarantined, never indexed.
 func VerifyRecord(r *record.Record, sigs []record.Signature, st *State, c Context) Result {
+	if r == nil || st == nil {
+		return fail(StatusInvalid, "record and keyring required")
+	}
+	parsed, err := record.Parse(r.HeaderJCS, r.BodyJCS, r.ID)
+	if err != nil {
+		return fail(StatusInvalid, "invalid canonical record")
+	}
+	r = parsed
+	c.RecordID = r.ID
 	h := r.Header
 	if h.Type == record.KindKeyOp {
 		return fail(StatusInvalid, "key_op records are verified by VerifyKeyOp")
@@ -63,7 +76,14 @@ func VerifyRecord(r *record.Record, sigs []record.Signature, st *State, c Contex
 	if s.Alg != AlgEd25519 || s.Ctx != CtxRecord || s.KeyID != h.Author.KeyID {
 		return fail(StatusInvalid, "signature alg, ctx or key id does not match the header author")
 	}
-	k := st.Key(s.KeyID)
+	role := c.SignerRole
+	if role == "" {
+		role = record.RoleDevice
+	}
+	if role != record.RoleDevice && !c.Issuer.ValidFor(role) {
+		return fail(StatusUnknownSigner, "authenticated issuer context required")
+	}
+	k := st.KeyFor(s.KeyID, role, c.Issuer.Tenant)
 	if k == nil {
 		return fail(StatusUnknownSigner, "signer %s is not in the keyring", s.KeyID)
 	}
@@ -114,7 +134,7 @@ func PreRevocation(k *Key, c Context, st *State) bool {
 	if c.AdmittedSeq > 0 && k.RevokedSeq > 0 && c.AdmittedSeq < k.RevokedSeq {
 		return true
 	}
-	if c.Receipt != nil && VerifyReceipt(*c.Receipt, st) == nil && c.Receipt.AcceptedAt < k.RevokedAt {
+	if c.Receipt != nil && VerifyReceipt(*c.Receipt, st, c.ReceiptIssuer) == nil && c.Receipt.ID == c.RecordID && (k.Role != record.RoleDevice || c.Receipt.DeviceID == k.MachineID) && beforeCutoff(k, *c.Receipt, st) {
 		return true
 	}
 	return false
@@ -122,15 +142,18 @@ func PreRevocation(k *Key, c Context, st *State) bool {
 
 // VerifyReceipt checks a receipt's signature by an active or retired service
 // key of the receipt's tenant.
-func VerifyReceipt(r record.Receipt, st *State) error {
+func VerifyReceipt(r record.Receipt, st *State, issuer TrustedIssuer) error {
+	if !issuer.ValidFor(record.RoleService) || r.Tenant != issuer.Tenant {
+		return fmt.Errorf("receipt: authenticated issuer required")
+	}
 	if r.Sig == nil {
 		return fmt.Errorf("receipt is unsigned")
 	}
-	k := st.Key(r.Sig.KeyID)
-	if k == nil || k.Role != record.RoleService || k.Tenant != r.Tenant || k.Status == KeyRevoked {
+	k := st.KeyFor(r.Sig.KeyID, record.RoleService, issuer.Tenant)
+	if k == nil || k.Role != record.RoleService || k.Tenant != r.Tenant || (k.Status != KeyActive && k.Status != KeyRetired) {
 		return fmt.Errorf("receipt signer is not a valid service key of tenant %q", r.Tenant)
 	}
-	if !record.IsHex64(r.ID) {
+	if !record.IsHex64(r.ID) || !record.IsHex64(r.Policy) || r.AcceptedAt <= 0 || r.HSeq <= 0 || !record.IsUUID(r.DeviceID) {
 		return fmt.Errorf("receipt id malformed")
 	}
 	msg, err := ReceiptMessage(r)
@@ -156,4 +179,27 @@ func VerifyKeyOp(kr *Keyring, op *KeyOp) KeyOpResult {
 		return KeyOpResult{Status: OpInvalid, Err: err}
 	}
 	return KeyOpResult{Status: kr.State().Status[op.Rec.ID]}
+}
+
+// beforeCutoff uses only authenticated times in the receipt issuer's domain.
+// Missing receipts for ANY independent revocation cause fail closed.
+func beforeCutoff(k *Key, r record.Receipt, st *State) bool {
+	if len(k.RevocationCauses) == 0 {
+		return false
+	}
+	var cutoff int64
+	for _, id := range k.RevocationCauses {
+		op := st.Ops[id]
+		if op == nil || op.Receipt == nil {
+			return false
+		}
+		rc := *op.Receipt
+		if rc.ID != id || rc.Tenant != r.Tenant || op.ReceiptIssuer.Tenant != r.Tenant || VerifyReceipt(rc, st, op.ReceiptIssuer) != nil {
+			return false
+		}
+		if cutoff == 0 || rc.AcceptedAt < cutoff {
+			cutoff = rc.AcceptedAt
+		}
+	}
+	return r.AcceptedAt < cutoff
 }

@@ -1,46 +1,37 @@
-// Package invalidate is the dependency-aware invalidation of the memory node
-// contract (§5): erasure, retraction and withdrawal, the invalidation
-// closure over the dependency graph, grant inheritance, ancestry-pending
-// and lineage-hold states.
-//
-// It holds no storage. Closure is a pure function. Model is an in-memory
-// reference evaluator: it keeps the inputs a store keeps (admitted records,
-// their dependency rows, control records, delivered sets) and derives every
-// status from them, so its answers are the ones any store must reproduce
-// and are independent of arrival order.
+// Package invalidate evaluates dependency-aware invalidation from verified
+// admission facts. It stores no text or bytes; a persistent store must apply
+// the returned changes atomically with admission and physical cleanup.
 package invalidate
 
 import (
-	"sort"
-
+	"encoding/json"
+	"fmt"
 	"github.com/Telara-Labs/telara-memory/contract/record"
+	"sort"
+	"strings"
 )
 
-// Closure returns seeds plus every node whose dependencies meet the result,
-// transitively. deps maps a node to its dependency set D(n). The result does
-// not depend on map or slice order.
 func Closure(deps map[string][]string, seeds []string) map[string]bool {
-	rev := map[string][]string{}
-	for n, ds := range deps {
+	reverse := map[string][]string{}
+	for id, ds := range deps {
 		for _, d := range ds {
-			rev[d] = append(rev[d], n)
+			reverse[d] = append(reverse[d], id)
 		}
 	}
 	out := map[string]bool{}
-	stack := append([]string(nil), seeds...)
-	for len(stack) > 0 {
-		n := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if out[n] {
+	todo := append([]string(nil), seeds...)
+	for len(todo) > 0 {
+		id := todo[len(todo)-1]
+		todo = todo[:len(todo)-1]
+		if out[id] {
 			continue
 		}
-		out[n] = true
-		stack = append(stack, rev[n]...)
+		out[id] = true
+		todo = append(todo, reverse[id]...)
 	}
 	return out
 }
 
-// TombKind is the kind of a tomb (§5.1).
 type TombKind string
 
 const (
@@ -49,7 +40,11 @@ const (
 	Withdrawn TombKind = "withdrawn"
 )
 
-// rank orders tomb kinds when one id is invalidated by several controls.
+type Tomb struct {
+	Kind  TombKind
+	Cause string
+}
+
 func rank(k TombKind) int {
 	switch k {
 	case Erased:
@@ -62,136 +57,176 @@ func rank(k TombKind) int {
 	return 0
 }
 
-// Tomb is one tomb row: the kind and the control that caused it.
-type Tomb struct {
-	Kind  TombKind
-	Cause string // cause_control_id
-}
-
-// Item is what the evaluator knows about one admitted record or op-cache row.
 type Item struct {
-	ID         string
-	LID        string
-	Kind       record.Kind
-	Prov       record.Prov
-	TaskID     string
-	SessionKey string
-	Source     string
-	// Owner is the owner of the verified signer (§1.3).
-	Owner string
-	// Deps is D(r) without links.origin: links.derived_from and body
-	// manifests (session chunks, rollup covers), or an op-cache row's deps.
-	Deps []string
-	// Origin is links.origin; its absence never makes a record pending.
-	Origin string
-	// Route and, for hosted-pull, the tenant it was pulled from.
-	Route       record.Route
-	RouteTenant string
-	// OpRow marks an op-cache row (R2.2). It is reached only by closure.
-	OpRow bool
-	// Lineage inputs. SessionSeq is the highest session seq the record
-	// covers; Recalls are the lid@id read-backs its events recorded (chunks);
-	// Scope and Explicit place explicit writes for delivered-set holds.
-	SessionSeq int64
-	Recalls    []Recall
-	Scope      string
-	Explicit   bool
+	Events                            []string // admitted event identities only, never salt or text
+	ID, LID                           string
+	Kind                              record.Kind
+	Prov                              record.Prov
+	TaskID, SessionKey, Source, Owner string
+	Deps                              []string
+	Origin                            string
+	// Route facts MUST already have been authenticated by the admission layer.
+	Route           record.Route
+	RouteTenant     string
+	GrantGeneration int64
+	OriginMachine   string
+	OpRow           bool
+	SessionSeq      int64
+	Recalls         []Recall
+	Scope           string
+	Explicit        bool
 }
-
-// Recall is one Event.Recalled entry: at session seq Seq the session saw ID.
 type Recall struct {
 	Seq int64
 	ID  string
 }
-
-// Control is a verified control record.
 type Control struct {
 	ID         string
-	Kind       record.Kind // erasure | retraction | withdrawal
-	Owner      string      // owner of the verified signer: genesis key id or "tenant:<id>"
+	Kind       record.Kind
+	Owner      string
 	Erasure    *record.ErasureBody
 	Retraction *record.RetractionBody
 	Withdrawal *record.WithdrawalBody
 }
 
 func (c *Control) byTenant() (string, bool) {
-	if len(c.Owner) > 7 && c.Owner[:7] == "tenant:" {
-		return c.Owner[7:], true
+	if strings.HasPrefix(c.Owner, "tenant:") {
+		return strings.TrimPrefix(c.Owner, "tenant:"), true
 	}
 	return "", false
 }
 
-// Delivered is one delivered-set entry: ID was delivered to Scope at local
-// admission sequence Seq.
+// Delivered is conservative exposure, not confirmed-delivery dedup state.
 type Delivered struct {
-	Scope string
-	ID    string
-	Seq   int64
+	Scope, ID string
+	Seq       int64
 }
 
-// Status of an item.
+// Exposure survives body deletion, compaction and late attribution. A zero
+// boundary with UnknownOrder conservatively applies to all matching output.
+type Exposure struct {
+	OriginMachine, Scope, SessionKey, ID string
+	Seq                                  int64
+	UnknownOrder                         bool
+	AffectsIDs                           []string
+}
 type Status string
 
 const (
 	Live            Status = "live"
-	AncestryPending Status = "ancestry-pending" // shown only in S, labelled
-	LineageHold     Status = "lineage-hold"     // out of H, E, P, S and export until released
+	AncestryPending Status = "ancestry-pending"
+	LineageHold     Status = "lineage-hold"
 	Invalidated     Status = "invalidated"
 	Absent          Status = "absent"
 )
 
-// Model is the reference evaluator.
 type Model struct {
-	items     map[string]*Item
-	seqOf     map[string]int64 // local admission order of items and controls
-	controls  map[string]*Control
-	delivered []Delivered
-	released  map[string]bool
-	seq       int64
+	items        map[string]*Item
+	controls     map[string]*Control
+	seqOf        map[string]int64
+	seq          int64
+	exposures    []Exposure
+	directGrants map[string]map[string]record.GrantRef
+	released     map[string]map[string]bool
 }
 
-// NewModel returns an empty evaluator.
 func NewModel() *Model {
-	return &Model{items: map[string]*Item{}, seqOf: map[string]int64{}, controls: map[string]*Control{}, released: map[string]bool{}}
+	return &Model{items: map[string]*Item{}, controls: map[string]*Control{}, seqOf: map[string]int64{}, released: map[string]map[string]bool{}, directGrants: map[string]map[string]record.GrantRef{}}
 }
-
 func (m *Model) next(id string) {
 	if _, ok := m.seqOf[id]; !ok {
 		m.seq++
 		m.seqOf[id] = m.seq
 	}
 }
-
-// Admit records an admitted record or op-cache row. Admitting an id twice is
-// a no-op.
+func (m *Model) AdmittedSeq(id string) int64 { return m.seqOf[id] }
 func (m *Model) Admit(it Item) {
+	// Authenticated grants are delivery facts, independent of content dedup.
+	if it.Route == record.RouteHostedPull && it.RouteTenant != "" && it.GrantGeneration > 0 {
+		g := record.GrantRef{Tenant: it.RouteTenant, Generation: it.GrantGeneration}
+		if m.directGrants[it.ID] == nil {
+			m.directGrants[it.ID] = map[string]record.GrantRef{}
+		}
+		m.directGrants[it.ID][grantKey(g)] = g
+	}
+
 	if _, ok := m.items[it.ID]; ok {
 		return
 	}
 	c := it
+	c.Deps = append([]string(nil), it.Deps...)
+	c.Events = append([]string(nil), it.Events...)
+	c.Recalls = append([]Recall(nil), it.Recalls...)
 	m.items[it.ID] = &c
 	m.next(it.ID)
-}
-
-// Apply records a verified control record.
-func (m *Model) Apply(c Control) {
-	if _, ok := m.controls[c.ID]; ok {
-		return
+	for _, r := range it.Recalls {
+		m.Expose(Exposure{SessionKey: it.SessionKey, ID: r.ID, Seq: r.Seq})
 	}
-	cc := c
+}
+func (m *Model) Apply(c Control) error {
+	if c.ID == "" {
+		return fmt.Errorf("control: id required")
+	}
+	if _, ok := m.controls[c.ID]; ok {
+		return nil
+	}
+	switch c.Kind {
+	case record.KindErasure:
+		if c.Erasure == nil {
+			return fmt.Errorf("control: absent erasure")
+		}
+	case record.KindRetraction:
+		if c.Retraction == nil {
+			return fmt.Errorf("control: absent retraction")
+		}
+	case record.KindWithdrawal:
+		if c.Withdrawal == nil || c.Withdrawal.PolicySeq <= 0 {
+			return fmt.Errorf("control: positive withdrawal generation required")
+		}
+	default:
+		return fmt.Errorf("control: unsupported kind")
+	}
+	var cc Control
+	raw, _ := json.Marshal(c)
+	if err := json.Unmarshal(raw, &cc); err != nil {
+		return err
+	}
 	m.controls[c.ID] = &cc
 	m.next(c.ID)
+	return nil
+}
+func (m *Model) Deliver(d Delivered) { m.Expose(Exposure{Scope: d.Scope, ID: d.ID, Seq: d.Seq}) }
+func (m *Model) Expose(e Exposure) {
+	e.AffectsIDs = append([]string(nil), e.AffectsIDs...)
+	m.exposures = append(m.exposures, e)
 }
 
-// Deliver records a delivered-set entry.
-func (m *Model) Deliver(d Delivered) { m.delivered = append(m.delivered, d) }
-
-// Release lets the user release a lineage-held record.
-func (m *Model) Release(id string) { m.released[id] = true }
-
-// AdmittedSeq returns the local admission order of an id.
-func (m *Model) AdmittedSeq(id string) int64 { return m.seqOf[id] }
-
+// Exposures returns a detached ledger snapshot for authenticated bundle transfer.
+func (m *Model) Exposures() []Exposure {
+	out := make([]Exposure, len(m.exposures))
+	for i, e := range m.exposures {
+		e.AffectsIDs = append([]string(nil), e.AffectsIDs...)
+		out[i] = e
+	}
+	return out
+}
+func contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+func (m *Model) downstream(it *Item, e Exposure) bool {
+	if contains(e.AffectsIDs, it.ID) {
+		return true
+	}
+	if e.SessionKey != "" && it.SessionKey == e.SessionKey {
+		return e.UnknownOrder || it.SessionSeq > e.Seq
+	}
+	return e.Scope != "" && it.Explicit && it.Scope == e.Scope && (e.OriginMachine == "" || it.OriginMachine == e.OriginMachine) && (e.UnknownOrder || m.seqOf[it.ID] > e.Seq)
+}
 func (m *Model) depsOf(it *Item) []string {
 	d := append([]string(nil), it.Deps...)
 	if it.Origin != "" {
@@ -199,120 +234,143 @@ func (m *Model) depsOf(it *Item) []string {
 	}
 	return d
 }
+func grantKey(g record.GrantRef) string { return fmt.Sprintf("%s/%d", g.Tenant, g.Generation) }
 
-// Grants returns Grants(r): the route grant plus the grants of every
-// present dependency, transitively (§5.2). Sorted.
-func (m *Model) Grants(id string) []string {
-	memo := map[string]map[string]bool{}
-	g := m.grants(id, memo, map[string]bool{})
-	out := make([]string, 0, len(g))
-	for k := range g {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (m *Model) grants(id string, memo map[string]map[string]bool, visiting map[string]bool) map[string]bool {
-	if g, ok := memo[id]; ok {
-		return g
-	}
-	g := map[string]bool{}
-	it := m.items[id]
-	if it == nil || visiting[id] {
-		return g
-	}
-	visiting[id] = true
-	if it.Route == record.RouteHostedPull && it.RouteTenant != "" {
-		g["tenant:"+it.RouteTenant] = true
-	}
-	for _, d := range m.depsOf(it) {
-		for k := range m.grants(d, memo, visiting) {
-			g[k] = true
+// Grants computes a monotone fixed point across copied and semantic lineage.
+func (m *Model) Grants(id string) []record.GrantRef {
+	all := map[string]map[string]record.GrantRef{}
+	for key := range m.items {
+		all[key] = map[string]record.GrantRef{}
+		for gkey, g := range m.directGrants[key] {
+			all[key][gkey] = g
 		}
 	}
-	memo[id] = g
-	return g
+	changed := true
+	for changed {
+		changed = false
+		for key, it := range m.items {
+			ds := m.depsOf(it)
+			for _, e := range m.exposures {
+				if m.downstream(it, e) {
+					ds = append(ds, e.ID)
+				}
+			}
+			for _, d := range ds {
+				for k, g := range all[d] {
+					if _, ok := all[key][k]; !ok {
+						all[key][k] = g
+						changed = true
+					}
+				}
+			}
+		}
+	}
+	var out []record.GrantRef
+	for _, g := range all[id] {
+		out = append(out, g)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Tenant != out[j].Tenant {
+			return out[i].Tenant < out[j].Tenant
+		}
+		return out[i].Generation < out[j].Generation
+	})
+	return out
 }
-
 func (m *Model) hasGrant(id, tenant string) bool {
 	for _, g := range m.Grants(id) {
-		if g == "tenant:"+tenant {
+		if g.Tenant == tenant {
 			return true
 		}
 	}
 	return false
 }
-
-// mayTarget is the §5.4 authority table for the direct targets of c.
 func (m *Model) mayTarget(c *Control, it *Item) bool {
-	if it.OpRow {
+	if it.OpRow || it.Kind.IsControl() {
 		return false
 	}
-	tenant, isTSK := c.byTenant()
+	tenant, tsk := c.byTenant()
 	switch c.Kind {
 	case record.KindErasure:
-		if isTSK {
+		if tsk {
 			return it.Prov == record.ProvGateway && it.Owner == c.Owner && m.hasGrant(it.ID, tenant)
 		}
 		return it.Owner == c.Owner || it.Prov == record.ProvGateway
 	case record.KindRetraction:
 		return it.Owner == c.Owner
 	case record.KindWithdrawal:
-		return isTSK && c.Withdrawal != nil && c.Withdrawal.Tenant == tenant && m.hasGrant(it.ID, tenant)
+		return tsk && c.Withdrawal.Tenant == tenant && m.hasGrant(it.ID, tenant)
 	}
 	return false
 }
-
-func contains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
+func taskMatches(xs []record.TaskSelector, it *Item) bool {
+	for _, x := range xs {
+		if x.Owner == it.Owner && x.TaskID == it.TaskID {
 			return true
 		}
 	}
 	return false
 }
-
-// seeds resolves S0 for one control over the present items (§5.2 step 1).
-// Erasure selectors match whenever the record arrives, so they also ban
-// future arrivals. Listed ids match whenever the record arrives. A
-// withdrawal with All covers the records present when it was applied.
 func (m *Model) seeds(c *Control) []string {
-	var s []string
+	var out []string
+	// Exact device erasure/retraction ids establish a dependency tomb even when
+	// the root has not arrived. Known foreign/control targets remain excluded.
+	var exact []string
+	switch c.Kind {
+	case record.KindErasure:
+		exact = c.Erasure.Selectors.IDs
+	case record.KindRetraction:
+		exact = c.Retraction.IDs
+	case record.KindWithdrawal:
+		exact = c.Withdrawal.IDs
+	}
+	_, tsk := c.byTenant()
+	if !tsk {
+		for _, id := range exact {
+			if _, present := m.items[id]; !present {
+				out = append(out, id)
+			}
+		}
+	}
 	for id, it := range m.items {
 		match := false
 		switch c.Kind {
 		case record.KindErasure:
-			sel := c.Erasure.Selectors
-			match = contains(sel.IDs, id) || contains(sel.LIDs, it.LID) ||
-				(it.TaskID != "" && contains(sel.Tasks, it.TaskID)) ||
-				(it.SessionKey != "" && contains(sel.Sessions, it.SessionKey)) ||
-				(it.Source != "" && contains(sel.Sources, it.Source))
+			s := c.Erasure.Selectors
+			match = contains(s.IDs, id) || contains(s.LIDs, it.LID) || taskMatches(s.Tasks, it) || (it.SessionKey != "" && contains(s.Sessions, it.SessionKey)) || (it.Source != "" && contains(s.Sources, it.Source))
 		case record.KindRetraction:
 			match = contains(c.Retraction.IDs, id)
 		case record.KindWithdrawal:
-			match = contains(c.Withdrawal.IDs, id) || (c.Withdrawal.All && m.seqOf[id] < m.seqOf[c.ID])
+			match = contains(c.Withdrawal.IDs, id)
+			if c.Withdrawal.All {
+				for _, g := range m.Grants(id) {
+					if g.Tenant == c.Withdrawal.Tenant && g.Generation <= c.Withdrawal.PolicySeq {
+						match = true
+					}
+				}
+			}
 		}
 		if match && m.mayTarget(c, it) {
-			s = append(s, id)
+			out = append(out, id)
 		}
 	}
-	return s
+	return out
 }
 
-// Eval is the derived state of the model.
 type Eval struct {
-	Tombs  map[string]Tomb
-	Status map[string]Status
+	EventBans  map[string]bool
+	Tombs      map[string]Tomb
+	Causes     map[string][]Tomb
+	HoldCauses map[string][]string
+	Status     map[string]Status
 }
 
-// Evaluate derives tombs and statuses from the model's inputs.
 func (m *Model) Evaluate() *Eval {
 	deps := map[string][]string{}
 	for id, it := range m.items {
 		deps[id] = m.depsOf(it)
 	}
-	tombs := map[string]Tomb{}
+	ev := &Eval{Tombs: map[string]Tomb{}, Causes: map[string][]Tomb{}, Status: map[string]Status{}, HoldCauses: map[string][]string{}, EventBans: map[string]bool{}}
 	cids := make([]string, 0, len(m.controls))
 	for id := range m.controls {
 		cids = append(cids, id)
@@ -321,95 +379,186 @@ func (m *Model) Evaluate() *Eval {
 	for _, cid := range cids {
 		c := m.controls[cid]
 		kind := map[record.Kind]TombKind{record.KindErasure: Erased, record.KindRetraction: Retracted, record.KindWithdrawal: Withdrawn}[c.Kind]
-		tenant, isTSK := c.byTenant()
-		for id := range Closure(deps, m.seeds(c)) {
-			if _, present := m.items[id]; !present {
+		tenant, tsk := c.byTenant()
+		targets := Closure(deps, m.seeds(c))
+		if c.Kind == record.KindErasure {
+			controlBans := map[string]bool{}
+			changed := true
+			for changed {
+				changed = false
+				for id := range targets {
+					it := m.items[id]
+					if it == nil || tsk && !m.hasGrant(id, tenant) {
+						continue
+					}
+					for _, eventID := range it.Events {
+						key := eventBanKey(it.Owner, it.SessionKey, eventID)
+						if !controlBans[key] {
+							controlBans[key] = true
+							ev.EventBans[key] = true
+							changed = true
+						}
+					}
+				}
+				for id, it := range m.items {
+					if targets[id] || tsk && !m.hasGrant(id, tenant) {
+						continue
+					}
+					for _, eventID := range it.Events {
+						if controlBans[eventBanKey(it.Owner, it.SessionKey, eventID)] {
+							targets[id] = true
+							changed = true
+						}
+					}
+				}
+				if changed {
+					seeds := []string{}
+					for id := range targets {
+						seeds = append(seeds, id)
+					}
+					targets = Closure(deps, seeds)
+				}
+			}
+		}
+		for id := range targets {
+			if tsk && !m.hasGrant(id, tenant) {
 				continue
 			}
-			// R5.4: a TSK-signed control never purges content its tenant
-			// did not grant.
-			if isTSK && !m.hasGrant(id, tenant) {
-				continue
-			}
-			t, ok := tombs[id]
-			if !ok || rank(kind) > rank(t.Kind) || (rank(kind) == rank(t.Kind) && cid < t.Cause) {
-				tombs[id] = Tomb{Kind: kind, Cause: cid}
+			t := Tomb{Kind: kind, Cause: cid}
+			ev.Causes[id] = append(ev.Causes[id], t)
+			old, ok := ev.Tombs[id]
+			if !ok || rank(kind) > rank(old.Kind) || (rank(kind) == rank(old.Kind) && cid < old.Cause) {
+				ev.Tombs[id] = t
 			}
 		}
 	}
-	ev := &Eval{Tombs: tombs, Status: map[string]Status{}}
-	// ancestry-pending: some dependency (not the origin) is neither present
-	// nor invalidated; propagate along dependencies
+	// A dependency cycle is unresolved, not a proof of complete ancestry.
 	pending := map[string]bool{}
-	var isPending func(id string, seen map[string]bool) bool
-	isPending = func(id string, seen map[string]bool) bool {
+	var visit func(string, map[string]bool) bool
+	visit = func(id string, path map[string]bool) bool {
 		if v, ok := pending[id]; ok {
 			return v
 		}
-		if seen[id] {
-			return false
+		if path[id] {
+			return true
 		}
-		seen[id] = true
 		it := m.items[id]
-		res := false
-		for _, d := range it.Deps {
-			if _, ok := m.items[d]; !ok || isPending(d, seen) {
+		if it == nil {
+			return ev.Tombs[id] == (Tomb{})
+		}
+		path[id] = true
+		defer delete(path, id)
+		res := it.Route == record.RouteHostedPull && len(m.directGrants[id]) == 0
+		pendingDeps := append([]string(nil), it.Deps...)
+		if it.Origin != "" && m.items[it.Origin] != nil {
+			pendingDeps = append(pendingDeps, it.Origin)
+		}
+		for _, d := range pendingDeps {
+			if visit(d, path) {
+				res = true
+			}
+		}
+		for _, e := range m.exposures {
+			if m.downstream(it, e) && ev.Tombs[e.ID] == (Tomb{}) && visit(e.ID, path) {
 				res = true
 			}
 		}
 		pending[id] = res
 		return res
 	}
-	// lineage-hold inputs
-	recalls := map[string][]Recall{}
-	for _, it := range m.items {
-		if it.SessionKey != "" {
-			recalls[it.SessionKey] = append(recalls[it.SessionKey], it.Recalls...)
+	// Semantic holds propagate through both copied and recalled lineage. Keep
+	// every underlying cause even when an intermediate record was reviewed/released.
+	holds := map[string]map[string]bool{}
+	for id := range m.items {
+		holds[id] = map[string]bool{}
+	}
+	changed := true
+	for changed {
+		changed = false
+		for id, it := range m.items {
+			add := func(token string) {
+				if !holds[id][token] {
+					holds[id][token] = true
+					changed = true
+				}
+			}
+			for _, d := range m.depsOf(it) {
+				for token := range holds[d] {
+					add(token)
+				}
+			}
+			for _, e := range m.exposures {
+				if !m.downstream(it, e) {
+					continue
+				}
+				for _, cause := range ev.Causes[e.ID] {
+					add(e.ID + "/" + cause.Cause)
+				}
+				for token := range holds[e.ID] {
+					add(token)
+				}
+			}
 		}
+	}
+	for id, tokens := range holds {
+		for token := range tokens {
+			ev.HoldCauses[id] = append(ev.HoldCauses[id], token)
+		}
+		sort.Strings(ev.HoldCauses[id])
 	}
 	for id, it := range m.items {
 		switch {
-		case tombs[id] != (Tomb{}):
+		case ev.Tombs[id] != (Tomb{}):
 			ev.Status[id] = Invalidated
-		case isPending(id, map[string]bool{}):
-			ev.Status[id] = AncestryPending
-		case !m.released[id] && m.held(it, tombs, recalls):
+		case m.hasUnreleasedExposure(it, ev):
 			ev.Status[id] = LineageHold
+		case visit(id, map[string]bool{}):
+			ev.Status[id] = AncestryPending
 		default:
 			ev.Status[id] = Live
 		}
 	}
 	return ev
 }
-
-// held applies §5.2 step 5: a record that may repeat invalidated content
-// without a dependency edge.
-func (m *Model) held(it *Item, tombs map[string]Tomb, recalls map[string][]Recall) bool {
-	if it.SessionKey != "" && it.SessionSeq > 0 {
-		for _, r := range recalls[it.SessionKey] {
-			if _, bad := tombs[r.ID]; bad && it.SessionSeq > r.Seq {
-				return true
-			}
-		}
-	}
-	if it.Explicit && it.Scope != "" {
-		for _, d := range m.delivered {
-			if _, bad := tombs[d.ID]; bad && d.Scope == it.Scope && m.seqOf[it.ID] > d.Seq {
-				return true
-			}
+func (m *Model) hasUnreleasedExposure(it *Item, ev *Eval) bool {
+	for _, token := range ev.HoldCauses[it.ID] {
+		if !m.released[it.ID][token] {
+			return true
 		}
 	}
 	return false
 }
 
-// StatusOf returns the status of one id.
+// Release authorizes only already reviewed cause tokens of this exact record.
+func (m *Model) Release(id string) {
+	ev := m.Evaluate()
+	if m.items[id] == nil {
+		return
+	}
+	if m.released[id] == nil {
+		m.released[id] = map[string]bool{}
+	}
+	for _, token := range ev.HoldCauses[id] {
+		m.released[id][token] = true
+	}
+}
 func (e *Eval) StatusOf(id string) Status {
 	if s, ok := e.Status[id]; ok {
 		return s
 	}
 	return Absent
 }
+func (m *Model) ExportEligible(id string) bool {
+	return m.Evaluate().StatusOf(id) == Live && len(m.Grants(id)) == 0
+}
 
-// OpCacheFixedResult is the replay of an op whose result referred to
-// invalidated memory (R2.2).
-const OpCacheFixedResult = `{"isError":false,"content":[{"type":"text","text":"This result referred to memory that was erased or withdrawn."}]}`
+const OpCacheFixedResult = `{"isError":false,"content":[{"type":"text","text":"The operation was recorded, but its prior memory content is no longer available to this caller."}]}`
+
+func eventBanKey(owner, session, eventID string) string {
+	return record.H("erased-event", owner, session, eventID)
+}
+
+// EventErased must be checked before capture sealing; it retains only source identity.
+func (m *Model) EventErased(owner, session, eventID string) bool {
+	return m.Evaluate().EventBans[eventBanKey(owner, session, eventID)]
+}

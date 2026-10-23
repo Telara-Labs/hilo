@@ -34,7 +34,10 @@ func FromHeader(id string, h *record.Header, owner string, live bool) Version {
 // Pair is one entry of the persistent supersession index: From superseded
 // To. The index survives body and header purge, so a superseder whose header
 // is gone still keeps its target superseded.
-type Pair struct{ From, To string }
+type Pair struct {
+	From, To, Owner, LID string
+	Type                 record.Kind
+}
 
 // Less orders by key(r) = (At, ID), compared as (int64, bytewise string).
 func Less(a, b Version) bool {
@@ -75,7 +78,7 @@ func Heads(all []Version, index []Pair, lid string, k record.Kind) []Version {
 	for _, p := range index {
 		from, okFrom := inL[p.From]
 		to, okTo := inL[p.To]
-		if okTo && (!okFrom || from.Owner == to.Owner) && p.From != p.To {
+		if okTo && p.Owner == to.Owner && p.LID == to.LID && p.Type == to.Type && (!okFrom || from.Owner == to.Owner) && p.From != p.To {
 			superseded[p.To] = true
 		}
 	}
@@ -114,4 +117,21 @@ func Head(all []Version, index []Pair, lid string, k record.Kind) (Version, bool
 // Conflict reports whether a HeadMulti LID currently has concurrent heads.
 func Conflict(all []Version, index []Pair, lid string, k record.Kind) bool {
 	return len(Heads(all, index, lid, k)) > 1
+}
+
+// HeadsForOwner is the task/graph lookup entry point. Never join on a bare UUID.
+func HeadsForOwner(all []Version, index []Pair, lid string, k record.Kind, owner string) []Version {
+	var scoped []Version
+	for _, v := range all {
+		if v.Owner == owner {
+			scoped = append(scoped, v)
+		}
+	}
+	var pairs []Pair
+	for _, p := range index {
+		if p.Owner == owner {
+			pairs = append(pairs, p)
+		}
+	}
+	return Heads(scoped, pairs, lid, k)
 }

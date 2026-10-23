@@ -23,12 +23,13 @@ func pub(k ed25519.PrivateKey) ed25519.PublicKey { return k.Public().(ed25519.Pu
 
 func keyring(t *testing.T, tpk ed25519.PrivateKey) *sig.State {
 	t.Helper()
-	op, err := sig.BuildKeyOp(record.KeyOpBody{Op: record.OpTenantKey, Subject: sig.KeyRefOf(pub(tpk), record.RolePolicy, "", ""), Genesis: "acme"},
+	op, err := sig.BuildKeyOp(record.KeyOpBody{Op: record.OpTenantKey, Subject: sig.KeyRefOf(pub(tpk), record.RolePolicy, ""), Genesis: "acme"},
 		pub(tpk), "", t0, tpk)
 	if err != nil {
 		t.Fatal(err)
 	}
 	op.FromLogin = true
+	op.Issuer = sig.TrustedIssuer{Tenant: "acme", Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin}
 	kr := sig.NewKeyring("")
 	if r := sig.VerifyKeyOp(kr, op); r.Status != sig.OpAuthorized {
 		t.Fatalf("%+v", r)
@@ -58,17 +59,17 @@ func TestVerify(t *testing.T) {
 	tpk := key("TPK")
 	st := keyring(t, tpk)
 	r, s := policyRecord(t, tpk, body(1))
-	if _, err := Verify(r, s, st); err != nil {
+	if _, err := Verify(r, s, st, sig.TrustedIssuer{Tenant: "acme", Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin}); err != nil {
 		t.Fatal(err)
 	}
 	r2, s2 := policyRecord(t, key("rogue"), body(1))
-	if _, err := Verify(r2, s2, st); err == nil {
+	if _, err := Verify(r2, s2, st, sig.TrustedIssuer{Tenant: "acme", Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin}); err == nil {
 		t.Fatal("policy signed by an unknown key accepted")
 	}
 	other := body(1)
 	other.Tenant = "globex"
 	r3, s3 := policyRecord(t, tpk, other)
-	if _, err := Verify(r3, s3, st); err == nil {
+	if _, err := Verify(r3, s3, st, sig.TrustedIssuer{Tenant: "acme", Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin}); err == nil {
 		t.Fatal("policy of another tenant accepted")
 	}
 }
@@ -82,7 +83,7 @@ func TestChain(t *testing.T) {
 			tweak(&b)
 		}
 		r, s := policyRecord(t, tpk, b)
-		p, err := Verify(r, s, st)
+		p, err := Verify(r, s, st, sig.TrustedIssuer{Tenant: "acme", Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,7 +135,7 @@ func TestClockAndFreshness(t *testing.T) {
 		t.Fatal(f)
 	}
 	// a fresh hosted Date above the floor clears it; T follows the anchor
-	clk2.ObserveDate(floor+10, 1000)
+	clk2.ObserveDate(floor+10, 1000, t0)
 	if clk2.Rollback() {
 		t.Fatal("fresh date must clear rollback")
 	}
@@ -144,7 +145,7 @@ func TestClockAndFreshness(t *testing.T) {
 	// a Date below the floor does not clear it
 	clk3 := RestoreClock(floor)
 	clk3.Now(t0, 0)
-	clk3.ObserveDate(floor-1, 0)
+	clk3.ObserveDate(floor-1, 0, t0)
 	if !clk3.Rollback() {
 		t.Fatal("stale date cleared rollback")
 	}
@@ -193,5 +194,33 @@ func TestEffects(t *testing.T) {
 	}
 	if Ceiling(true, false) || !Ceiling(true, true) {
 		t.Fatal("ceiling")
+	}
+}
+
+func TestAuthenticatedAnchorAcknowledgesPriorWallRegression(t *testing.T) {
+	c := RestoreClock(1000)
+	if c.Now(900, 0) != 1000 || !c.Rollback() {
+		t.Fatal("rollback not detected")
+	}
+	c.ObserveDateAt(1100, 10, 900)
+	if got := c.Now(900, 20); got != 1110 || c.Rollback() {
+		t.Fatalf("same behind-floor wall must recover: %d %v", got, c.Rollback())
+	}
+	if got := c.Now(900, 30); got != 1120 || c.Rollback() {
+		t.Fatal("repeated wall reading is not a new regression")
+	}
+	if got := c.Now(901, 40); got != 1130 || c.Rollback() {
+		t.Fatal("fresh monotonic advance")
+	}
+	if got := c.Now(899, 50); got < 1130 || !c.Rollback() {
+		t.Fatal("new backward wall step must fail closed")
+	}
+	c.ObserveDateAt(1000, 60, 899)
+	if !c.Rollback() {
+		t.Fatal("stale date must not recover")
+	}
+	c.ObserveDateAt(1200, 70, 899)
+	if c.Rollback() || c.Now(899, 80) != 1210 {
+		t.Fatal("new authenticated date recovers")
 	}
 }

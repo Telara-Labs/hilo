@@ -1,0 +1,184 @@
+{
+  "Contract": "mnc/2.0",
+  "Status": "INCOMPLETE",
+  "Vectors": [
+    {
+      "ID": "V1",
+      "Status": "PASS",
+      "PureTests": 2
+    },
+    {
+      "ID": "V2",
+      "Status": "PASS",
+      "PureTests": 2
+    },
+    {
+      "ID": "V3",
+      "Status": "PASS",
+      "PureTests": 2
+    },
+    {
+      "ID": "V4",
+      "Status": "PASS",
+      "PureTests": 5
+    },
+    {
+      "ID": "V5",
+      "Status": "PASS",
+      "PureTests": 2
+    },
+    {
+      "ID": "V6",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V7",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V8",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V9",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V10",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V11",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V12",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V13",
+      "Status": "INCOMPLETE",
+      "PureTests": 1,
+      "adapter_required": [
+        "Concurrent node SQLite and hosted Postgres admission/erase transactions must share the prescribed locks and demonstrate no live late record. Pure sequential arrival permutations are not concurrent storage proof."
+      ]
+    },
+    {
+      "ID": "V14",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V15",
+      "Status": "PASS",
+      "PureTests": 3
+    },
+    {
+      "ID": "V16",
+      "Status": "INCOMPLETE",
+      "PureTests": 1,
+      "adapter_required": [
+        "Node outbox cancellation and eligibility revalidation must commit atomically with authority or lineage changes."
+      ]
+    },
+    {
+      "ID": "V17",
+      "Status": "INCOMPLETE",
+      "PureTests": 1,
+      "adapter_required": [
+        "Node crash/restart after each persisted page, ctl_pending replay and transaction rollback."
+      ]
+    },
+    {
+      "ID": "V18",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V19",
+      "Status": "INCOMPLETE",
+      "PureTests": 1,
+      "adapter_required": [
+        "Node filesystem tests must suspend writer between write/rename, abandon tmp, drain all new files, admit before ack, crash before unlink, and verify no unknown body field survives any bad archive."
+      ]
+    },
+    {
+      "ID": "V20",
+      "Status": "INCOMPLETE",
+      "PureTests": 3,
+      "adapter_required": [
+        "Node age transfer must use verified device EKs; backup must use sole scrypt recipient. Restore after co-signed device_add and verify signed manifest before atomic exposure union and data admission."
+      ]
+    },
+    {
+      "ID": "V21",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V22",
+      "Status": "INCOMPLETE",
+      "PureTests": 1,
+      "adapter_required": [
+        "Node sealing pipeline must prove no raw source hash or parser buffer reaches any durable store."
+      ]
+    },
+    {
+      "ID": "V23",
+      "Status": "INCOMPLETE",
+      "PureTests": 0,
+      "adapter_required": [
+        "Node modernc.org/sqlite v1.60.1 must verify FTS5 secure-delete config1 at open and planted token absence in DB WAL and shadow tables after FULL-synchronous erasure. Contract module has no database.",
+        "Contract2 event salts and nonce intermediates must be absent from every persisted equality workspace, cache, diagnostic and erased event copy; recapture tombs apply before sealing."
+      ]
+    },
+    {
+      "ID": "V24",
+      "Status": "INCOMPLETE",
+      "PureTests": 2,
+      "adapter_required": [
+        "Node must atomically persist mutation, original tool/args, exposure, render version, dedup generation and confirmation with actual store transactions."
+      ]
+    },
+    {
+      "ID": "V25",
+      "Status": "PASS",
+      "PureTests": 2
+    },
+    {
+      "ID": "V26",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V27",
+      "Status": "PASS",
+      "PureTests": 3
+    },
+    {
+      "ID": "V28",
+      "Status": "INCOMPLETE",
+      "PureTests": 2,
+      "adapter_required": [
+        "Node bundle transfer/restore must persist late binding and selector identities, exclude incomplete roots without auto-selecting private records, and retain exposure facts after compaction and body erasure."
+      ]
+    },
+    {
+      "ID": "V29",
+      "Status": "PASS",
+      "PureTests": 1
+    },
+    {
+      "ID": "V30",
+      "Status": "PASS",
+      "PureTests": 1
+    }
+  ]
+}

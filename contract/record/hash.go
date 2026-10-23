@@ -195,6 +195,30 @@ var callerOpIDRe = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 // _meta["com.telara/op-id"].
 func ValidCallerOpID(s string) bool { return callerOpIDRe.MatchString(s) }
 
+// SuppliedOpID uses authenticated installed credential identity, independent of
+// scope and reconnect. Bind tool and redacted args on first use in replay.Cache.
+func SuppliedOpID(installedCredentialID, suppliedID string) (string, error) {
+	if installedCredentialID == "" || !ValidCallerOpID(suppliedID) {
+		return "", fmt.Errorf("invalid supplied operation identity")
+	}
+	return HE("op-supplied", installedCredentialID, suppliedID)
+}
+
+// FallbackOpID follows the exact five-part fallback hash; reconnect may duplicate.
+func FallbackOpID(scopeID, connectionID string, rpcID []byte, tool, argsHash string) (string, error) {
+	if scopeID == "" || connectionID == "" || tool == "" || !IsHex64(argsHash) {
+		return "", fmt.Errorf("invalid fallback operation identity")
+	}
+	canonical, err := jcs.Canonicalize(rpcID)
+	if err != nil {
+		return "", err
+	}
+	if _, err := RequestIdentityRPC(connectionID, canonical); err != nil {
+		return "", err
+	}
+	return HE("op", scopeID, connectionID, string(canonical), tool, argsHash)
+}
+
 // RequestIdentityMeta is the request identity of a call that carries a
 // caller-supplied op id.
 func RequestIdentityMeta(opID string) (string, error) {

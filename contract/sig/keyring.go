@@ -1,7 +1,9 @@
 package sig
 
 import (
+	"bytes"
 	"crypto/ed25519"
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -23,17 +25,16 @@ type Key struct {
 	Pub       ed25519.PublicKey
 	Role      record.Role
 	MachineID string
-	Label     string
 	// Genesis is the genesis key id for a device key; Tenant the tenant id
 	// for a service or policy key.
 	Genesis string
 	Tenant  string
 	Status  KeyStatus
-	// Revocation facts used by §4.4: the earliest authoring time and the
-	// earliest local admission sequence among the ops that revoked the key.
-	RevokedAt     int64
-	RevokedSeq    int64
-	RevokedReason string // compromised | lost | user_request | conflict | cascade
+	// Verified cause ids and the first local sequence at which revocation
+	// became effective. Author timestamps are never authorization cutoffs.
+	RevocationCauses []string
+	RevokedSeq       int64
+	RevokedReason    string // compromised | lost | user_request | conflict | cascade
 }
 
 // Owner returns the owner namespace of records signed by this key (§1.3).
@@ -49,7 +50,11 @@ type KeyOp struct {
 	AdmittedSeq int64
 	// FromLogin marks a tenant_key op taken from the TLS response of login.
 	// A tenant_key op without it is never authorized.
-	FromLogin bool
+	FromLogin bool            `json:"-"`
+	Receipt   *record.Receipt // authenticated acceptance of this key operation
+	// Trusted receiver context from pinned TLS login/admission, never wire metadata.
+	Issuer        TrustedIssuer `json:"-"`
+	ReceiptIssuer TrustedIssuer `json:"-"`
 }
 
 // OpStatus is the disposition of one key operation in a keyring.
@@ -82,14 +87,66 @@ func NewKeyring(pinnedGenesis string) *Keyring {
 func (k *Keyring) Pinned() string { return k.pinned }
 
 // ConfirmGenesis replaces the pinned genesis after local confirmation.
-func (k *Keyring) ConfirmGenesis(keyID string) { k.pinned = keyID }
+func (k *Keyring) ConfirmGenesis(keyID string) error {
+	if keyID != k.pinned {
+		return fmt.Errorf("foreign genesis is not supported")
+	}
+	return nil
+}
 
 // Add checks an op's shape and possession signature and stores it. Ops that
 // fail are not stored. A stored op may still be held or unauthorized; read
 // its status from State.
 func (k *Keyring) Add(op *KeyOp) error {
+	if op == nil || op.Rec == nil {
+		return fmt.Errorf("key op: incomplete")
+	}
+	parsed, err := record.Parse(op.Rec.HeaderJCS, op.Rec.BodyJCS, op.Rec.ID)
+	if err != nil {
+		return err
+	}
+	body, ok := parsed.Body.(*record.KeyOpBody)
+	if !ok {
+		return fmt.Errorf("key op: body absent")
+	}
+	a, _ := json.Marshal(body)
+	b, _ := json.Marshal(op.Body)
+	if !bytes.Equal(a, b) {
+		return fmt.Errorf("key op: body differs from signed bytes")
+	}
+	copyOp := *op
+	copyOp.Rec = parsed
+	copyOp.Body = body
+	copyOp.Sigs = append([]record.Signature(nil), op.Sigs...)
+	copyOp.Rec.HeaderJCS = append([]byte(nil), parsed.HeaderJCS...)
+	copyOp.Rec.BodyJCS = append([]byte(nil), parsed.BodyJCS...)
+	if op.Receipt != nil {
+		raw, _ := json.Marshal(op.Receipt)
+		var receipt record.Receipt
+		json.Unmarshal(raw, &receipt)
+		copyOp.Receipt = &receipt
+	}
+	op = &copyOp
 	if err := checkOpShape(op); err != nil {
 		return err
+	}
+	if old := k.ops[op.Rec.ID]; old != nil {
+		// Content dedup cannot remove previously authenticated receiver facts.
+		prior := k.State().Status[op.Rec.ID]
+		if prior == OpAuthorized || prior == OpConflictLost {
+			op.Sigs = append([]record.Signature(nil), old.Sigs...)
+		}
+		if old.Issuer.ValidFor(op.Body.Subject.Role) && old.Issuer.Tenant == op.Body.Genesis && !(op.Issuer.ValidFor(op.Body.Subject.Role) && op.Issuer.Tenant == op.Body.Genesis && op.Issuer.Provenance == PinnedTLSLogin && op.FromLogin) {
+			op.Issuer = old.Issuer
+		}
+		op.FromLogin = old.FromLogin || op.FromLogin
+		if old.AdmittedSeq > 0 && (op.AdmittedSeq == 0 || old.AdmittedSeq < op.AdmittedSeq) {
+			op.AdmittedSeq = old.AdmittedSeq
+		}
+		if old.Receipt != nil && old.ReceiptIssuer.ValidFor(record.RoleService) {
+			op.Receipt = cloneOp(old).Receipt
+			op.ReceiptIssuer = old.ReceiptIssuer
+		}
 	}
 	if op.Body.Op == record.OpGenesis && k.pinned == "" {
 		k.pinned = op.Body.Subject.KeyID
@@ -99,7 +156,13 @@ func (k *Keyring) Add(op *KeyOp) error {
 }
 
 // Ops returns the stored ops keyed by id.
-func (k *Keyring) Ops() map[string]*KeyOp { return k.ops }
+func (k *Keyring) Ops() map[string]*KeyOp {
+	out := map[string]*KeyOp{}
+	for id, op := range k.ops {
+		out[id] = cloneOp(op)
+	}
+	return out
+}
 
 // possessionOps need a signature by the subject key.
 func possession(op string) bool {
@@ -197,17 +260,61 @@ func authorizerOf(op *KeyOp) string {
 
 // State is the folded keyring.
 type State struct {
-	Keys   map[string]*Key
-	Status map[string]OpStatus // per op id
+	Genesis string
+	Keys    map[string]*Key
+	Status  map[string]OpStatus // per op id
+	Ops     map[string]*KeyOp   // verified immutable operation snapshots
 }
 
-// Key returns the key with the given id, or nil.
-func (s *State) Key(id string) *Key { return s.Keys[id] }
+// Key is an inspection convenience: prefer the DRK binding, otherwise return
+// the sole matching tenant binding. Admission MUST use KeyFor with trusted context.
+func (s *State) Key(id string) *Key {
+	if k := s.KeyFor(id, record.RoleDevice, ""); k != nil {
+		return k
+	}
+	var found *Key
+	for _, k := range s.Keys {
+		if k.KeyID == id {
+			if found != nil {
+				return nil
+			}
+			found = k
+		}
+	}
+	return found
+}
+
+// KeyFor selects an authority binding using authenticated receiver context.
+func (s *State) KeyFor(id string, role record.Role, tenant string) *Key {
+	if s == nil {
+		return nil
+	}
+	domain := tenant
+	if role == record.RoleDevice {
+		domain = s.Genesis
+	} else if tenant == "" {
+		return nil
+	}
+	return s.Keys[bindingKey(role, domain, id)]
+}
+func bindingKey(role record.Role, domain, id string) string {
+	return record.H("authority", string(role), domain, id)
+}
+func subjectBinding(b *record.KeyOpBody) string {
+	return bindingKey(b.Subject.Role, b.Genesis, b.Subject.KeyID)
+}
+func authorizerBinding(op *KeyOp) string {
+	b := op.Body
+	return bindingKey(b.Subject.Role, b.Genesis, authorizerOf(op))
+}
 
 // State folds the keyring. The result depends only on the set of stored ops
 // and the pinned genesis, never on the order they were added.
 func (k *Keyring) State() *State {
-	st := &State{Keys: map[string]*Key{}, Status: map[string]OpStatus{}}
+	st := &State{Genesis: k.pinned, Keys: map[string]*Key{}, Status: map[string]OpStatus{}, Ops: map[string]*KeyOp{}}
+	for id, op := range k.ops {
+		st.Ops[id] = cloneOp(op)
+	}
 	// Ops whose ancestry is incomplete are held.
 	complete := map[string]bool{}
 	var isComplete func(id string, seen map[string]bool) bool
@@ -220,6 +327,7 @@ func (k *Keyring) State() *State {
 			return false
 		}
 		seen[id] = true
+		defer delete(seen, id)
 		res := true
 		for _, p := range op.Body.Parents {
 			if !isComplete(p, seen) {
@@ -294,7 +402,7 @@ func (k *Keyring) State() *State {
 		}
 		b := k.ops[id].Body
 		if (b.Op == record.OpDeviceRotate || b.Op == record.OpTenantKeyRotate) &&
-			st.Keys[b.Subject.KeyID] != nil && st.Keys[b.Subject.KeyID].RevokedReason == "conflict" {
+			st.Keys[subjectBinding(b)] != nil && st.Keys[subjectBinding(b)].RevokedReason == "conflict" {
 			st.Status[id] = OpConflictLost
 		}
 	}
@@ -305,6 +413,15 @@ func (k *Keyring) State() *State {
 func (k *Keyring) authorize(op *KeyOp, hist map[string]*Key) OpStatus {
 	b := op.Body
 	h := op.Rec.Header
+	// Tenant authority comes from authenticated receiver context. A signed field
+	// naming a tenant does not select a trusted issuer domain.
+	if b.Subject.Role != record.RoleDevice && (!op.Issuer.ValidFor(b.Subject.Role) || op.Issuer.Tenant != b.Genesis) {
+		return OpUnauthorized
+	}
+	subjectKey := subjectBinding(b)
+	if existing := hist[subjectKey]; existing != nil && existing.MachineID != b.Subject.MachineID {
+		return OpUnauthorized
+	}
 	msg, _ := RecordMessage(op.Rec.ID)
 	// author and machine checks: the author is the authorizer when one is
 	// required, else the subject
@@ -318,14 +435,14 @@ func (k *Keyring) authorize(op *KeyOp, hist map[string]*Key) OpStatus {
 	switch b.Op {
 	case record.OpGenesis:
 		if b.Subject.KeyID != k.pinned {
-			return OpHeldGenesis
+			return OpUnauthorized
 		}
 		if h.Author.MachineID != b.Subject.MachineID {
 			return OpInvalid
 		}
 		return OpAuthorized
 	case record.OpTenantKey:
-		if !op.FromLogin {
+		if !op.FromLogin || op.Issuer.Provenance != PinnedTLSLogin {
 			return OpIgnored
 		}
 		if h.Author.MachineID != "" {
@@ -333,7 +450,7 @@ func (k *Keyring) authorize(op *KeyOp, hist map[string]*Key) OpStatus {
 		}
 		return OpAuthorized
 	}
-	a := hist[authorID]
+	a := hist[authorizerBinding(op)]
 	if a == nil || a.Status != KeyActive {
 		return OpUnauthorized
 	}
@@ -353,10 +470,9 @@ func (k *Keyring) authorize(op *KeyOp, hist map[string]*Key) OpStatus {
 			return OpUnauthorized
 		}
 	case record.OpDeviceRevoke:
-		target := hist[b.Subject.KeyID]
+		target := hist[subjectKey]
 		deviceOK := a.Role == record.RoleDevice && a.Genesis == b.Genesis && b.Genesis == k.pinned
-		serviceOK := a.Role == record.RoleService
-		if !(deviceOK || serviceOK) || target == nil || target.Role != record.RoleDevice || target.Genesis != b.Genesis {
+		if !deviceOK || target == nil || target.Role != record.RoleDevice || target.Genesis != b.Genesis {
 			return OpUnauthorized
 		}
 	case record.OpTenantKeyRotate:
@@ -372,93 +488,117 @@ func (k *Keyring) authorize(op *KeyOp, hist map[string]*Key) OpStatus {
 func fold(ops []*KeyOp, pinned string) map[string]*Key {
 	keys := map[string]*Key{}
 	sort.Slice(ops, func(i, j int) bool { return ops[i].Rec.ID < ops[j].Rec.ID })
-	addedBy := map[string][]string{} // subject -> authorizers of its device_add ops
-	revoke := func(id string, at, seq int64, reason string) {
-		k := keys[id]
-		if k == nil {
-			return
-		}
-		if k.Status != KeyRevoked || at < k.RevokedAt {
-			k.RevokedAt = at
-		}
-		if k.Status != KeyRevoked || seq < k.RevokedSeq {
-			k.RevokedSeq = seq
-		}
-		if k.Status != KeyRevoked || reason == "compromised" {
-			k.RevokedReason = reason
-		}
-		k.Status = KeyRevoked
-	}
-	// 1. every key some op made active
 	for _, op := range ops {
 		b := op.Body
 		switch b.Op {
 		case record.OpGenesis, record.OpDeviceAdd, record.OpDeviceRotate, record.OpTenantKey, record.OpTenantKeyRotate:
-			if _, ok := keys[b.Subject.KeyID]; !ok {
+			if keys[subjectBinding(b)] == nil {
 				pub, _ := DecodePub(b.Subject.Pub)
-				k := &Key{KeyID: b.Subject.KeyID, Pub: pub, Role: b.Subject.Role, MachineID: b.Subject.MachineID,
-					Label: b.Subject.Label, Status: KeyActive}
-				if b.Subject.Role == record.RoleDevice {
-					k.Genesis = b.Genesis
+				key := &Key{KeyID: b.Subject.KeyID, Pub: pub, Role: b.Subject.Role, MachineID: b.Subject.MachineID, Status: KeyActive}
+				if key.Role == record.RoleDevice {
+					key.Genesis = b.Genesis
 				} else {
-					k.Tenant = b.Genesis
+					key.Tenant = b.Genesis
 				}
-				keys[b.Subject.KeyID] = k
-			}
-			if b.Op == record.OpDeviceAdd {
-				addedBy[b.Subject.KeyID] = append(addedBy[b.Subject.KeyID], authorizerOf(op))
+				keys[subjectBinding(b)] = key
 			}
 		}
 	}
-	// 2. rotations retire the previous key; concurrent rotations of one key:
-	// the lowest op id wins and every other subject is revoked (conflict)
+	revoke := func(id, cause string, seq int64, reason string) {
+		key := keys[id]
+		if key == nil {
+			return
+		}
+		if key.Status != KeyRevoked || reason == "compromised" {
+			key.RevokedReason = reason
+		}
+		if seq > 0 && (key.RevokedSeq == 0 || seq < key.RevokedSeq) {
+			key.RevokedSeq = seq
+		}
+		for _, c := range key.RevocationCauses {
+			if c == cause {
+				key.Status = KeyRevoked
+				return
+			}
+		}
+		key.RevocationCauses = append(key.RevocationCauses, cause)
+		sort.Strings(key.RevocationCauses)
+		key.Status = KeyRevoked
+	}
 	rotations := map[string][]*KeyOp{}
+	edges := map[string][]string{}
 	for _, op := range ops {
-		if op.Body.Op == record.OpDeviceRotate || op.Body.Op == record.OpTenantKeyRotate {
-			rotations[op.Body.Previous] = append(rotations[op.Body.Previous], op)
+		b := op.Body
+		if b.Op == record.OpDeviceAdd || b.Op == record.OpDeviceRotate || b.Op == record.OpTenantKeyRotate {
+			edges[authorizerBinding(op)] = append(edges[authorizerBinding(op)], subjectBinding(b))
+		}
+		if b.Op == record.OpDeviceRotate || b.Op == record.OpTenantKeyRotate {
+			previousBinding := bindingKey(b.Subject.Role, b.Genesis, b.Previous)
+			rotations[previousBinding] = append(rotations[previousBinding], op)
 		}
 	}
-	for prev, rs := range rotations {
-		if k := keys[prev]; k != nil && k.Status == KeyActive {
-			k.Status = KeyRetired
-		}
-		for _, loser := range rs[1:] { // rs is in id order
-			revoke(loser.Body.Subject.KeyID, loser.Rec.Header.At, loser.AdmittedSeq, "conflict")
+	type poison struct {
+		id, cause string
+		seq       int64
+	}
+	var todo []poison
+	for prev := range rotations {
+		if keys[prev] != nil {
+			keys[prev].Status = KeyRetired
 		}
 	}
-	// 3. revocation is monotone
-	var compromised []string
+	for _, rs := range rotations {
+		for _, loser := range rs[1:] {
+			seq := loser.AdmittedSeq
+			if rs[0].AdmittedSeq > seq {
+				seq = rs[0].AdmittedSeq
+			}
+			revoke(subjectBinding(loser.Body), loser.Rec.ID, seq, "conflict")
+			todo = append(todo, poison{subjectBinding(loser.Body), loser.Rec.ID, seq})
+		}
+	}
 	for _, op := range ops {
 		if op.Body.Op == record.OpDeviceRevoke {
-			revoke(op.Body.Subject.KeyID, op.Rec.Header.At, op.AdmittedSeq, op.Body.Reason)
+			revoke(subjectBinding(op.Body), op.Rec.ID, op.AdmittedSeq, op.Body.Reason)
 			if op.Body.Reason == "compromised" {
-				compromised = append(compromised, op.Body.Subject.KeyID)
+				todo = append(todo, poison{subjectBinding(op.Body), op.Rec.ID, op.AdmittedSeq})
 			}
 		}
 	}
-	// 4. a compromised key takes with it every key whose device_add ops were
-	// all authorized by it; applied transitively (fail closed)
-	for len(compromised) > 0 {
-		bad := compromised[0]
-		compromised = compromised[1:]
-		src := keys[bad]
-		subjects := make([]string, 0, len(addedBy))
-		for s := range addedBy {
-			subjects = append(subjects, s)
+	seen := map[string]bool{}
+	for len(todo) > 0 {
+		p := todo[0]
+		todo = todo[1:]
+		token := p.id + "/" + p.cause
+		if seen[token] {
+			continue
 		}
-		sort.Strings(subjects)
-		for _, subj := range subjects {
-			only := true
-			for _, a := range addedBy[subj] {
-				if a != bad {
-					only = false
-				}
-			}
-			if only && keys[subj] != nil && keys[subj].Status != KeyRevoked {
-				revoke(subj, src.RevokedAt, src.RevokedSeq, "cascade")
-				compromised = append(compromised, subj)
-			}
+		seen[token] = true
+		for _, child := range edges[p.id] {
+			revoke(child, p.cause, p.seq, "cascade")
+			todo = append(todo, poison{child, p.cause, p.seq})
 		}
 	}
 	return keys
+}
+
+func cloneOp(op *KeyOp) *KeyOp {
+	if op == nil {
+		return nil
+	}
+	c := *op
+	c.Sigs = append([]record.Signature(nil), op.Sigs...)
+	if op.Rec != nil {
+		c.Rec, _ = record.Parse(append([]byte(nil), op.Rec.HeaderJCS...), append([]byte(nil), op.Rec.BodyJCS...), op.Rec.ID)
+		if c.Rec != nil {
+			c.Body, _ = c.Rec.Body.(*record.KeyOpBody)
+		}
+	}
+	if op.Receipt != nil {
+		raw, _ := json.Marshal(op.Receipt)
+		var r record.Receipt
+		json.Unmarshal(raw, &r)
+		c.Receipt = &r
+	}
+	return &c
 }

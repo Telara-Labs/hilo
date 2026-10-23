@@ -90,7 +90,7 @@ func fixtures() map[string]func() (Header, any) {
 			h := baseHeader(KindConclusion, ProvTranscript)
 			h.Subj = Subject{SessionKey: sk}
 			h.LID = RequestConclusionLID(sk, "idx:0")
-			return h, &ConclusionBody{Source: "final-answer", State: "unknown", Request: "fix it", Text: "fixed"}
+			return h, &ConclusionBody{Source: "final-answer", State: "unknown", RequestKey: "idx:0", Request: "fix it", Text: "fixed"}
 		},
 		"task": func() (Header, any) {
 			h := baseHeader(KindTask, ProvMCPExplicit)
@@ -105,7 +105,7 @@ func fixtures() map[string]func() (Header, any) {
 			h.Subj = Subject{TaskID: tTask}
 			h.LID = TaskLID(tKeyID, tTask)
 			h.Links = Links{Origin: hx("source-task")}
-			return h, &TaskMetaBody{Status: "active", Checkpoints: 2, CreatedAt: tAt}
+			return h, &TaskMetaBody{Status: "active"}
 		},
 		"task-gateway": func() (Header, any) {
 			h := baseHeader(KindTask, ProvGateway)
@@ -350,7 +350,7 @@ func raw(t *testing.T, h Header, body any) ([]byte, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.V = 1
+	h.V = Version
 	if h.Body == nil {
 		h.Body = &BodyRef{Digest: BodyDigest(bj), Size: int64(len(bj))}
 	}
@@ -395,17 +395,19 @@ func TestParseRejections(t *testing.T) {
 			hj, bj := raw(t, h, b)
 			return bytes.Replace(hj, []byte(`"op":`), []byte(`"nul":null,"op":`), 1), bj, ""
 		}},
-		{"version 2 quarantined", "task", CodeUnsupportedVersion, true, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
+		{"version 3 quarantined", "task", CodeUnsupportedVersion, true, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
 			hj, bj := raw(t, h, b)
-			return bytes.Replace(hj, []byte(`"v":1`), []byte(`"v":2`), 1), bj, ""
+			return bytes.Replace(hj, []byte(`"v":2`), []byte(`"v":3`), 1), bj, ""
 		}},
 		{"version 0", "task", CodeInvalidHeader, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
 			hj, bj := raw(t, h, b)
-			return bytes.Replace(hj, []byte(`"v":1`), []byte(`"v":0`), 1), bj, ""
+			return bytes.Replace(hj, []byte(`"v":2`), []byte(`"v":0`), 1), bj, ""
 		}},
 		{"unknown header field", "task", CodeUnknownField, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
 			hj, bj := raw(t, h, b)
-			return bytes.Replace(hj, []byte(`"type"`), []byte(`"title":"x","type"`), 1), bj, ""
+			hj = bytes.Replace(hj, []byte(`"type"`), []byte(`"title":"x","type"`), 1)
+			hj, _ = jcs.CanonicalizeRecord(hj)
+			return hj, bj, ""
 		}},
 		{"member name case", "task", CodeNotCanonical, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
 			hj, bj := raw(t, h, b)

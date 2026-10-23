@@ -278,6 +278,15 @@ func validateBody(h *Header, body any) error {
 			if !IsEventID(e.ID) || seen[e.ID] {
 				return bad("chunk: event %d id malformed or repeated", i)
 			}
+			if !validEventSalt(e.Salt) {
+				return bad("event protected salt")
+			}
+			if !IsHex64(e.Revision) || len(e.Replaces) > 8 || !sort.StringsAreSorted(e.Replaces) || !uniqueHex64(e.Replaces) || containsString(e.Replaces, e.Revision) {
+				return bad("chunk: event revision or predecessors invalid")
+			}
+			if rev, err := EventRevision(e); err != nil || rev != e.Revision {
+				return bad("chunk: event revision hash mismatch")
+			}
 			seen[e.ID] = true
 			if i > 0 && e.Seq <= b.Events[i-1].Seq {
 				return bad("chunk: events must be in strictly increasing seq order")
@@ -310,6 +319,9 @@ func validateBody(h *Header, body any) error {
 			return bad("conclusion: source %q", b.Source)
 		}
 		wantSource := map[Prov]string{ProvMCPExplicit: "explicit", ProvGateway: "explicit", ProvTranscript: "final-answer", ProvHook: "hook-final"}[h.Prov]
+		if (b.Source != "explicit" || b.RequestKey != "") && !isToken(b.RequestKey) {
+			return bad("conclusion: bounded native request_key is required")
+		}
 		if b.Source != wantSource {
 			return bad("conclusion: source %q does not match prov %q", b.Source, h.Prov)
 		}
@@ -337,9 +349,6 @@ func validateBody(h *Header, body any) error {
 	case *TaskMetaBody:
 		if b.Status != "" && !taskStatuses[b.Status] {
 			return bad("task meta: status %q", b.Status)
-		}
-		if b.Checkpoints < 0 || b.CreatedAt < 0 || b.CompletedAt < 0 {
-			return bad("task meta: negative value")
 		}
 	case *CheckpointBody:
 		for _, s := range b.Supports {
@@ -418,7 +427,7 @@ func validateBody(h *Header, body any) error {
 			return bad("erasure: sources must be distinct 64-hex source keys")
 		}
 	case *WithdrawalBody:
-		if b.Tenant == "" || !isToken(b.Tenant) || b.PolicySeq < 0 {
+		if b.Tenant == "" || !isToken(b.Tenant) || b.PolicySeq <= 0 {
 			return bad("withdrawal: tenant is required")
 		}
 		if len(b.IDs) > MaxRetractionIDs {
@@ -445,16 +454,17 @@ func checkSessionLink(l *SessionLink) error {
 	return nil
 }
 
-func checkSelectors(ids, lids, tasks, sessions []string) error {
+func checkSelectors(ids, lids []string, tasks []TaskSelector, sessions []string) error {
 	if !uniqueHex64(ids) || !uniqueHex64(lids) {
 		return rej(CodeInvalidBody, "selector ids and lids must be distinct 64-hex values")
 	}
 	seen := map[string]bool{}
 	for _, t := range tasks {
-		if !IsUUID(t) || seen[t] {
-			return rej(CodeInvalidBody, "selector tasks must be distinct UUIDs")
+		key := t.Owner + "/" + t.TaskID
+		if !ValidOwner(t.Owner) || !IsUUID(t.TaskID) || seen[key] {
+			return rej(CodeInvalidBody, "selector tasks must be distinct owner/task UUID pairs")
 		}
-		seen[t] = true
+		seen[key] = true
 	}
 	for _, s := range sessions {
 		if !IsSessionKey(s) || seen[s] {
@@ -499,9 +509,6 @@ func validateKeyOpShape(b *KeyOpBody) error {
 	}
 	if (s.Role == RoleDevice) != (s.MachineID != "") || (s.MachineID != "" && !IsUUIDv4(s.MachineID)) {
 		return bad("key_op: a device key names its machine, other keys do not")
-	}
-	if s.Label != "" && (runes(s.Label) > 64 || strings.ContainsAny(s.Label, "\r\n")) {
-		return bad("key_op: label must be one line of at most 64 runes")
 	}
 	if b.Previous != "" && !IsKeyID(b.Previous) {
 		return bad("key_op: previous must be a key id")
@@ -588,3 +595,17 @@ func ValidatePolicyShape(b *PolicyBody) error {
 
 // PolicyMaxLifetimeMs is the longest allowed span from issued_at to not_after.
 const PolicyMaxLifetimeMs = 30 * 24 * 60 * 60 * 1000
+
+func containsString(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidOwner accepts only a genesis key id or a bounded tenant namespace.
+func ValidOwner(owner string) bool {
+	return IsKeyID(owner) || (strings.HasPrefix(owner, "tenant:") && isToken(strings.TrimPrefix(owner, "tenant:")))
+}

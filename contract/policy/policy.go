@@ -9,6 +9,7 @@ package policy
 
 import (
 	"fmt"
+	"math"
 	"path"
 
 	"github.com/Telara-Labs/telara-memory/contract/record"
@@ -24,7 +25,15 @@ type Policy struct {
 // Verify checks a policy record: it parsed as a policy, its one signature
 // verifies under a policy-role key of the keyring (§2.1 matrix), and the
 // key belongs to the policy's tenant.
-func Verify(r *record.Record, sigs []record.Signature, st *sig.State) (*Policy, error) {
+func Verify(r *record.Record, sigs []record.Signature, st *sig.State, issuer sig.TrustedIssuer) (*Policy, error) {
+	if r == nil {
+		return nil, fmt.Errorf("policy: record required")
+	}
+	parsed, err := record.Parse(r.HeaderJCS, r.BodyJCS, r.ID)
+	if err != nil {
+		return nil, fmt.Errorf("policy: invalid canonical record")
+	}
+	r = parsed
 	if r.Header.Type != record.KindPolicy {
 		return nil, fmt.Errorf("policy: record is a %s", r.Header.Type)
 	}
@@ -32,11 +41,11 @@ func Verify(r *record.Record, sigs []record.Signature, st *sig.State) (*Policy, 
 	if !ok {
 		return nil, fmt.Errorf("policy: body absent")
 	}
-	res := sig.VerifyRecord(r, sigs, st, sig.Context{Route: record.RouteHostedPull})
+	res := sig.VerifyRecord(r, sigs, st, sig.Context{Route: record.RouteHostedPull, SignerRole: record.RolePolicy, Issuer: issuer})
 	if res.Status != sig.StatusVerified {
 		return nil, fmt.Errorf("policy: signature %s: %s", res.Status, res.Reason)
 	}
-	if res.Key.Role != record.RolePolicy || res.Key.Tenant != b.Tenant {
+	if res.Key.Role != record.RolePolicy || res.Key.Tenant != b.Tenant || b.Tenant != issuer.Tenant {
 		return nil, fmt.Errorf("policy: signer is not the policy key of tenant %q", b.Tenant)
 	}
 	return &Policy{ID: r.ID, Body: b}, nil
@@ -86,11 +95,13 @@ func (c *Chain) Offer(p *Policy) (string, error) {
 // anchor_mono)) with an anchor, else max(wall, floor). All times are unix
 // ms; mono is any monotonic millisecond reading of this process.
 type Clock struct {
-	floor      int64
-	anchored   bool
-	anchorDate int64
-	anchorMono int64
-	rollback   bool
+	floor              int64
+	anchored           bool
+	anchorDate         int64
+	anchorMono         int64
+	rollback           bool
+	lastWall, lastMono int64
+	haveWall           bool
 }
 
 // RestoreClock starts a clock from a persisted floor, as after a restart.
@@ -104,32 +115,63 @@ func (c *Clock) Floor() int64 { return c.floor }
 // fresh hosted Date has cleared it.
 func (c *Clock) Rollback() bool { return c.rollback }
 
-// ObserveDate records a hosted Date header and the monotonic reading at its
-// receipt. A Date at or above the floor clears a detected rollback.
-func (c *Clock) ObserveDate(date, mono int64) {
-	c.anchored, c.anchorDate, c.anchorMono = true, date, mono
-	if date >= c.floor {
-		c.rollback = false
+// ObserveDate requires the receipt-time wall reading. Only the authenticated
+// transport adapter may call it after validating Date authority and freshness.
+func (c *Clock) ObserveDate(date, mono, wall int64) {
+	c.observe(date, mono)
+	if c.anchored && !c.rollback {
+		c.lastWall = wall
+		c.haveWall = true
 	}
 }
 
-// Now returns trusted time for a wall and monotonic reading and advances the
-// floor to it.
+// ObserveDateAt is the explicit receipt-time spelling of ObserveDate.
+func (c *Clock) ObserveDateAt(date, mono, wall int64) { c.ObserveDate(date, mono, wall) }
+func (c *Clock) observe(date, mono int64) {
+	if date < c.floor || date <= 0 || mono < 0 {
+		c.rollback = true
+		return
+	}
+	c.anchored, c.anchorDate, c.anchorMono = true, date, mono
+	c.lastMono = mono
+	c.floor = date
+	c.rollback = false
+}
+
+// Now never returns below the persisted floor. Only a fresh authenticated
+// Date can acknowledge an old wall regression; a new regression fails closed.
 func (c *Clock) Now(wall, mono int64) int64 {
-	if wall < c.floor {
+	if c.anchored {
+		if mono < c.lastMono {
+			c.rollback = true
+		}
+		if c.haveWall && wall < c.lastWall {
+			c.rollback = true
+		}
+	} else if wall < c.floor {
 		c.rollback = true
 	}
+	c.lastWall, c.lastMono, c.haveWall = wall, mono, true
 	t := wall
 	if c.anchored {
-		if a := c.anchorDate + (mono - c.anchorMono); a > t {
+		delta := mono - c.anchorMono
+		if delta < 0 {
+			delta = 0
+		}
+		a := c.anchorDate
+		if delta > math.MaxInt64-a {
+			a = math.MaxInt64
+		} else {
+			a += delta
+		}
+		if a > t {
 			t = a
 		}
-	} else if c.floor > t {
+	}
+	if c.floor > t {
 		t = c.floor
 	}
-	if t > c.floor {
-		c.floor = t
-	}
+	c.floor = t
 	return t
 }
 

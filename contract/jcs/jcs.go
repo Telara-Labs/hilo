@@ -14,7 +14,7 @@
 // CanonicalizeRecord applies the record profile on top: no null anywhere,
 // and every number an integer literal with magnitude at most 2^53-1.
 //
-// The package has no dependencies outside the standard library.
+// Encoding uses the published strict TAP contract canonicalizer after the narrower record gate.
 package jcs
 
 import (
@@ -22,11 +22,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
+	"reflect"
 	"strconv"
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	tapcanon "github.com/Telara-Labs/TAP-Runtime/contract/canon"
 )
 
 // MaxDepth bounds nesting of arrays and objects. Records nest a handful of
@@ -78,6 +80,9 @@ func CanonicalizeRecord(raw []byte) ([]byte, error) {
 
 // Marshal encodes v with encoding/json and canonicalizes the result.
 func Marshal(v any) ([]byte, error) {
+	if err := checkValueStrings(reflect.ValueOf(v), map[uintptr]bool{}, 0); err != nil {
+		return nil, err
+	}
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
@@ -88,11 +93,67 @@ func Marshal(v any) ([]byte, error) {
 // MarshalRecord encodes v with encoding/json and canonicalizes the result
 // under the record profile.
 func MarshalRecord(v any) ([]byte, error) {
+	if err := checkValueStrings(reflect.ValueOf(v), map[uintptr]bool{}, 0); err != nil {
+		return nil, err
+	}
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
 	return CanonicalizeRecord(raw)
+}
+
+// checkValueStrings prevents encoding/json from silently repairing invalid UTF-8.
+func checkValueStrings(v reflect.Value, seen map[uintptr]bool, depth int) error {
+	if !v.IsValid() {
+		return nil
+	}
+	if depth > MaxDepth {
+		return &Error{Code: CodeDepth, Msg: "typed value too deep"}
+	}
+	switch v.Kind() {
+	case reflect.String:
+		return checkString(v.String())
+	case reflect.Interface:
+		if !v.IsNil() {
+			return checkValueStrings(v.Elem(), seen, depth+1)
+		}
+	case reflect.Pointer:
+		if !v.IsNil() {
+			p := v.Pointer()
+			if seen[p] {
+				return nil
+			}
+			seen[p] = true
+			defer delete(seen, p)
+			return checkValueStrings(v.Elem(), seen, depth+1)
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if v.Type().Field(i).PkgPath == "" {
+				if err := checkValueStrings(v.Field(i), seen, depth+1); err != nil {
+					return err
+				}
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			if err := checkValueStrings(v.Index(i), seen, depth+1); err != nil {
+				return err
+			}
+		}
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			if err := checkValueStrings(iter.Key(), seen, depth+1); err != nil {
+				return err
+			}
+			if err := checkValueStrings(iter.Value(), seen, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // IsCanonicalRecord reports whether raw passes the record gate and is
@@ -183,7 +244,7 @@ func canonicalize(raw []byte, record bool) ([]byte, error) {
 	}
 	p := &parser{in: raw, record: record}
 	p.skipWS()
-	v, err := p.value(0)
+	_, err := p.value(0)
 	if err != nil {
 		return nil, err
 	}
@@ -191,9 +252,7 @@ func canonicalize(raw []byte, record bool) ([]byte, error) {
 	if p.pos != len(p.in) {
 		return nil, &Error{CodeTrailingData, p.pos, "data after the JSON value"}
 	}
-	var buf bytes.Buffer
-	encode(&buf, v)
-	return buf.Bytes(), nil
+	return tapcanon.CanonicalJSON(raw)
 }
 
 func (p *parser) errf(code string, format string, a ...any) error {
@@ -524,56 +583,6 @@ func mantissa(text string) string {
 		return text[:i]
 	}
 	return text
-}
-
-func encode(buf *bytes.Buffer, n *node) {
-	switch n.k {
-	case kNull:
-		buf.WriteString("null")
-	case kBool:
-		if n.b {
-			buf.WriteString("true")
-		} else {
-			buf.WriteString("false")
-		}
-	case kNumber:
-		buf.WriteString(FormatNumber(n.num))
-	case kString:
-		writeString(buf, n.str)
-	case kArray:
-		buf.WriteByte('[')
-		for i, e := range n.arr {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			encode(buf, e)
-		}
-		buf.WriteByte(']')
-	case kObject:
-		ms := append([]member(nil), n.obj...)
-		sort.Slice(ms, func(i, j int) bool { return lessUTF16(ms[i].key, ms[j].key) })
-		buf.WriteByte('{')
-		for i, m := range ms {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			writeString(buf, m.key)
-			buf.WriteByte(':')
-			encode(buf, m.val)
-		}
-		buf.WriteByte('}')
-	}
-}
-
-// lessUTF16 orders member names by their UTF-16 code units (RFC 8785 §3.2.3).
-func lessUTF16(a, b string) bool {
-	ua, ub := utf16.Encode([]rune(a)), utf16.Encode([]rune(b))
-	for i := 0; i < len(ua) && i < len(ub); i++ {
-		if ua[i] != ub[i] {
-			return ua[i] < ub[i]
-		}
-	}
-	return len(ua) < len(ub)
 }
 
 // writeString escapes as ECMAScript JSON.stringify does (RFC 8785 §3.2.2.2).

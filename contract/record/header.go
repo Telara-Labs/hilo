@@ -9,10 +9,10 @@ import (
 )
 
 // Version is the contract major version carried in Header.V.
-const Version = 1
+const Version = 2
 
 // ContractVersion is the full contract version this module implements.
-const ContractVersion = "mnc/1.2"
+const ContractVersion = "mnc/2.0"
 
 // Size limits (R1.6).
 const (
@@ -38,9 +38,9 @@ type Header struct {
 	Author Author   `json:"author"`
 	At     int64    `json:"at"` // authoring time, unix ms; tie-break only
 	Prov   Prov     `json:"prov"`
-	Subj   Subject  `json:"subj,omitzero"`
+	Subj   Subject  `json:"subj"`
 	Red    Redact   `json:"red"`
-	Trust  Trust    `json:"trust,omitzero"`
+	Trust  Trust    `json:"trust"`
 	Links  Links    `json:"links,omitzero"`
 	Body   *BodyRef `json:"body,omitempty"`
 	Op     string   `json:"op,omitempty"`
@@ -96,9 +96,9 @@ type BodyRef struct {
 // Redact is the header redaction state (§6.3).
 type Redact struct {
 	Profile     string `json:"profile"`
-	Epoch       int    `json:"epoch,omitempty"`
+	Epoch       int    `json:"epoch"`
 	Fingerprint string `json:"fingerprint,omitempty"` // Ruleset.Fingerprint, §6.2
-	Findings    int    `json:"findings,omitempty"`    // total count only
+	Findings    int    `json:"findings"`              // total count only
 }
 
 // Trust is the author's taint and coverage claim (§10.1).
@@ -140,12 +140,13 @@ type EnvelopeBody struct {
 // Envelope is what crosses the wire and sits in bundles (§8.1). ID is
 // advisory and always recomputed.
 type Envelope struct {
-	V       int           `json:"v"`
-	ID      string        `json:"id"`
-	Header  string        `json:"header"` // base64url header_jcs
-	Sigs    []Signature   `json:"sigs"`
-	Body    *EnvelopeBody `json:"body,omitempty"`
-	Receipt *Receipt      `json:"receipt,omitempty"`
+	V       int            `json:"v"`
+	ID      string         `json:"id"`
+	Header  string         `json:"header"` // base64url header_jcs
+	Sigs    []Signature    `json:"sigs"`
+	Body    *EnvelopeBody  `json:"body,omitempty"`
+	Receipt *Receipt       `json:"receipt,omitempty"`
+	Grant   *DeliveryGrant `json:"grant,omitempty"`
 }
 
 // ContentID returns lowercase hex(sha256(header_jcs)) (R1.2).
@@ -158,4 +159,20 @@ func ContentID(headerJCS []byte) string {
 func BodyDigest(bodyJCS []byte) string {
 	sum := sha256.Sum256(bodyJCS)
 	return hex.EncodeToString(sum[:])
+}
+
+// GrantRef is authenticated tenant provenance inherited by data and semantic output.
+type GrantRef struct {
+	Tenant     string `json:"tenant"`
+	Generation int64  `json:"generation"`
+}
+
+// DeliveryGrant is a service-signed delivery fact, separate from acceptance.
+type DeliveryGrant struct {
+	RecordID         string     `json:"record_id"`
+	Tenant           string     `json:"tenant"`
+	Generation       int64      `json:"generation"`
+	Policy           string     `json:"policy"`
+	RecipientGenesis string     `json:"recipient_genesis"`
+	Sig              *Signature `json:"sig,omitempty"`
 }

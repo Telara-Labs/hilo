@@ -97,7 +97,7 @@ func TestErasureSelectorKinds(t *testing.T) {
 	cases := map[string]record.Selectors{
 		"ids":      {IDs: []string{hx("r")}},
 		"lids":     {LIDs: []string{hx("l")}},
-		"tasks":    {Tasks: []string{base.TaskID}},
+		"tasks":    {Tasks: []record.TaskSelector{{Owner: G, TaskID: base.TaskID}}},
 		"sessions": {Sessions: []string{base.SessionKey}},
 		"sources":  {Sources: []string{base.Source}},
 	}
@@ -161,6 +161,9 @@ func TestRetractionClosureAndReplacement(t *testing.T) {
 	variant.Origin = src.ID
 	m := NewModel()
 	for _, it := range []Item{src, digest, variant} {
+		if it.Route == record.RouteHostedPull {
+			it.GrantGeneration = 1
+		}
 		m.Admit(it)
 	}
 	m.Apply(Control{ID: hx("ret"), Kind: record.KindRetraction, Owner: G, Retraction: &record.RetractionBody{IDs: []string{src.ID}, Reason: "redaction_repair"}})
@@ -187,6 +190,9 @@ func TestAuthority(t *testing.T) {
 	theirs.Prov = record.ProvGateway
 	m := NewModel()
 	for _, it := range []Item{gw, mine, theirs} {
+		if it.Route == record.RouteHostedPull {
+			it.GrantGeneration = 1
+		}
 		m.Admit(it)
 	}
 	// TSK erasure may target gateway records of its tenant only (with grant)
@@ -220,9 +226,12 @@ func TestWithdrawalByGrant(t *testing.T) {
 	bundled.Route = record.RouteBundleImport
 	m := NewModel()
 	for _, it := range []Item{pulled, digest, local, bundled} {
+		if it.Route == record.RouteHostedPull {
+			it.GrantGeneration = 1
+		}
 		m.Admit(it)
 	}
-	if g := m.Grants(digest.ID); len(g) != 1 || g[0] != "tenant:acme" {
+	if g := m.Grants(digest.ID); len(g) != 1 || g[0] != (record.GrantRef{Tenant: "acme", Generation: 1}) {
 		t.Fatalf("grants %v", g)
 	}
 	w := Control{ID: hx("w"), Kind: record.KindWithdrawal, Owner: "tenant:acme",
@@ -230,6 +239,7 @@ func TestWithdrawalByGrant(t *testing.T) {
 	m.Apply(w)
 	reissued := item("pulled-v2")
 	reissued.Route, reissued.RouteTenant, reissued.Owner = record.RouteHostedPull, "acme", "tenant:acme"
+	reissued.GrantGeneration = 5
 	m.Admit(reissued)
 	ev := m.Evaluate()
 	for _, id := range []string{pulled.ID, digest.ID, bundled.ID} {
@@ -243,7 +253,8 @@ func TestWithdrawalByGrant(t *testing.T) {
 	// withdrawal by exact id is permanent for that id, whenever it arrives
 	m2 := NewModel()
 	m2.Apply(Control{ID: hx("w2"), Kind: record.KindWithdrawal, Owner: "tenant:acme",
-		Withdrawal: &record.WithdrawalBody{Tenant: "acme", IDs: []string{pulled.ID}, Reason: "user_removed"}})
+		Withdrawal: &record.WithdrawalBody{Tenant: "acme", PolicySeq: 1, IDs: []string{pulled.ID}, Reason: "user_removed"}})
+	pulled.GrantGeneration = 1
 	m2.Admit(pulled)
 	if s := m2.Evaluate().StatusOf(pulled.ID); s != Invalidated {
 		t.Fatalf("late arrival of a withdrawn id: %s", s)
@@ -253,12 +264,15 @@ func TestWithdrawalByGrant(t *testing.T) {
 func TestLineageHold(t *testing.T) {
 	a := item("A")
 	sk := "sk1:" + hx("S")
-	chunk := Item{ID: hx("chunk"), LID: hx("cl"), Kind: record.KindChunk, Prov: record.ProvTranscript, Owner: G, SessionKey: sk,
+	chunk := Item{ID: hx("chunk"), LID: hx("cl"), Kind: record.KindChunk, Prov: record.ProvTranscript, Owner: G, SessionKey: sk, SessionSeq: 5,
 		Recalls: []Recall{{Seq: 5, ID: a.ID}}, Route: record.RouteLocal}
 	later := Item{ID: hx("concl"), LID: hx("c1"), Kind: record.KindConclusion, Prov: record.ProvTranscript, Owner: G, SessionKey: sk, SessionSeq: 9}
 	earlier := Item{ID: hx("concl0"), LID: hx("c0"), Kind: record.KindConclusion, Prov: record.ProvTranscript, Owner: G, SessionKey: sk, SessionSeq: 3}
 	m := NewModel()
 	for _, it := range []Item{a, chunk, later, earlier} {
+		if it.Route == record.RouteHostedPull {
+			it.GrantGeneration = 1
+		}
 		m.Admit(it)
 	}
 	m.Deliver(Delivered{Scope: "stdio:claude-code", ID: a.ID, Seq: m.AdmittedSeq(a.ID)})
@@ -345,5 +359,171 @@ func TestOrderIndependenceProperty(t *testing.T) {
 				t.Fatalf("trial %d: order dependence", trial)
 			}
 		}
+	}
+}
+
+func TestLateExposureAndOwnerScopedAbsentTask(t *testing.T) {
+	taskID := "3f2a91c0-1111-4222-8333-444455556666"
+	m := NewModel()
+	ctl := erase("task", record.Selectors{Tasks: []record.TaskSelector{{Owner: G, TaskID: taskID}}})
+	m.Apply(ctl)
+	foreign := item("foreign")
+	foreign.Owner = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	foreign.TaskID = taskID
+	m.Admit(foreign)
+	if m.Evaluate().StatusOf(foreign.ID) != Live {
+		t.Fatal("owner A prearrival erasure banned B")
+	}
+	root := item("root")
+	root.TaskID = taskID
+	leaf := item("leaf")
+	leaf.Explicit = true
+	leaf.Scope = "same"
+	leaf.OriginMachine = "machine-a"
+	m.Admit(root)
+	m.Admit(leaf)
+	m.Expose(Exposure{OriginMachine: "machine-a", Scope: "same", ID: root.ID, UnknownOrder: true})
+	if m.Evaluate().StatusOf(leaf.ID) != LineageHold || m.ExportEligible(leaf.ID) {
+		t.Fatal("late recall did not hold existing output")
+	}
+	m.Release(leaf.ID)
+	if m.Evaluate().StatusOf(leaf.ID) != Live {
+		t.Fatal("reviewed release failed")
+	}
+	m.Apply(erase("newcause", record.Selectors{IDs: []string{root.ID}}))
+	if m.Evaluate().StatusOf(leaf.ID) != LineageHold {
+		t.Fatal("release immunized future erase")
+	}
+	other := item("other-machine")
+	other.Explicit = true
+	other.Scope = "same"
+	other.OriginMachine = "machine-b"
+	m.Admit(other)
+	if m.Evaluate().StatusOf(other.ID) != Live {
+		t.Fatal("imported scopes not machine-namespaced")
+	}
+}
+func TestWithdrawalBeforeFirstArrival(t *testing.T) {
+	m := NewModel()
+	m.Apply(Control{ID: hx("all"), Kind: record.KindWithdrawal, Owner: "tenant:acme", Withdrawal: &record.WithdrawalBody{Tenant: "acme", PolicySeq: 4, All: true, Reason: "offboarded"}})
+	r := item("old")
+	r.Route = record.RouteHostedPull
+	r.RouteTenant = "acme"
+	r.GrantGeneration = 4
+	m.Admit(r)
+	if m.Evaluate().StatusOf(r.ID) != Invalidated {
+		t.Fatal("old late generation escaped")
+	}
+	newR := r
+	newR.ID = hx("new")
+	newR.GrantGeneration = 5
+	m.Admit(newR)
+	if m.Evaluate().StatusOf(newR.ID) != Live {
+		t.Fatal("new generation new id refused")
+	}
+	m.Admit(Item{ID: hx("unknown-grant"), Route: record.RouteHostedPull, Owner: G})
+	if m.Evaluate().StatusOf(hx("unknown-grant")) != AncestryPending {
+		t.Fatal("missing authenticated generation treated unrestricted")
+	}
+}
+
+func TestUnresolvedSemanticAncestryAndDuplicateGrants(t *testing.T) {
+	m := NewModel()
+	b := item("B", "missing-A")
+	c := item("C")
+	c.Explicit = true
+	c.Scope = "s"
+	m.Admit(b)
+	m.Admit(c)
+	m.Expose(Exposure{Scope: "s", ID: b.ID, UnknownOrder: true})
+	if m.Evaluate().StatusOf(c.ID) != AncestryPending || m.ExportEligible(c.ID) {
+		t.Fatal("unresolved recalled ancestry became exportable")
+	}
+	origin := item("origin-copy")
+	origin.Origin = b.ID
+	m.Admit(origin)
+	if m.Evaluate().StatusOf(origin.ID) != AncestryPending {
+		t.Fatal("present unresolved origin not traversed")
+	}
+	root := item("root")
+	child := item("child", "root")
+	m.Admit(root)
+	m.Admit(child)
+	root.Route = record.RouteHostedPull
+	root.RouteTenant = "acme"
+	root.GrantGeneration = 4
+	m.Admit(root)
+	if len(m.Grants(root.ID)) != 1 || len(m.Grants(child.ID)) != 1 || m.ExportEligible(child.ID) {
+		t.Fatal("duplicate route discarded authenticated grants")
+	}
+	m.Apply(Control{ID: hx("withdraw"), Kind: record.KindWithdrawal, Owner: "tenant:acme", Withdrawal: &record.WithdrawalBody{Tenant: "acme", PolicySeq: 4, All: true, Reason: "offboarded"}})
+	if m.Evaluate().StatusOf(root.ID) != Invalidated || m.Evaluate().StatusOf(child.ID) != Invalidated {
+		t.Fatal("duplicate route escaped withdrawal")
+	}
+}
+
+func TestPendingToHoldTransitiveSemanticClosure(t *testing.T) {
+	m := NewModel()
+	b := item("B", "absent-A")
+	c := item("C")
+	d := item("D", "C")
+	m.Admit(b)
+	m.Admit(c)
+	m.Admit(d)
+	m.Expose(Exposure{ID: b.ID, AffectsIDs: []string{c.ID}})
+	if m.Evaluate().StatusOf(d.ID) != AncestryPending {
+		t.Fatal("initial unresolved lineage not pending")
+	}
+	m.Apply(erase("absent-A", record.Selectors{IDs: []string{hx("absent-A")}}))
+	if m.Evaluate().StatusOf(b.ID) != Invalidated || m.Evaluate().StatusOf(c.ID) != LineageHold || m.Evaluate().StatusOf(d.ID) != LineageHold || m.ExportEligible(d.ID) {
+		t.Fatalf("indirect descendant escaped hold: %+v", m.Evaluate().Status)
+	}
+	e := item("E")
+	m.Admit(e)
+	m.Expose(Exposure{ID: d.ID, AffectsIDs: []string{e.ID}})
+	if m.Evaluate().StatusOf(e.ID) != LineageHold {
+		t.Fatal("semantic-on-semantic closure dropped cause")
+	}
+}
+func TestLateAuthenticatedGrantResolvesPending(t *testing.T) {
+	m := NewModel()
+	r := item("R")
+	r.Route = record.RouteHostedPull
+	m.Admit(r)
+	child := item("child-R", "R")
+	m.Admit(child)
+	if m.Evaluate().StatusOf(child.ID) != AncestryPending {
+		t.Fatal("missing delivery facts not pending")
+	}
+	r.RouteTenant = "acme"
+	r.GrantGeneration = 2
+	m.Admit(r)
+	if m.Evaluate().StatusOf(r.ID) != Live || m.Evaluate().StatusOf(child.ID) != Live || len(m.Grants(child.ID)) != 1 {
+		t.Fatal("authenticated duplicate did not resolve prior uncertainty")
+	}
+}
+
+func TestEventOccurrenceErasureAndRecaptureBan(t *testing.T) {
+	m := NewModel()
+	a, b, c := item("event-a"), item("event-b"), item("other-session")
+	for _, it := range []*Item{&a, &b, &c} {
+		it.SessionKey = "session"
+		it.Events = []string{"event-identity"}
+	}
+	c.SessionKey = "other"
+	m.Admit(a)
+	m.Admit(b)
+	m.Admit(c)
+	m.Apply(erase("event", record.Selectors{IDs: []string{a.ID}}))
+	if m.Evaluate().StatusOf(b.ID) != Invalidated || m.Evaluate().StatusOf(c.ID) != Live || !m.EventErased(a.Owner, a.SessionKey, a.Events[0]) {
+		t.Fatal("equivalent event copy escaped source closure or crossed namespace")
+	}
+	late := item("late-event-copy")
+	late.Owner = a.Owner
+	late.SessionKey = a.SessionKey
+	late.Events = a.Events
+	m.Admit(late)
+	if m.Evaluate().StatusOf(late.ID) != Invalidated {
+		t.Fatal("late recapture escaped permanent event tomb")
 	}
 }

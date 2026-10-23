@@ -1,0 +1,12 @@
+ok  	github.com/Telara-Labs/telara-memory/contract	1.151s
+?   	github.com/Telara-Labs/telara-memory/contract/cmd/conformance	[no test files]
+?   	github.com/Telara-Labs/telara-memory/contract/graph	[no test files]
+ok  	github.com/Telara-Labs/telara-memory/contract/heads	1.089s
+ok  	github.com/Telara-Labs/telara-memory/contract/invalidate	1.403s
+ok  	github.com/Telara-Labs/telara-memory/contract/jcs	1.078s
+ok  	github.com/Telara-Labs/telara-memory/contract/policy	1.129s
+ok  	github.com/Telara-Labs/telara-memory/contract/record	2.694s
+ok  	github.com/Telara-Labs/telara-memory/contract/replay	1.081s
+ok  	github.com/Telara-Labs/telara-memory/contract/sig	26.994s
+ok  	github.com/Telara-Labs/telara-memory/contract/transport	1.087s
+ok  	github.com/Telara-Labs/telara-memory/contract/view	1.143s

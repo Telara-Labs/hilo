@@ -8,8 +8,8 @@ import (
 )
 
 // KeyRefOf describes a public key for a key operation's subject.
-func KeyRefOf(pub ed25519.PublicKey, role record.Role, machineID, label string) record.KeyRef {
-	return record.KeyRef{KeyID: KeyID(pub), Alg: AlgEd25519, Pub: EncodePub(pub), Role: role, MachineID: machineID, Label: label}
+func KeyRefOf(pub ed25519.PublicKey, role record.Role, machineID string) record.KeyRef {
+	return record.KeyRef{KeyID: KeyID(pub), Alg: AlgEd25519, Pub: EncodePub(pub), Role: role, MachineID: machineID}
 }
 
 // BuildKeyOp assembles and signs a key operation. author is the key whose id

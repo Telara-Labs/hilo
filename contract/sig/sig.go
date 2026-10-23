@@ -22,6 +22,7 @@ const (
 	CtxRecord  = "mnc/v1/record"
 	CtxBundle  = "mnc/v1/bundle"
 	CtxReceipt = "mnc/v1/receipt"
+	CtxGrant   = "mnc/v1/grant"
 )
 
 // AlgEd25519 is the only signature algorithm of v1.
@@ -140,4 +141,41 @@ func Verify(pub ed25519.PublicKey, ctx string, msg []byte, s record.Signature) e
 		return ErrSignature
 	}
 	return nil
+}
+
+// GrantMessage is context-separated independently of acceptance receipts.
+func GrantMessage(g record.DeliveryGrant) ([]byte, error) {
+	g.Sig = nil
+	b, err := jcs.MarshalRecord(g)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(b)
+	return message(CtxGrant, sum[:]), nil
+}
+func SignGrant(priv ed25519.PrivateKey, g record.DeliveryGrant) (record.DeliveryGrant, error) {
+	msg, err := GrantMessage(g)
+	if err != nil {
+		return g, err
+	}
+	s := Sign(priv, CtxGrant, msg)
+	g.Sig = &s
+	return g, nil
+}
+
+// VerifyGrant binds delivery to this exact record, pinned recipient and policy generation.
+func VerifyGrant(g record.DeliveryGrant, st *State, recordID string, issuer TrustedIssuer, genesis, policyID string, policySeq, withdrawnThrough int64) error {
+	tenant := issuer.Tenant
+	if !issuer.ValidFor(record.RoleService) || st == nil || g.Sig == nil || g.RecordID != recordID || !record.IsHex64(recordID) || g.Tenant != tenant || g.RecipientGenesis != genesis || !record.IsKeyID(genesis) || g.Policy != policyID || !record.IsHex64(policyID) || g.Generation <= 0 || g.Generation != policySeq || g.Generation <= withdrawnThrough {
+		return fmt.Errorf("grant: identity, policy or generation mismatch")
+	}
+	key := st.KeyFor(g.Sig.KeyID, record.RoleService, tenant)
+	if key == nil || key.Role != record.RoleService || key.Tenant != tenant || (key.Status != KeyActive && key.Status != KeyRetired) {
+		return fmt.Errorf("grant: untrusted service authority")
+	}
+	msg, err := GrantMessage(g)
+	if err != nil {
+		return err
+	}
+	return Verify(key.Pub, CtxGrant, msg, *g.Sig)
 }

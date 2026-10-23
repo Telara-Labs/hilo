@@ -1,26 +1,27 @@
-# telara-memory
+# Memory contract
 
-A local memory node for coding agents. It captures the sessions of the agent
-clients you run, keeps them as signed, content-addressed records on your own
-machine, and serves them back to any of your clients.
+The separately versioned `mnc/2.0` Go contract lives in `contract/`. It provides
+strict canonical JSON, typed records, content identities, signatures and causal
+key operations, owner-scoped heads, invalidation and grant inheritance, session
+and trust reducers, policy freshness, and pure sync/bundle/replay gates.
 
-It works standalone, with no account and no telemetry. Sync to a hosted
-service is optional and off until you turn it on.
+The contract reuses the published TAP canonicalizer. Its behavioral golden tests
+also exercise the published TAP redactor. It does not contain a running memory
+node, filesystem spool, SQLite store, hosted endpoint, transport credentials or
+age encryption adapter.
 
-## Layout
+From `contract/`, run `GOWORK=off go test ./...` and `GOWORK=off go vet ./...`.
+The shared vector registry and frozen wire fixtures are in `contract/testdata/`.
+Run `GOWORK=off go run ./cmd/conformance --pure` for the pure checks. The JSON
+report keeps storage and transport release gates marked `INCOMPLETE`; omitting
+`--pure` returns exit status 2 while any such gate remains outstanding.
 
-| Path | What it is |
-|---|---|
-| `contract/` | The record contract as a small Go module with no third-party dependencies. Canonical JSON, the record envelope and its kinds, signing and key operations, head selection, erasure and its invalidation closure, the signed policy document, and the conformance vectors. |
+An independent Python runner checks V1–V5 using RFC 8785 and Ed25519 libraries.
+Install `contract/conformance/requirements.txt` into an isolated environment,
+then run `python3 conformance/python_vectors.py` from `contract/`. A pip
+`--target` directory can instead be passed with `--deps`.
 
-The `contract` module is versioned separately so that other implementations,
-including a sync server, can import it and run the same conformance vectors.
-
-## Status
-
-Early development. The record format is versioned as `mnc/1.1` and may still
-change before the first tagged release.
-
-## License
+The current implementation is under development and has no tagged release.
+See `contract/OPEN-QUESTIONS.md` for interpretation and scope notes.
 
 Apache License 2.0. See [LICENSE](LICENSE).

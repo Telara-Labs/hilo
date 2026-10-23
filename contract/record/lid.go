@@ -108,8 +108,7 @@ func PolicyLID(tenantID string) string { return H("policy", tenantID) }
 // body when needed, and the owner of its verified signer. Pass owner "" when
 // the signer is not yet known; owner-scoped kinds then report ok == false.
 // ok is also false for control records (the nonce is not carried), export
-// variants of sessions (the page is not in the meta body), request
-// conclusions (OPEN-QUESTIONS Q12), and records whose needed body is absent.
+// variants of sessions (the page is not in the meta body), records whose needed body is absent.
 func ExpectedLID(h *Header, body any, owner string) (lid string, ok bool) {
 	if OwnerScoped(h) && owner == "" {
 		return "", false
@@ -127,6 +126,9 @@ func ExpectedLID(h *Header, body any, owner string) (lid string, ok bool) {
 	case KindConclusion:
 		if h.Prov == ProvMCPExplicit || h.Prov == ProvGateway {
 			return ExplicitConclusionLID(owner, h.Subj.TaskID), true
+		}
+		if b, yes := body.(*ConclusionBody); yes && b.RequestKey != "" {
+			return RequestConclusionLID(h.Subj.SessionKey, b.RequestKey), true
 		}
 	case KindTask:
 		return TaskLID(owner, h.Subj.TaskID), true

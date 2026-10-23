@@ -124,9 +124,12 @@ func TestValidityAcrossRevocation(t *testing.T) {
 	B, T := key("B"), key("TSK")
 	w.add("addB", B, mB, w.genesis, mA, w.id("genesis"))
 	w.revoke("revB", B, mB, "lost", w.genesis, mA, w.id("addB"))
-	tsk := w.op("tsk", record.KeyOpBody{Op: record.OpTenantKey, Subject: KeyRefOf(pub(T), record.RoleService, "", ""), Genesis: "acme"}, T, "", T)
+	tsk := w.op("tsk", record.KeyOpBody{Op: record.OpTenantKey, Subject: KeyRefOf(pub(T), record.RoleService, ""), Genesis: "acme"}, T, "", T)
 	tsk.FromLogin = true
 	w.ops["revB"].AdmittedSeq = 50
+	revReceipt, _ := SignReceipt(T, record.Receipt{ID: w.id("revB"), Tenant: "acme", DeviceID: mA, AcceptedAt: 1000, HSeq: 8, Policy: hx("policy")})
+	w.ops["revB"].Receipt = &revReceipt
+	w.ops["revB"].ReceiptIssuer = TrustedIssuer{Tenant: "acme", Role: record.RoleService, Provenance: AuthenticatedAdmission}
 	st := w.fold([]string{"genesis", "addB", "revB", "tsk"})
 	kB := st.Key(KeyID(pub(B)))
 	if kB.Status != KeyRevoked || kB.RevokedSeq != 50 {
@@ -140,21 +143,21 @@ func TestValidityAcrossRevocation(t *testing.T) {
 	if res := VerifyRecord(r, sigs, st, Context{AdmittedSeq: 40}); res.Status != StatusVerified {
 		t.Fatalf("admitted before: %+v", res)
 	}
-	rc, _ := SignReceipt(T, record.Receipt{ID: r.ID, Tenant: "acme", DeviceID: mB, AcceptedAt: kB.RevokedAt - 1, HSeq: 9})
-	if res := VerifyRecord(r, sigs, st, Context{AdmittedSeq: 60, Receipt: &rc}); res.Status != StatusVerified {
+	rc, _ := SignReceipt(T, record.Receipt{ID: r.ID, Tenant: "acme", DeviceID: mB, AcceptedAt: 999, HSeq: 9, Policy: hx("policy")})
+	if res := VerifyRecord(r, sigs, st, Context{AdmittedSeq: 60, Receipt: &rc, ReceiptIssuer: TrustedIssuer{Tenant: "acme", Role: record.RoleService, Provenance: AuthenticatedAdmission}}); res.Status != StatusVerified {
 		t.Fatalf("receipt before: %+v", res)
 	}
-	late, _ := SignReceipt(T, record.Receipt{ID: r.ID, Tenant: "acme", DeviceID: mB, AcceptedAt: kB.RevokedAt + 1, HSeq: 9})
-	if res := VerifyRecord(r, sigs, st, Context{AdmittedSeq: 60, Receipt: &late}); res.Status != StatusSignerRevoked {
+	late, _ := SignReceipt(T, record.Receipt{ID: r.ID, Tenant: "acme", DeviceID: mB, AcceptedAt: 1001, HSeq: 9, Policy: hx("policy")})
+	if res := VerifyRecord(r, sigs, st, Context{AdmittedSeq: 60, Receipt: &late, ReceiptIssuer: TrustedIssuer{Tenant: "acme", Role: record.RoleService, Provenance: AuthenticatedAdmission}}); res.Status != StatusSignerRevoked {
 		t.Fatalf("receipt after: %+v", res)
 	}
 	forged := rc
 	forged.AcceptedAt -= 5 // altered after signing
-	if res := VerifyRecord(r, sigs, st, Context{AdmittedSeq: 60, Receipt: &forged}); res.Status != StatusSignerRevoked {
+	if res := VerifyRecord(r, sigs, st, Context{AdmittedSeq: 60, Receipt: &forged, ReceiptIssuer: TrustedIssuer{Tenant: "acme", Role: record.RoleService, Provenance: AuthenticatedAdmission}}); res.Status != StatusSignerRevoked {
 		t.Fatalf("forged receipt: %+v", res)
 	}
 	other, _ := SignReceipt(key("rogue"), record.Receipt{ID: r.ID, Tenant: "acme", AcceptedAt: 1})
-	if VerifyReceipt(other, st) == nil {
+	if VerifyReceipt(other, st, TrustedIssuer{Tenant: "acme", Role: record.RoleService, Provenance: AuthenticatedAdmission}) == nil {
 		t.Fatal("receipt by an unknown key accepted")
 	}
 }

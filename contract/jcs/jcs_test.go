@@ -193,9 +193,9 @@ func TestMarshalRecordGoValues(t *testing.T) {
 	if string(got) != `{"k":{"a":7,"z":"<&>"}}` {
 		t.Fatalf("got %s", got)
 	}
-	// Go replaces invalid UTF-8 with U+FFFD when marshaling; the result is still accepted.
-	if _, err := Marshal("a\xffb"); err != nil {
-		t.Fatal(err)
+	// Reject before encoding/json can silently replace invalid UTF-8.
+	if _, err := Marshal("a\xffb"); err == nil {
+		t.Fatal("typed invalid UTF-8 repaired")
 	}
 }
 

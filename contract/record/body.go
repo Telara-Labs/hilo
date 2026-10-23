@@ -72,7 +72,10 @@ type ChunkBody struct {
 
 // Event is one ordered item of a session.
 type Event struct {
+	Salt        string            `json:"salt"` // protected revision salt, erasable body only
 	ID          string            `json:"id"`
+	Revision    string            `json:"revision"`
+	Replaces    []string          `json:"replaces,omitempty"`
 	Seq         int64             `json:"seq,omitempty"`
 	Kind        string            `json:"kind"`
 	At          int64             `json:"at,omitempty"`
@@ -128,6 +131,7 @@ type SourcePos struct {
 
 // ConclusionBody is an explicit, final-answer or hook-final conclusion.
 type ConclusionBody struct {
+	RequestKey    string   `json:"request_key,omitempty"` // bounded native identity, distinct from Request prompt text
 	Salt          string   `json:"salt,omitempty"`
 	Source        string   `json:"source"` // explicit | final-answer | hook-final
 	State         string   `json:"state,omitempty"`
@@ -283,11 +287,8 @@ type MetaPointer struct {
 
 // TaskMetaBody is the v1 export variant of a task (push-metadata).
 type TaskMetaBody struct {
-	Salt        string `json:"salt,omitempty"`
-	Status      string `json:"status,omitempty"`
-	Checkpoints int    `json:"checkpoints,omitempty"`
-	CreatedAt   int64  `json:"created_at,omitempty"`
-	CompletedAt int64  `json:"completed_at,omitempty"`
+	Salt   string `json:"salt,omitempty"`
+	Status string `json:"status,omitempty"`
 }
 
 // RetractionBody invalidates exact ids and their closure; it never bans a LID.
@@ -296,13 +297,19 @@ type RetractionBody struct {
 	Reason string   `json:"reason"` // redaction_repair | export_superseded | rule_removed
 }
 
+// TaskSelector names the owner as well as the task, including before its arrival.
+type TaskSelector struct {
+	Owner  string `json:"owner"`
+	TaskID string `json:"task_id"`
+}
+
 // Selectors of an erasure.
 type Selectors struct {
-	IDs      []string `json:"ids,omitempty"`
-	LIDs     []string `json:"lids,omitempty"`
-	Tasks    []string `json:"tasks,omitempty"`
-	Sessions []string `json:"sessions,omitempty"`
-	Sources  []string `json:"sources,omitempty"`
+	IDs      []string       `json:"ids,omitempty"`
+	LIDs     []string       `json:"lids,omitempty"`
+	Tasks    []TaskSelector `json:"tasks,omitempty"`
+	Sessions []string       `json:"sessions,omitempty"`
+	Sources  []string       `json:"sources,omitempty"`
 }
 
 // Count is the number of selector entries.
@@ -333,7 +340,6 @@ type KeyRef struct {
 	Pub       string `json:"pub"` // base64url raw 32 bytes, no padding
 	Role      Role   `json:"role"`
 	MachineID string `json:"machine_id,omitempty"`
-	Label     string `json:"label,omitempty"`
 }
 
 // KeyOpBody is one entry of the keyring chain (§4.3).
