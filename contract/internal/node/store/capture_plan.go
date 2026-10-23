@@ -179,7 +179,16 @@ func (s *Store) captureReceipt(ctx context.Context, d *databaseState, id string,
 				return out, false, failure("storage_error")
 			}
 			x := d.byID[r.ID]
-			if x == nil || x.seq != r.Sequence {
+			sequence := int64(0)
+			if x != nil {
+				sequence = x.seq
+			} else if d.projectionBlocked {
+				if s.conn.QueryRowContext(ctx, "SELECT seq FROM record WHERE id=?", r.ID).Scan(&sequence) != nil {
+					rows.Close()
+					return out, false, failure("corrupt_database")
+				}
+			}
+			if sequence != r.Sequence {
 				rows.Close()
 				return out, false, failure("corrupt_database")
 			}
@@ -197,7 +206,20 @@ func (s *Store) captureReceipt(ctx context.Context, d *databaseState, id string,
 	}
 	for rows.Next() {
 		var r PageRef
-		if rows.Scan(&r.Page, &r.ID) != nil || d.byID[r.ID] == nil {
+		if rows.Scan(&r.Page, &r.ID) != nil {
+			rows.Close()
+			return out, false, failure("corrupt_database")
+		}
+		known := d.byID[r.ID] != nil
+		if !known && d.projectionBlocked {
+			var n int
+			if s.conn.QueryRowContext(ctx, "SELECT count(*) FROM record WHERE id=?", r.ID).Scan(&n) != nil {
+				rows.Close()
+				return out, false, failure("storage_error")
+			}
+			known = n == 1
+		}
+		if !known {
 			rows.Close()
 			return out, false, failure("corrupt_database")
 		}

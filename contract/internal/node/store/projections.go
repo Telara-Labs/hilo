@@ -5,11 +5,22 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/invalidate"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
-	"github.com/Telara-Labs/telara-memory/contract/view"
 	"strings"
 )
 
 func (s *Store) persistState(ctx context.Context, d *databaseState) error {
+	if err := d.prepareRelations(); err != nil {
+		return err
+	}
+	if err := s.persistLineage(ctx, d); err != nil {
+		return err
+	}
+	if err := s.persistFieldProjection(ctx, d); err != nil {
+		return err
+	}
+	if _, err := s.conn.ExecContext(ctx, "DELETE FROM render_body"); err != nil {
+		return failure("storage_error")
+	}
 	for id, causes := range d.eval.Causes {
 		for _, c := range causes {
 			if _, err := s.conn.ExecContext(ctx, "INSERT OR IGNORE INTO tomb VALUES(?,?,?)", id, string(c.Kind), c.Cause); err != nil {
@@ -37,10 +48,23 @@ func (s *Store) persistState(ctx context.Context, d *databaseState) error {
 			x.generation = d.generation
 		}
 		if x.state == string(invalidate.Invalidated) {
+			if _, err := s.conn.ExecContext(ctx, "DELETE FROM outcome_query"); err != nil {
+				return failure("storage_error")
+			}
+			if _, err := s.conn.ExecContext(ctx, "DELETE FROM selection_payload"); err != nil {
+				return failure("storage_error")
+			}
+			if _, err := s.conn.ExecContext(ctx, "UPDATE query_cursor SET state='expired' WHERE state='ready'"); err != nil {
+				return failure("storage_error")
+			}
 			if _, err := s.conn.ExecContext(ctx, "DELETE FROM record_body WHERE id=?", x.rec.ID); err != nil {
 				return failure("storage_error")
 			}
 			x.rec = x.rec.WithoutBody()
+			d.groups = nil
+			if _, err := s.conn.ExecContext(ctx, "DELETE FROM field_completeness WHERE id=?", x.rec.ID); err != nil {
+				return failure("storage_error")
+			}
 			if _, err := s.conn.ExecContext(ctx, "DELETE FROM vector WHERE id=?", x.rec.ID); err != nil {
 				return failure("storage_error")
 			}
@@ -66,17 +90,11 @@ func (s *Store) persistState(ctx context.Context, d *databaseState) error {
 			tasks[[2]string{x.owner, task}] = true
 		}
 	}
-	observed := d.observed()
+	if len(sessions) > 128 {
+		return &projectionLimit{}
+	}
 	for sk := range sessions {
-		history := d.facts[sk]
-		if history.V == 0 {
-			history.V = 2
-		}
-		v, err := view.SessionView(observed, nil, nil, sk, history)
-		if err != nil {
-			return failure("invalid_causal_state")
-		}
-		if err = s.persistFacts(ctx, v.Facts); err != nil {
+		if err := s.persistFacts(ctx, d.plannedFacts[sk]); err != nil {
 			return err
 		}
 	}
@@ -84,7 +102,7 @@ func (s *Store) persistState(ctx context.Context, d *databaseState) error {
 		return failure("storage_error")
 	}
 	for task := range tasks {
-		status := view.TaskStatus(observed, nil, task[0], task[1])
+		status := d.taskStatus(task[0], task[1])
 		if _, err := s.conn.ExecContext(ctx, "INSERT INTO task_state VALUES(?,?,?)", task[0], task[1], status); err != nil {
 			return failure("storage_error")
 		}
@@ -96,7 +114,16 @@ func (s *Store) persistState(ctx context.Context, d *databaseState) error {
 		if x.state != string(invalidate.Live) || x.sigStatus != sig.StatusVerified || x.rec.Body == nil || x.rec.Header.Type.IsControl() {
 			continue
 		}
-		text := searchText(x.rec.Body)
+		text := freshText(d, x.rec.ID)
+		if text == "" {
+			if _, err := s.conn.ExecContext(ctx, "DELETE FROM vector WHERE id=?", x.rec.ID); err != nil {
+				return failure("storage_error")
+			}
+			if _, err := s.conn.ExecContext(ctx, "DELETE FROM projection_job WHERE id=?", x.rec.ID); err != nil {
+				return failure("storage_error")
+			}
+			continue
+		}
 		if text != "" {
 			result, err := s.conn.ExecContext(ctx, "INSERT INTO passage(id,text) VALUES(?,?)", x.rec.ID, text)
 			if err != nil {

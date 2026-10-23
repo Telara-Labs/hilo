@@ -118,6 +118,7 @@ func TestProducerSQLFailuresRollbackWholeBatchAndProgress(t *testing.T) {
 	for _, table := range []string{"record", "record_body", "item_order", "item_event", "dep", "presence", "passage", "projection_job", "capture_progress", "capture_transition", "capture_transition_record", "capture_transition_source", "capture_transition_page"} {
 		t.Run(table, func(t *testing.T) {
 			f := newProducer(t, "rollback candidate")
+			seedFreshCheckpoint(f.w, "fresh projection fault fixture")
 			ctx := context.Background()
 			before := f.w.snapshot()
 			// A page always has a copied chunk dependency, so every listed gate executes.

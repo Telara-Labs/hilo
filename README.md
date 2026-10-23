@@ -6,14 +6,28 @@ key operations, owner-scoped heads, invalidation and grant inheritance, session
 and trust reducers, policy freshness, and pure sync/bundle/replay gates.
 
 The contract reuses the published TAP canonicalizer. Its behavioral golden tests
-also exercise the published TAP redactor. It does not contain a running memory
-node, filesystem spool, hosted endpoint, transport credentials or age encryption
+also exercise the published TAP redactor. It does not provide an installed memory
+node, filesystem spool, hosted endpoint, credential bootstrap or age encryption
 adapter. Private components under `contract/internal/node/` include a
 single-owner SQLite store and a narrow Claude/Codex JSONL capture pipeline.
 Capture uses held file descriptors, redaction before sealing, and atomic
 store admission with progress and retry receipts. These components have
 separate implementation and acceptance gates. They do not provide an
 installed collector, model-facing MCP server, synchronization or a running node.
+
+A private byte-budgeted disclosure kernel is under development alongside these
+components. Its scope includes separate read and task-write permissions, durable
+operation outcomes, conservative exposure records, and current authorization
+checks before releasing quoted text. A prepared reply carries no readable text
+until release. Design approval is separate from implementation and acceptance
+evidence.
+
+The initial fresh-search scope requires positive field completeness from the
+fixed task builder. Native transcript fields and generated digests remain outside
+fresh search until their provenance gates pass. Permitted quoted lookup has
+separate availability checks and labels. Native scope discovery, installed
+credentials, qualified echo, token-budget APIs, calibrated retrieval, encryption
+and synchronization remain unfinished.
 
 Private development temporarily shares a Go module between the contract and
 runtime. The pinned SQLite dependency requires Go 1.26. Pure packages have a

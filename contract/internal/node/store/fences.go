@@ -94,13 +94,21 @@ func tombRank(k invalidate.TombKind) int {
 // Committed fences are independent of a later reclassification of an absent ID.
 // Security-control bodies are retained, while their old opaque dependency fence
 // still prevents ordinary descendants from being revived.
-func (d *databaseState) enforceFences() {
+func (d *databaseState) enforceFences() error {
+	work := 0
+	limit := false
+	causeCount := 0
 	causes := map[string]map[invalidate.Tomb]bool{}
 	add := func(id string, t invalidate.Tomb) bool {
 		if causes[id] == nil {
 			causes[id] = map[invalidate.Tomb]bool{}
 		}
 		if causes[id][t] {
+			return false
+		}
+		causeCount++
+		if causeCount > 65536 {
+			limit = true
 			return false
 		}
 		causes[id][t] = true
@@ -127,6 +135,10 @@ func (d *databaseState) enforceFences() {
 	for changed {
 		changed = false
 		for _, x := range d.records {
+			work++
+			if work > 1048576 || limit {
+				return &projectionLimit{}
+			}
 			if x.rec.Header.Type.IsControl() {
 				continue
 			}
@@ -179,17 +191,37 @@ func (d *databaseState) enforceFences() {
 		}
 	}
 	holds := map[string]map[string]bool{}
-	for id, tokens := range d.eval.HoldCauses {
+	for id, tokens := range d.retainedHolds {
 		holds[id] = map[string]bool{}
+		for token := range tokens {
+			holds[id][token] = true
+		}
+	}
+	for id, tokens := range d.eval.HoldCauses {
+		if holds[id] == nil {
+			holds[id] = map[string]bool{}
+		}
 		for _, v := range tokens {
 			holds[id][v] = true
 		}
+	}
+	holdCount := 0
+	for _, tokens := range holds {
+		holdCount += len(tokens)
+	}
+	if holdCount > 65536 {
+		return &projectionLimit{}
 	}
 	addHold := func(id, v string) bool {
 		if holds[id] == nil {
 			holds[id] = map[string]bool{}
 		}
 		if holds[id][v] {
+			return false
+		}
+		holdCount++
+		if holdCount > 65536 {
+			limit = true
 			return false
 		}
 		holds[id][v] = true
@@ -199,6 +231,10 @@ func (d *databaseState) enforceFences() {
 	for changed {
 		changed = false
 		for _, x := range d.records {
+			work++
+			if work > 1048576 || limit {
+				return &projectionLimit{}
+			}
 			if x.rec.Header.Type.IsControl() {
 				continue
 			}
@@ -213,26 +249,19 @@ func (d *databaseState) enforceFences() {
 					}
 				}
 			}
-			for _, source := range d.records {
-				if source.rec.Header.Subj.SessionKey == "" || source.rec.Header.Subj.SessionKey != x.rec.Header.Subj.SessionKey {
-					continue
+			for root := range d.semantic[x.rec.ID] {
+				for t := range causes[root] {
+					if addHold(x.rec.ID, root+"/"+t.Cause) {
+						changed = true
+					}
 				}
-				for _, r := range source.recalls {
-					if x.orderKnown && x.lastSeq <= r.Seq {
-						continue
-					}
-					for t := range causes[r.ID] {
-						if addHold(x.rec.ID, r.ID+"/"+t.Cause) {
-							changed = true
-						}
-					}
-					for token := range holds[r.ID] {
-						if addHold(x.rec.ID, token) {
-							changed = true
-						}
+				for token := range holds[root] {
+					if addHold(x.rec.ID, token) {
+						changed = true
 					}
 				}
 			}
+
 		}
 	}
 	for id, all := range holds {
@@ -245,4 +274,8 @@ func (d *databaseState) enforceFences() {
 			d.eval.Status[id] = invalidate.LineageHold
 		}
 	}
+	if limit {
+		return &projectionLimit{}
+	}
+	return nil
 }

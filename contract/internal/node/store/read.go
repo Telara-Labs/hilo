@@ -5,7 +5,6 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/invalidate"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
-	"github.com/Telara-Labs/telara-memory/contract/view"
 	"math"
 )
 
@@ -28,11 +27,10 @@ func (s *Store) Snapshot(ctx context.Context, q ReadRequest) (Snapshot, error) {
 			return err
 		}
 		if d.blocked {
-			return ownerBlocked()
+			return d.blockedError()
 		}
 		out.Generation = d.generation
 		out.Entries = []Entry{}
-		observed := d.observed()
 		for _, x := range d.records {
 			if len(ids) > 0 && !ids[x.rec.ID] {
 				continue
@@ -45,7 +43,7 @@ func (s *Store) Snapshot(ctx context.Context, q ReadRequest) (Snapshot, error) {
 				e.BodyJCS = append([]byte(nil), x.rec.BodyJCS...)
 			}
 			if x.rec.Header.Subj.TaskID != "" {
-				e.TaskStatus = view.TaskStatus(observed, nil, x.owner, x.rec.Header.Subj.TaskID)
+				e.TaskStatus = d.taskStatus(x.owner, x.rec.Header.Subj.TaskID)
 			}
 			out.Entries = append(out.Entries, e)
 		}
@@ -123,13 +121,16 @@ func (s *Store) Reindex(ctx context.Context) error {
 			return err
 		}
 		if d.blocked {
-			return ownerBlocked()
+			return d.blockedError()
 		}
 		if _, err = s.effectDelta(ctx, d); err != nil {
 			return err
 		}
 		if d.generation == math.MaxInt64 {
 			return failure("ordinal_limit")
+		}
+		if err = d.prepareRelations(); err != nil {
+			return s.refuseVerified(ctx, d, err)
 		}
 		d.generation++
 		if _, err = s.conn.ExecContext(ctx, "UPDATE meta SET generation=? WHERE singleton=1", d.generation); err != nil {
@@ -156,13 +157,13 @@ func (s *Store) PublishProjection(ctx context.Context, t JobToken, p Projection)
 			return err
 		}
 		if d.blocked {
-			return ownerBlocked()
+			return d.blockedError()
 		}
 		if d.generation == math.MaxInt64 {
 			return failure("ordinal_limit")
 		}
 		x := d.byID[t.RecordID]
-		if x == nil || x.generation != t.Generation || x.state != string(invalidate.Live) || x.sigStatus != sig.StatusVerified || x.rec.Body == nil {
+		if x == nil || x.generation != t.Generation || x.state != string(invalidate.Live) || x.sigStatus != sig.StatusVerified || x.rec.Body == nil || len(freshFields(d, x.rec.ID)) == 0 {
 			return failure("stale_projection")
 		}
 		var n int

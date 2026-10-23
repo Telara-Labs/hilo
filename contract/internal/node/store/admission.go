@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"github.com/Telara-Labs/telara-memory/contract/view"
 	"math"
+	"strings"
 
 	"github.com/Telara-Labs/telara-memory/contract/invalidate"
 	"github.com/Telara-Labs/telara-memory/contract/jcs"
@@ -58,6 +58,25 @@ func (s *Store) Append(ctx context.Context, in SignedRecord) (AdmissionResult, e
 	}
 	var result AdmissionResult
 	err = s.write(ctx, func() error {
+		if held, e := s.guarded(ctx); e != nil {
+			return e
+		} else if held {
+			if r.Header.Type == record.KindKeyOp {
+				var e error
+				result, e = s.appendGuardedKeyOp(ctx, r, signatures)
+				return e
+			}
+			var projections int
+			if s.conn.QueryRowContext(ctx, "SELECT count(*) FROM projection_hold").Scan(&projections) != nil {
+				return failure("storage_error")
+			}
+			if projections > 0 {
+				return &Error{Code: "lineage_evaluation_required", OwnerBlocked: true}
+			}
+			if !r.Header.Type.IsControl() {
+				return ownerBlocked()
+			}
+		}
 		d, err := s.load(ctx)
 		if err != nil {
 			return err
@@ -185,25 +204,54 @@ func (s *Store) effectDelta(ctx context.Context, d *databaseState) ([][3]string,
 		return nil, failure("storage_error")
 	}
 	var delta [][3]string
+	pairs := map[string]map[string]bool{}
 	for id, causes := range d.eval.Causes {
+		for _, c := range causes {
+			if c.Kind == invalidate.Erased {
+				if pairs[id] == nil {
+					pairs[id] = map[string]bool{}
+				}
+				pairs[id][c.Cause] = true
+			}
+		}
+	}
+	for id, tokens := range d.eval.HoldCauses {
+		for _, token := range tokens {
+			parts := strings.Split(token, "/")
+			if len(parts) != 2 {
+				return nil, failure("corrupt_database")
+			}
+			c := d.byID[parts[1]]
+			if c == nil {
+				return nil, failure("corrupt_database")
+			}
+			if c.rec.Header.Type == record.KindErasure {
+				if pairs[id] == nil {
+					pairs[id] = map[string]bool{}
+				}
+				pairs[id][c.rec.ID] = true
+			}
+		}
+	}
+	for id, controls := range pairs {
 		if d.byID[id] == nil || d.byID[id].rec.Header.Type.IsControl() {
 			continue
 		}
-		for _, cause := range causes {
-			if cause.Kind != invalidate.Erased || known[[2]string{cause.Cause, id}] {
+		for cid := range controls {
+			if known[[2]string{cid, id}] {
 				continue
 			}
-			control := d.byID[cause.Cause]
-			if control == nil {
+			control := d.byID[cid]
+			if control == nil || control.rec.Header.Type != record.KindErasure {
 				return nil, failure("corrupt_database")
 			}
 			owner := control.owner
-
 			count[owner]++
-			known[[2]string{cause.Cause, id}] = true
-			delta = append(delta, [3]string{cause.Cause, id, owner})
+			known[[2]string{cid, id}] = true
+			delta = append(delta, [3]string{cid, id, owner})
 		}
 	}
+
 	over := false
 	for _, n := range count {
 		if n > 1000 {
@@ -239,11 +287,14 @@ func (s *Store) enrichBody(ctx context.Context, d *databaseState, x *stored, r *
 	material(x)
 	x.generation = d.generation + 1
 	if err := d.rebuild(s.opts); err != nil {
-		return AdmissionResult{}, err
+		return AdmissionResult{}, s.refuseVerified(ctx, d, err)
 	}
 	delta, err := s.effectDelta(ctx, d)
 	if err != nil {
 		return AdmissionResult{}, s.refuseBulk(ctx, d, err)
+	}
+	if err = d.prepareRelations(); err != nil {
+		return AdmissionResult{}, s.refuseVerified(ctx, d, err)
 	}
 	if x.state != "invalidated" {
 		if _, err = s.conn.ExecContext(ctx, "INSERT INTO record_body VALUES(?,?)", r.ID, r.BodyJCS); err != nil {
@@ -291,26 +342,13 @@ func (s *Store) prepareNew(d *databaseState, r *record.Record, signatures []reco
 	d.nextSeq++
 	d.generation++
 	if err := d.rebuild(s.opts); err != nil {
-		return nil, err
+		return nil, s.refuseVerified(d.ctx, d, err)
 	}
 	return x, nil
 }
 func (s *Store) persistPrepared(ctx context.Context, d *databaseState, added []*stored) error {
-	// Reducer errors, including malformed causal state, must precede SQL writes.
-	sessions := map[string]bool{}
-	for _, x := range d.records {
-		if x.rec.Header.Subj.SessionKey != "" {
-			sessions[x.rec.Header.Subj.SessionKey] = true
-		}
-	}
-	for sk := range sessions {
-		f := d.facts[sk]
-		if f.V == 0 {
-			f.V = record.Version
-		}
-		if _, err := view.SessionView(d.observed(), nil, nil, sk, f); err != nil {
-			return failure("invalid_causal_state")
-		}
+	if err := d.prepareRelations(); err != nil {
+		return s.refuseVerified(ctx, d, err)
 	}
 	effects, err := s.effectDelta(ctx, d)
 	if err != nil {

@@ -36,7 +36,10 @@ func TestLaterFullBodyUsesOriginalSequenceAndCannotRefillTomb(t *testing.T) {
 func TestSynchronousProjectionFailureRollsBackWholeAdmission(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
+	seedFreshCheckpoint(w, "trusted positive projection")
 	r := w.task(1, "projectionfailurecanary")
+	var expectedSequence int64
+	w.s.conn.QueryRowContext(ctx, "SELECT next_seq FROM meta").Scan(&expectedSequence)
 	before := w.snapshot()
 	if _, e := w.s.conn.ExecContext(ctx, "CREATE TRIGGER reject_passage BEFORE INSERT ON passage BEGIN SELECT RAISE(ABORT,'private_canary_error'); END"); e != nil {
 		t.Fatal(e)
@@ -53,7 +56,7 @@ func TestSynchronousProjectionFailureRollsBackWholeAdmission(t *testing.T) {
 		t.Fatal(e)
 	}
 	a := w.append(r)
-	if a.Sequence != 2 {
+	if a.Sequence != expectedSequence {
 		t.Fatal("failed write consumed admission order")
 	}
 }
@@ -89,6 +92,9 @@ func TestCrashChild(t *testing.T) {
 	if _, e = s.conn.ExecContext(ctx, "BEGIN IMMEDIATE"); e != nil {
 		os.Exit(12)
 	}
+	// This crash fixture enters the writer directly so it can exit without
+	// writeMode's rollback defer. Retain the same bounded reduction context.
+	s.reductions = newReductionContext()
 	d, e := s.load(ctx)
 	if e != nil {
 		os.Exit(13)

@@ -13,8 +13,7 @@ func TestPhysicalScrubActualBytesAndBusyReader(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
 	token := "erasure_canary_8cd94f620acc713e"
-	a := w.task(1, token)
-	w.append(a)
+	a := seedFreshCheckpoint(w, token)
 	reader, e := sql.Open("sqlite", w.s.path)
 	if e != nil {
 		t.Fatal(e)

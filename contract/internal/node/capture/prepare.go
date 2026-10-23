@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	tapredact "github.com/Telara-Labs/TAP-Runtime/discover/redact"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
 
@@ -19,7 +19,7 @@ const (
 	maxText         = 64 << 10
 	maxArgs         = 256
 	readerVersion   = "native-jsonl-preparation/1"
-	localPolicyID   = "tap-discover/cd7b481855de/local"
+	localPolicyID   = localpolicy.ID
 )
 
 // All errors are fixed codes. Never wrap parser, filesystem, policy, or native
@@ -89,8 +89,8 @@ func selectLocalPolicy(profile string, tenantOverlay bool) (localPolicy, error) 
 	}
 	return localPolicy{selected: true}, nil
 }
-func (localPolicy) text(s string) string           { return tapredact.Redact(s) }
-func (localPolicy) argument(name, s string) string { return tapredact.Argument(name, s) }
+func (localPolicy) text(s string) string           { return localpolicy.Text(s) }
+func (localPolicy) argument(name, s string) string { return localpolicy.Argument(name, s) }
 
 type fullFieldRules interface {
 	text(string) string
@@ -100,7 +100,7 @@ type fullFieldRules interface {
 var safeToken = regexp.MustCompile(`^[A-Za-z0-9_.:/-]{1,200}$`)
 
 func identifier(s string) bool {
-	return s != "" && safeToken.MatchString(s) && tapredact.Redact(s) == s
+	return s != "" && safeToken.MatchString(s) && localpolicy.Text(s) == s
 }
 
 func resolve(c preparationConfig, u unitLocator) (string, error) {
@@ -147,7 +147,7 @@ func occurrence(c preparationConfig, u unitLocator, native string) (sourceOccurr
 		return empty, hold("unsafe_path")
 	}
 	unit := filepath.ToSlash(filepath.Join(rootRel, u.relative))
-	if tapredact.Redact(unit) != unit {
+	if localpolicy.Text(unit) != unit {
 		return empty, hold("unsafe_path")
 	}
 	kind := record.NativeLocal

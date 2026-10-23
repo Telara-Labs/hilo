@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/view"
 )
 
@@ -19,6 +20,10 @@ func (s *Store) loadFacts(ctx context.Context, d *databaseState) error {
 		if rows.Scan(&p.Owner, &p.SessionKey, &p.EventID, &p.Revision, &p.RecordID, &p.Seq) != nil {
 			rows.Close()
 			return failure("storage_error")
+		}
+		if !factSource(d, p.Owner, p.SessionKey, p.RecordID) {
+			rows.Close()
+			return failure("corrupt_database")
 		}
 		ps[factKey(*p)] = p
 	}
@@ -69,6 +74,10 @@ func (s *Store) loadFacts(ctx context.Context, d *databaseState) error {
 			rows.Close()
 			return failure("storage_error")
 		}
+		if !factSource(d, w.Owner, w.SessionKey, w.RecordA) || !factSource(d, w.Owner, w.SessionKey, w.RecordB) {
+			rows.Close()
+			return failure("corrupt_database")
+		}
 		f := d.facts[w.SessionKey]
 		f.V = 2
 		f.Witnesses = append(f.Witnesses, w)
@@ -110,4 +119,11 @@ func (s *Store) persistFacts(ctx context.Context, f view.EventFacts) error {
 		}
 	}
 	return nil
+}
+
+// Validate all retained namespaces, even a corrupt session key that has no
+// matching current header and would otherwise never be selected for reduction.
+func factSource(d *databaseState, owner, session, id string) bool {
+	x := d.byID[id]
+	return x != nil && x.owner == owner && x.rec.Header.Type == record.KindChunk && x.rec.Header.Subj.SessionKey == session
 }

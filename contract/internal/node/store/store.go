@@ -1,5 +1,5 @@
-// Package store persists a single pinned local device stream. It is an internal
-// inspection and storage boundary, not a network authentication or delivery API.
+// Package store persists a pinned local device stream and owns the private
+// authenticated disclosure/release kernel. No network transport is installed.
 package store
 
 import (
@@ -12,7 +12,7 @@ import (
 	"sync"
 
 	"github.com/Telara-Labs/telara-memory/contract/record"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 type Error struct {
@@ -82,6 +82,7 @@ type ScrubResult struct {
 }
 
 type Store struct {
+	reductions     *reductionContext
 	instanceID     string
 	poisoned       bool
 	barrierAttempt bool
@@ -138,6 +139,12 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 	if err = s.write(ctx, func() error { return s.initialize(ctx) }); err != nil {
 		return fail(err)
 	}
+	if err = s.writeMode(ctx, true, func() error { _, err := s.load(ctx); return err }); err != nil {
+		var blocked *Error
+		if !errors.As(err, &blocked) || !blocked.OwnerBlocked {
+			return fail(err)
+		}
+	}
 	if err = s.secureFiles(); err != nil {
 		return fail(err)
 	}
@@ -187,6 +194,9 @@ func (s *Store) write(ctx context.Context, f func() error) error { return s.writ
 func (s *Store) writeMode(ctx context.Context, capture bool, f func() error) (result error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if ctx == nil || ctx.Err() != nil {
+		return failure("cancelled")
+	}
 	if s.closed {
 		return failure("closed")
 	}
@@ -196,9 +206,26 @@ func (s *Store) writeMode(ctx context.Context, capture bool, f func() error) (re
 		}
 		return failure("unavailable")
 	}
-	if _, err := s.conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return failure("storage_error")
+	// Retry only failed writer acquisition. No transaction, authority read or
+	// producer callback exists yet, and SQLite's fixed busy timeout is unchanged.
+	for attempt := 0; ; attempt++ {
+		if ctx.Err() != nil {
+			return failure("cancelled")
+		}
+		_, err := s.conn.ExecContext(ctx, "BEGIN IMMEDIATE")
+		if err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			return failure("cancelled")
+		}
+		var driverErr *sqlite.Error
+		if attempt == 5 || !errors.As(err, &driverErr) || driverErr.Code() != 5 {
+			return failure("storage_error")
+		}
 	}
+	s.reductions = newReductionContext()
+	defer func() { s.reductions = nil }()
 	committed := false
 	defer func() {
 		if !committed {

@@ -47,12 +47,29 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	var schemaVersion, major int
 	var genesis, machine string
-	if s.conn.QueryRowContext(ctx, "SELECT schema_version,contract_major,genesis,machine FROM meta WHERE singleton=1").Scan(&schemaVersion, &major, &genesis, &machine) != nil || schemaVersion != 1 || major != 2 || genesis != s.opts.PinnedGenesisID || machine != s.opts.LocalMachineID {
+	if s.conn.QueryRowContext(ctx, "SELECT schema_version,contract_major,genesis,machine FROM meta WHERE singleton=1").Scan(&schemaVersion, &major, &genesis, &machine) != nil || (schemaVersion != 1 && schemaVersion != 2) || major != 2 || genesis != s.opts.PinnedGenesisID || machine != s.opts.LocalMachineID {
 		return failure("incompatible_database")
 	}
 	var secure int
 	if s.conn.QueryRowContext(ctx, "SELECT v FROM search_config WHERE k='secure-delete'").Scan(&secure) != nil || secure != 1 {
 		return failure("unsafe_sqlite")
 	}
-	return s.initializeCapture(ctx)
+	if err := s.initializeCapture(ctx); err != nil {
+		return err
+	}
+	if err := s.initializeDisclosure(ctx); err != nil {
+		return err
+	}
+	if schemaVersion == 1 {
+		// Old index rows have no trusted positive field-completeness facts.
+		if err := s.clearSearch(ctx); err != nil {
+			return err
+		}
+		for _, q := range []string{"DELETE FROM vector", "DELETE FROM projection_job", "UPDATE meta SET schema_version=2 WHERE singleton=1"} {
+			if _, err := s.conn.ExecContext(ctx, q); err != nil {
+				return failure("storage_error")
+			}
+		}
+	}
+	return nil
 }

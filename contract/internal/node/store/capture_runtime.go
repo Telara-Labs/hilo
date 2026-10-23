@@ -71,6 +71,9 @@ func (s *Store) InspectCapture(ctx context.Context, q SourceOccurrence) (Capture
 		}
 		d, e := s.load(ctx)
 		if e != nil {
+			if _, settled := e.(*postCommitRefusal); settled {
+				return e
+			}
 			s.poisoned = true
 			return failure("outcome_unknown")
 		}
@@ -158,6 +161,9 @@ func (s *Store) Capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 		}
 		d, e := s.load(ctx)
 		if e != nil {
+			if _, settled := e.(*postCommitRefusal); settled {
+				return e
+			}
 			s.poisoned = true
 			return failure("outcome_unknown")
 		}
@@ -196,6 +202,11 @@ func (s *Store) Capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 		}
 		t, e := s.makeCaptureTxn(ctx, d, q, p)
 		if e != nil {
+			// Complete producer history has its own broader copy set. A
+			// pre-callback work refusal is known and has changed no SQL state.
+			if _, limited := e.(*projectionLimit); limited {
+				return failure("lineage_evaluation_required")
+			}
 			if Code(e) == "storage_error" || Code(e) == "corrupt_database" {
 				s.poisoned = true
 				return failure("outcome_unknown")
@@ -339,7 +350,7 @@ func (s *Store) admitCapturePlan(ctx context.Context, d *databaseState, q Captur
 		refs = append(refs, RecordRef{x.rec.ID, x.seq})
 	}
 	if e := d.rebuild(s.opts); e != nil {
-		return nil, false, e
+		return nil, false, s.refuseVerified(ctx, d, e)
 	}
 	// Trusted candidate proof is evaluated before state-based refusal can
 	// discard a newly discovered link to a durably accepted erasure.

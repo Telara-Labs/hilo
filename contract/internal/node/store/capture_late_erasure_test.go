@@ -256,6 +256,7 @@ func TestProducerLateErasureBarrierWriteAndCommitFaultsNeverClaimDurability(t *t
 	for _, phase := range []string{"insert", "generation", "jobs", "commit"} {
 		t.Run(phase, func(t *testing.T) {
 			f, q, p, _ := lateProducerPlan(t, 0, false)
+			seedFreshCheckpoint(f.w, "positive projection deletion fault fixture")
 			ctx := context.Background()
 			before := f.w.snapshot()
 			var setup []string

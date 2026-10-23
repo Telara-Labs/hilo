@@ -286,9 +286,9 @@ func (s *Store) makeCaptureTxn(ctx context.Context, d *databaseState, q CaptureR
 			}
 		}
 	}
-	choices, err := view.EventHeads(copies, nil, facts)
+	choices, err := d.reduceEvents(copies, nil, facts)
 	if err != nil {
-		return nil, failure("invalid_causal_state")
+		return nil, err
 	}
 	witnessCount := 0
 	for id := range ids {

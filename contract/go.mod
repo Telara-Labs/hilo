@@ -9,6 +9,7 @@ require (
 	github.com/Telara-Labs/TAP-Runtime/contract v0.0.0-20261023010347-cd7b481855de
 	github.com/Telara-Labs/TAP-Runtime/discover v0.0.0-20261023010347-cd7b481855de
 	golang.org/x/sys v0.48.0
+	golang.org/x/text v0.43.0
 	modernc.org/sqlite v1.60.1
 )
 

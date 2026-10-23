@@ -116,8 +116,8 @@ func TestAdmissionDurableDuplicatePendingAndFTS(t *testing.T) {
 	if !duplicate.Duplicate || duplicate.Sequence != a.Sequence {
 		t.Fatal("duplicate sequence changed")
 	}
-	if w.s.conn.QueryRowContext(ctx, "SELECT count(*) FROM search WHERE search MATCH 'uniquezebrachild'").Scan(&n) != nil || n != 1 {
-		t.Fatal("synchronous fts absent")
+	if w.s.conn.QueryRowContext(ctx, "SELECT count(*) FROM search WHERE search MATCH 'uniquezebrachild'").Scan(&n) != nil || n != 0 {
+		t.Fatal("ordinary Append minted positive completeness")
 	}
 	w.s.Close()
 	s, e := Open(ctx, w.o)

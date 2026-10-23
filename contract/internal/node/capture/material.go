@@ -3,10 +3,8 @@ package capture
 import (
 	"bytes"
 	"crypto/ed25519"
-	"encoding/json"
 
-	tapredact "github.com/Telara-Labs/TAP-Runtime/discover/redact"
-	contract "github.com/Telara-Labs/telara-memory/contract"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
 )
@@ -50,28 +48,10 @@ func (k *PreloadedKeyMaterial) Clear() {
 	k.valid = false
 }
 
-type behaviorRedactor struct{}
-
-func (behaviorRedactor) Redact(s string) string                  { return tapredact.Redact(s) }
-func (behaviorRedactor) Argument(n, s string) string             { return tapredact.Argument(n, s) }
-func (behaviorRedactor) Profiles() []string                      { return nil }
-func (behaviorRedactor) RedactProfile(_ string, s string) string { return tapredact.Redact(s) }
-
 func checkedRuleset() (record.Ruleset, error) {
-	var empty record.Ruleset
-	corpus, err := record.ParseCorpus(contract.RedactionCorpusV1())
+	r, err := localpolicy.Ruleset()
 	if err != nil {
-		return empty, hold("ruleset_golden")
+		return record.Ruleset{}, hold("ruleset_golden")
 	}
-	behavior, err := record.Behavior(corpus, behaviorRedactor{})
-	if err != nil {
-		return empty, hold("ruleset_golden")
-	}
-	up := tapredact.CurrentRuleset()
-	actual := record.Ruleset{Epoch: up.Epoch, Digest: up.Digest, Engine: "tap-discover/cd7b481855de", Behavior: behavior}
-	var expected record.Ruleset
-	if json.Unmarshal(contract.RedactionGoldenV1(), &expected) != nil || expected != actual || record.CheckGolden(expected, actual) != nil {
-		return empty, hold("ruleset_golden")
-	}
-	return actual, nil
+	return r, nil
 }

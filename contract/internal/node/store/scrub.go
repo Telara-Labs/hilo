@@ -26,7 +26,7 @@ func (s *Store) Scrub(ctx context.Context, controlID string) (ScrubResult, error
 		}
 	}()
 	var held int
-	if s.conn.QueryRowContext(ctx, "SELECT count(*) FROM privacy_barrier WHERE owner=?", s.opts.PinnedGenesisID).Scan(&held) != nil {
+	if s.conn.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM privacy_barrier WHERE owner=?)+(SELECT count(*) FROM projection_hold)", s.opts.PinnedGenesisID).Scan(&held) != nil {
 		return out, failure("storage_error")
 	}
 	if held > 0 {

@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
@@ -118,6 +119,9 @@ func TestRuntimeRedactionAndPhysicalErasureComponentBytes(t *testing.T) {
 					addSeal(b.Salt)
 				}
 			}
+			// Native metadata cannot certify complete fresh projection. The retained
+			// redacted source remains available through the separately authorized S view.
+			quoteCapturedChunks(t, f, chunks, retained)
 			inspectManagedBytes(t, f, nodeDir, forbidden, retained, true)
 			lid, _ := record.ControlLID(record.KindErasure, f.c.OwnerGenesis, strings.Repeat("c", 32))
 			control, e := record.Build(record.Header{Type: record.KindErasure, LID: lid, Author: record.Author{KeyID: f.c.OwnerGenesis, MachineID: f.c.MachineID}, At: time.Now().UnixMilli(), Prov: record.ProvUser, Red: record.Redact{Profile: record.ProfileLocal}}, &record.ErasureBody{Selectors: record.Selectors{IDs: chunks}, Reason: "user_request"}, bytes.Repeat([]byte{52}, 32))
@@ -146,7 +150,67 @@ func TestRuntimeRedactionAndPhysicalErasureComponentBytes(t *testing.T) {
 	}
 }
 
-func inspectManagedBytes(t *testing.T, f *runtimeFixture, dir string, forbidden [][]byte, ftsToken string, wantFTS bool) {
+func quoteCapturedChunks(t *testing.T, f *runtimeFixture, chunks []string, needle string) {
+	t.Helper()
+	ctx := context.Background()
+	material, err := disclosure.PreloadRuntimeMaterial(bytes.Repeat([]byte{52}, 32), f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer material.Clear()
+	svc, err := disclosure.New(ctx, f.s, disclosure.Config{OwnerGenesis: f.c.OwnerGenesis, MachineID: f.c.MachineID, MaxReplyBytes: 16384}, material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	admin, err := svc.Administration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, err := admin.Register(ctx, disclosure.RegisterClient{AdminOpID: "register-byte-fixture", ClientName: "Capture byte fixture", ReadGrant: disclosure.Grant{Repos: disclosure.AllLocalRepos(), Channels: []disclosure.Channel{disclosure.S}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := registered.Secret.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(token)
+	client, err := svc.Authenticate(ctx, disclosure.CredentialProof{CredentialID: registered.CredentialID, Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	scope, err := client.Resolve(ctx, disclosure.IdentityInput{ConversationHandle: "capture-byte-conversation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, id := range chunks {
+		raw, err := json.Marshal(map[string]any{"record_id": id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		command, err := disclosure.DecodeCommand("local.lookup_record", raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reply, err := client.Execute(ctx, scope, disclosure.CallIdentity{SuppliedOpID: "quote-captured-" + id, JSONRPCID: json.RawMessage(`1`)}, command, disclosure.ByteBudget{MaxBytes: 16384})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := reply.Release(ctx)
+		if err != nil || result.IsError || len(result.Content) != 1 || result.Content[0].Type != "text" {
+			t.Fatal("authorized native quoted source unavailable", err)
+		}
+		seen = seen || strings.Contains(result.Content[0].Text, needle)
+	}
+	if !seen {
+		t.Fatal("authorized quoted S view lost retained native text")
+	}
+}
+
+func inspectManagedBytes(t *testing.T, f *runtimeFixture, dir string, forbidden [][]byte, ftsToken string, wantRetained bool) {
 	t.Helper()
 	check := func(where string, b []byte) {
 		t.Helper()
@@ -160,9 +224,14 @@ func inspectManagedBytes(t *testing.T, f *runtimeFixture, dir string, forbidden 
 	if e != nil {
 		t.Fatal(e)
 	}
+	retained := false
 	for _, entry := range snap.Entries {
 		check("snapshot header", entry.HeaderJCS)
 		check("snapshot body", entry.BodyJCS)
+		retained = retained || bytes.Contains(entry.BodyJCS, []byte(ftsToken))
+	}
+	if retained != wantRetained {
+		t.Fatal("actual retained native body presence", retained, wantRetained)
 	}
 	var dbPath string
 	files := 0
@@ -250,8 +319,8 @@ func inspectManagedBytes(t *testing.T, f *runtimeFixture, dir string, forbidden 
 	if e = db.QueryRow("SELECT count(*) FROM search WHERE search MATCH ?", ftsToken).Scan(&hits); e != nil {
 		t.Fatal(e)
 	}
-	if (hits > 0) != wantFTS {
-		t.Fatal("actual FTS presence", hits, wantFTS)
+	if hits != 0 {
+		t.Fatal("uncertified native text entered fresh FTS", hits)
 	}
 }
 

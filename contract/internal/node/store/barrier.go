@@ -6,6 +6,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"math"
 	"sort"
+	"strings"
 )
 
 type bulkLimit struct{ cause string }
@@ -46,6 +47,22 @@ func lateErasureCause(d *databaseState) string {
 			}
 		}
 	}
+	for id, tokens := range d.eval.HoldCauses {
+		x := d.byID[id]
+		if x == nil || !x.persisted || !x.previousLive || x.rec.Header.Type.IsControl() {
+			continue
+		}
+		for _, token := range tokens {
+			parts := strings.Split(token, "/")
+			if len(parts) != 2 {
+				continue
+			}
+			c := d.byID[parts[1]]
+			if c != nil && c.persisted && c.rec.Header.Type == record.KindErasure {
+				causes[c.rec.ID] = true
+			}
+		}
+	}
 	ids := make([]string, 0, len(causes))
 	for id := range causes {
 		ids = append(ids, id)
@@ -78,5 +95,16 @@ func (s *Store) commitPrivacyBarrier(ctx context.Context, cause, reason, code st
 		s.poisoned = true
 		return failure("unavailable")
 	}
+	if _, e := s.conn.ExecContext(ctx, "DELETE FROM render_body"); e != nil {
+		s.poisoned = true
+		return failure("unavailable")
+	}
 	return &postCommitRefusal{err: &Error{Code: code, OwnerBlocked: true}}
+}
+
+func (d *databaseState) blockedError() error {
+	if d.projectionBlocked {
+		return &Error{Code: "lineage_evaluation_required", OwnerBlocked: true}
+	}
+	return ownerBlocked()
 }
