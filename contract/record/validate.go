@@ -39,7 +39,7 @@ func set(v ...string) map[string]bool {
 	return m
 }
 
-// ConfidenceRank returns the binding rank of a confidence value (§2.6), 0
+// ConfidenceRank returns the binding rank of a confidence value, 0
 // for an unknown value.
 func ConfidenceRank(c string) int { return bindConfidence[c] }
 
@@ -475,7 +475,7 @@ func checkSelectors(ids, lids []string, tasks []TaskSelector, sessions []string)
 	return nil
 }
 
-// Key operations (§4.3).
+// Key operations.
 const (
 	OpGenesis         = "genesis"
 	OpDeviceAdd       = "device_add"
@@ -544,7 +544,7 @@ func validateKeyOpShape(b *KeyOpBody) error {
 	return nil
 }
 
-// ValidatePolicyShape checks a policy body's fields (§9.1). Freshness and
+// ValidatePolicyShape checks a policy body's fields. Freshness and
 // sequence are checked by package policy.
 func ValidatePolicyShape(b *PolicyBody) error {
 	bad := func(format string, a ...any) error { return rej(CodeInvalidBody, format, a...) }

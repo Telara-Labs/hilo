@@ -8,7 +8,7 @@ import (
 
 // Build assembles a record from a header and a typed body (a pointer to one
 // of the body types). For a salted kind it computes the salt from saltKey
-// over the body without its salt (R1.4) and stores it in the body. It fills
+// over the body without its salt and stores it in the body. It fills
 // header.V and header.Body, canonicalizes both parts, and runs Parse on the
 // result, so whatever Build returns is admissible apart from its signature.
 //

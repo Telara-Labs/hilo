@@ -1,8 +1,8 @@
-// Package heads is deterministic head selection over a record set (§1.5).
+// Package heads is deterministic head selection over a record set.
 //
 // Heads depend only on the set of admitted headers. Arrival order, receive
 // time, hosted sequence numbers and bundle order are not inputs, so every
-// replica holding the same set computes the same heads (R1.8).
+// replica holding the same set computes the same heads.
 package heads
 
 import (
@@ -16,7 +16,7 @@ type Version struct {
 	ID         string
 	LID        string
 	Type       record.Kind
-	Owner      string // owner of the verified signer (§1.3); supersedes across owners is ignored
+	Owner      string // owner of the verified signer; supersedes across owners is ignored
 	At         int64
 	Profile    string // red.profile
 	Supersedes []string
@@ -69,7 +69,7 @@ func Heads(all []Version, index []Pair, lid string, k record.Kind) []Version {
 	for _, v := range inL {
 		for _, target := range v.Supersedes {
 			t, ok := inL[target]
-			// R1.10: a different LID or type is ignored; so is another owner
+			// A different LID or type is ignored; so is another owner
 			if ok && t.Owner == v.Owner && target != v.ID {
 				superseded[target] = true
 			}

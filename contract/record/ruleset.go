@@ -14,7 +14,7 @@ import (
 )
 
 // Ruleset identifies the redaction behaviour a record was sealed under
-// (§6.2). Digest covers rule names and patterns; Engine is the version of the
+// Digest covers rule names and patterns; Engine is the version of the
 // module that implements them; Behavior is the hash of what that engine
 // actually outputs on the versioned corpus. Replicas compare Fingerprint,
 // never Digest alone.

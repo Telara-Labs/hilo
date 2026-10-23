@@ -1,8 +1,8 @@
 package record
 
-// Bodies of the kind union (§2.2). JSON names are snake_case and every
+// Bodies of the kind union. JSON names are snake_case and every
 // optional field is omitted when empty. Unknown body fields are kept in the
-// bytes and ignored on decode (§11.2), except in the v1 export bodies, which
+// bytes and ignored on decode, except in the v1 export bodies, which
 // must match their allowlist exactly.
 //
 // Nested types the specification names without defining are taken from the
@@ -58,7 +58,7 @@ type SessionLink struct {
 }
 
 // SourceRef names the reader that produced a snapshot. It carries no source
-// digest: a hash of raw transcript bytes must never enter a record (§6.1).
+// digest: a hash of raw transcript bytes must never enter a record.
 type SourceRef struct {
 	Reader        string `json:"reader,omitempty"`
 	ReaderVersion string `json:"reader_version,omitempty"`
@@ -80,7 +80,7 @@ type Event struct {
 	Kind        string            `json:"kind"`
 	At          int64             `json:"at,omitempty"`
 	AtPrecision string            `json:"at_precision,omitempty"` // exact | minute | inferred
-	Request     string            `json:"request,omitempty"`      // request_key, §1.3
+	Request     string            `json:"request,omitempty"`      // native request identity or idx:<n>
 	Prov        string            `json:"prov"`                   // transcript | hook
 	Ruleset     int               `json:"ruleset,omitempty"`      // redaction epoch
 	Text        *Text             `json:"text,omitempty"`
@@ -324,7 +324,7 @@ type ErasureBody struct {
 	Resolved  int64     `json:"resolved,omitempty"` // records resolved at issue time (bulk guard)
 }
 
-// WithdrawalBody records that a tenant grant was removed (§5.1).
+// WithdrawalBody records that a tenant grant was removed.
 type WithdrawalBody struct {
 	Tenant    string   `json:"tenant"`
 	PolicySeq int64    `json:"policy_seq,omitempty"` // the policy under which the grant ended
@@ -342,7 +342,7 @@ type KeyRef struct {
 	MachineID string `json:"machine_id,omitempty"`
 }
 
-// KeyOpBody is one entry of the keyring chain (§4.3).
+// KeyOpBody is one entry of the keyring chain.
 type KeyOpBody struct {
 	Op       string   `json:"op"`
 	Subject  KeyRef   `json:"subject"`
@@ -352,7 +352,7 @@ type KeyOpBody struct {
 	Parents  []string `json:"parents,omitempty"`  // keyring heads the author held, ≤16; empty only for genesis
 }
 
-// PolicyBody is a signed tenant policy (§9.1).
+// PolicyBody is a signed tenant policy.
 type PolicyBody struct {
 	Tenant       string         `json:"tenant"`
 	Seq          int64          `json:"seq"`

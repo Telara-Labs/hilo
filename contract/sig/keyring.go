@@ -37,7 +37,7 @@ type Key struct {
 	RevokedReason    string // compromised | lost | user_request | conflict | cascade
 }
 
-// Owner returns the owner namespace of records signed by this key (§1.3).
+// Owner returns the owner namespace of records signed by this key.
 func (k *Key) Owner() string { return record.Owner(k.Role, k.Genesis, k.Tenant) }
 
 // KeyOp is one key operation as stored: the admitted record, its body, its
@@ -46,7 +46,7 @@ type KeyOp struct {
 	Rec  *record.Record
 	Body *record.KeyOpBody
 	Sigs []record.Signature
-	// AdmittedSeq is the local admission order (§2.3). Only §4.4 reads it.
+	// AdmittedSeq is the local admission order. Used only for revocation grandfathering.
 	AdmittedSeq int64
 	// FromLogin marks a tenant_key op taken from the TLS response of login.
 	// A tenant_key op without it is never authorized.
@@ -483,7 +483,7 @@ func (k *Keyring) authorize(op *KeyOp, hist map[string]*Key) OpStatus {
 	return OpAuthorized
 }
 
-// fold computes key state from a set of authorized ops (§4.3). It is
+// fold computes key state from a set of authorized ops. It is
 // set-based: the order of ops does not matter.
 func fold(ops []*KeyOp, pinned string) map[string]*Key {
 	keys := map[string]*Key{}

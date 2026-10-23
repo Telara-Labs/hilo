@@ -14,7 +14,7 @@ const Version = 2
 // ContractVersion is the full contract version this module implements.
 const ContractVersion = "mnc/2.0"
 
-// Size limits (R1.6).
+// Size limits.
 const (
 	MaxHeaderBytes    = 16 << 10 // decoded header_jcs
 	MaxBodyBytes      = 1 << 20  // decoded (uncompressed) body_jcs, every kind
@@ -44,7 +44,7 @@ type Header struct {
 	Links  Links    `json:"links,omitzero"`
 	Body   *BodyRef `json:"body,omitempty"`
 	Op     string   `json:"op,omitempty"`
-	Pol    string   `json:"pol,omitempty"` // id of the tenant policy in force at seal, §9.4
+	Pol    string   `json:"pol,omitempty"` // id of the tenant policy in force at seal
 }
 
 // Author is who signed. KeyID = hex(sha256(pub))[:32].
@@ -59,7 +59,7 @@ type Subject struct {
 	TaskID     string     `json:"task_id,omitempty"`
 	RepoID     string     `json:"repo_id,omitempty"`
 	Client     *ClientRef `json:"client,omitempty"`
-	Source     string     `json:"source,omitempty"` // source key, §1.4
+	Source     string     `json:"source,omitempty"` // source key
 }
 
 // IsZero lets encoding/json omit an empty subject.
@@ -93,15 +93,15 @@ type BodyRef struct {
 	Size   int64  `json:"size"`
 }
 
-// Redact is the header redaction state (§6.3).
+// Redact is the header redaction state.
 type Redact struct {
 	Profile     string `json:"profile"`
 	Epoch       int    `json:"epoch"`
-	Fingerprint string `json:"fingerprint,omitempty"` // Ruleset.Fingerprint, §6.2
+	Fingerprint string `json:"fingerprint,omitempty"` // Ruleset.Fingerprint
 	Findings    int    `json:"findings"`              // total count only
 }
 
-// Trust is the author's taint and coverage claim (§10.1).
+// Trust is the author's taint and coverage claim.
 type Trust struct {
 	Taint    []string `json:"taint,omitempty"`
 	Coverage string   `json:"coverage,omitempty"`
@@ -111,7 +111,7 @@ type Trust struct {
 // IsZero lets encoding/json omit an empty trust claim.
 func (t Trust) IsZero() bool { return len(t.Taint) == 0 && t.Coverage == "" && len(t.Flags) == 0 }
 
-// Signature is one signature over a record, bundle or receipt (§4.2).
+// Signature is one signature over a record, bundle or receipt.
 type Signature struct {
 	Alg   string `json:"alg"`    // "ed25519"
 	KeyID string `json:"key_id"` // hex(sha256(raw32 pub))[:32]
@@ -137,7 +137,7 @@ type EnvelopeBody struct {
 	Bytes string `json:"bytes"` // base64url
 }
 
-// Envelope is what crosses the wire and sits in bundles (§8.1). ID is
+// Envelope is what crosses the wire and sits in bundles. ID is
 // advisory and always recomputed.
 type Envelope struct {
 	V       int            `json:"v"`
@@ -149,13 +149,13 @@ type Envelope struct {
 	Grant   *DeliveryGrant `json:"grant,omitempty"`
 }
 
-// ContentID returns lowercase hex(sha256(header_jcs)) (R1.2).
+// ContentID returns lowercase hex(sha256(header_jcs)).
 func ContentID(headerJCS []byte) string {
 	sum := sha256.Sum256(headerJCS)
 	return hex.EncodeToString(sum[:])
 }
 
-// BodyDigest returns hex(sha256(body_jcs)) over the uncompressed canonical body (R1.3).
+// BodyDigest returns hex(sha256(body_jcs)) over the uncompressed canonical body.
 func BodyDigest(bodyJCS []byte) string {
 	sum := sha256.Sum256(bodyJCS)
 	return hex.EncodeToString(sum[:])

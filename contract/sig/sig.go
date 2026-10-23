@@ -1,8 +1,8 @@
 // Package sig is signing and verification for the memory node contract:
-// the domain-separated signed bytes (§4.2), Ed25519 signatures, the keyring
-// of key operations and its deterministic key state (§4.3), validity across
-// rotation and revocation (§4.4), receipts (§4.5) and the two admission
-// verifiers VerifyRecord and VerifyKeyOp (§4.6).
+// the domain-separated signed bytes, Ed25519 signatures, the keyring
+// of key operations and its deterministic key state, validity across
+// rotation and revocation, receipts and the two admission
+// verifiers VerifyRecord and VerifyKeyOp.
 package sig
 
 import (
@@ -17,7 +17,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
 
-// Signature contexts (§4.1).
+// Signature contexts.
 const (
 	CtxRecord  = "mnc/v1/record"
 	CtxBundle  = "mnc/v1/bundle"

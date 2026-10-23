@@ -1,5 +1,5 @@
 // Package policy is the signed tenant policy of the memory node contract
-// (§9): verification, the per-tenant head chain with rollback and tamper
+// verification, the per-tenant head chain with rollback and tamper
 // detection, trusted time with a persisted floor, freshness, and the
 // effects a policy state has on what may leave the machine.
 //
@@ -23,7 +23,7 @@ type Policy struct {
 }
 
 // Verify checks a policy record: it parsed as a policy, its one signature
-// verifies under a policy-role key of the keyring (§2.1 matrix), and the
+// verifies under a policy-role key of the keyring, and the
 // key belongs to the policy's tenant.
 func Verify(r *record.Record, sigs []record.Signature, st *sig.State, issuer sig.TrustedIssuer) (*Policy, error) {
 	if r == nil {
@@ -91,7 +91,7 @@ func (c *Chain) Offer(p *Policy) (string, error) {
 	}
 }
 
-// Clock is trusted time (§9.2): T = max(wall, anchor_date + (mono −
+// Clock is trusted time: T = max(wall, anchor_date + (mono −
 // anchor_mono)) with an anchor, else max(wall, floor). All times are unix
 // ms; mono is any monotonic millisecond reading of this process.
 type Clock struct {
@@ -207,7 +207,7 @@ func Evaluate(c *Chain, clock *Clock, t int64, sawInvalid bool) Freshness {
 	return Fresh
 }
 
-// Effects is what a policy state allows (§9.2).
+// Effects is what a policy state allows.
 type Effects struct {
 	DataPush       bool // push of data records
 	DataPull       bool // pull of tenant data records

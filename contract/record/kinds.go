@@ -1,6 +1,6 @@
 package record
 
-// Kind is a record type (§2.1).
+// Kind is a record type.
 type Kind string
 
 const (
@@ -55,7 +55,7 @@ func (k Kind) Class() Class { return kindClass[k] }
 // IsControl reports whether k is a control kind.
 func (k Kind) IsControl() bool { return kindClass[k] == ClassControl }
 
-// Reducer of a kind (§1.5).
+// Reducer of a kind.
 type Reducer string
 
 const (
@@ -88,7 +88,7 @@ func ReducerOf(k Kind, p Prov) Reducer {
 	return ""
 }
 
-// Prov is header provenance (§2.3), set by the author at capture and signed.
+// Prov is header provenance, set by the author at capture and signed.
 type Prov string
 
 const (
@@ -113,7 +113,7 @@ const (
 	RouteGitImport    Route = "git-import"
 )
 
-// Role of a signing key (§4.1).
+// Role of a signing key.
 type Role string
 
 const (
@@ -122,7 +122,7 @@ const (
 	RolePolicy  Role = "policy"  // tenant policy key (TPK)
 )
 
-// Redaction profiles (§6.3).
+// Redaction profiles.
 const (
 	ProfileLocal        = "local"
 	ProfilePushMetadata = "push-metadata"
@@ -134,7 +134,7 @@ var ReservedProfiles = map[string]bool{
 	"push-conclusions": true, "push-excerpts": true, "hosted-stripped": true,
 }
 
-// Taint values, coverage values and flags (§10.1).
+// Taint values, coverage values and flags.
 var (
 	TaintValues    = []string{"foreign-path", "recalled-memory", "taint-unknown", "third-party-mcp", "web"}
 	CoverageValues = []string{"complete", "incomplete", "unknown"}
@@ -148,7 +148,7 @@ var eventKinds = map[string]bool{
 }
 
 // MatrixRow is one allowed (role, prov, kind, body) combination of the
-// signer and provenance matrix (§2.1). Body names the Go body type.
+// signer and provenance matrix. Body names the Go body type.
 type MatrixRow struct {
 	Role Role
 	Prov Prov
@@ -212,7 +212,7 @@ func MatrixAllows(role Role, p Prov, k Kind) bool {
 	return false
 }
 
-// salted reports whether a kind's body must carry a salt (R1.4).
+// salted reports whether a kind's body must carry a salt.
 func salted(k Kind) bool {
 	switch k {
 	case KindSession, KindChunk, KindConclusion, KindTask, KindCheckpoint, KindPause, KindDigest, KindRollup:

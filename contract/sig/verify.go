@@ -6,7 +6,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
 
-// SigStatus is a record's signature status (§4.6).
+// SigStatus is a record's signature status.
 type SigStatus string
 
 const (
@@ -38,7 +38,7 @@ type Context struct {
 type Result struct {
 	Status SigStatus
 	Key    *Key   // the signing key when known
-	Owner  string // owner namespace of the signer (§1.3)
+	Owner  string // owner namespace of the signer
 	Reason string // why the status is not verified
 }
 
@@ -47,11 +47,11 @@ func fail(s SigStatus, format string, a ...any) Result {
 }
 
 // VerifyRecord verifies a record of any kind except key_op against the
-// folded keyring (§4.6). It checks, in order: the signature list shape, the
+// folded keyring. It checks, in order: the signature list shape, the
 // signer is in the keyring, the Ed25519 signature, the signer and
-// provenance matrix (§2.1), the device machine binding, the owner-scoped
-// LID, and validity across rotation and revocation (§4.4). Retired keys
-// verify (R4.1). A record that fails is quarantined, never indexed.
+// provenance matrix, the device machine binding, the owner-scoped
+// LID, and validity across rotation and revocation. Retired keys
+// verify. A record that fails is quarantined, never indexed.
 func VerifyRecord(r *record.Record, sigs []record.Signature, st *State, c Context) Result {
 	if r == nil || st == nil {
 		return fail(StatusInvalid, "record and keyring required")
@@ -127,7 +127,7 @@ func VerifyRecord(r *record.Record, sigs []record.Signature, st *State, c Contex
 	return res
 }
 
-// PreRevocation applies §4.4 row 3: a record signed by a revoked key stays
+// PreRevocation applies the prior-admission rule: a record signed by a revoked key stays
 // verified if it carries a valid TSK receipt accepted before the revocation,
 // or if this node admitted it before it admitted the revocation.
 func PreRevocation(k *Key, c Context, st *State) bool {
@@ -170,7 +170,7 @@ type KeyOpResult struct {
 }
 
 // VerifyKeyOp adds a key operation to the keyring and reports its status in
-// the folded state (§4.6): invalid when its shape or possession signature
+// the folded state: invalid when its shape or possession signature
 // fails (it is then not stored), held while parents are missing or while a
 // second genesis awaits confirmation, unauthorized when its authorizer is
 // not active in the state of its own history, authorized otherwise.

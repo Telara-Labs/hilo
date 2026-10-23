@@ -9,7 +9,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/jcs"
 )
 
-// LID constructors (§1.3). Each returns the 64-hex logical id.
+// LID constructors. Each returns the 64-hex logical id.
 
 // SessionLID is H("session", session_key, machine_id, page).
 func SessionLID(sessionKey, machineID string, page int64) string {
@@ -56,7 +56,7 @@ func DigestLID(sessionKey, machineID string) string { return H("digest", session
 // RollupLID is H("rollup", owner, task_id, machine_id).
 func RollupLID(owner, taskID, machineID string) string { return H("rollup", owner, taskID, machineID) }
 
-// Owner returns the owner namespace of a verified signer (§1.3): the genesis
+// Owner returns the owner namespace of a verified signer: the genesis
 // key id for a device key, "tenant:<id>" for a tenant service key. Policy
 // keys own no task state and return "". It is derived from the keyring,
 // never from a header field.
@@ -164,7 +164,7 @@ func ExpectedLID(h *Header, body any, owner string) (lid string, ok bool) {
 const SaltKeySize = 32
 
 // Salt returns base64url(HMAC-SHA256(key, JCS(["mnc1-salt", type, lid,
-// body_jcs_without_salt]))[:16]) without padding (R1.4).
+// body_jcs_without_salt]))[:16]) without padding.
 func Salt(key []byte, k Kind, lid string, bodyJCSWithoutSalt []byte) (string, error) {
 	if len(key) != SaltKeySize {
 		return "", fmt.Errorf("salt: device salt key must be %d bytes", SaltKeySize)

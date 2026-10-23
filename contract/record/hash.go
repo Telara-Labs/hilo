@@ -36,7 +36,7 @@ func HE(tag string, parts ...string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// NativeIDKind values (§1.4).
+// NativeIDKind values.
 const (
 	NativeGlobal = "global" // a UUID or ULID the client mints
 	NativeLocal  = "local"  // file stem, path-derived or synthetic
@@ -181,7 +181,7 @@ func NewCallRef(r io.Reader) (string, error) {
 	return "m1." + s[:10], nil
 }
 
-// OpID returns H("op", scope_id, request_identity, tool, args_hash) (R2.2).
+// OpID returns H("op", scope_id, request_identity, tool, args_hash).
 func OpID(scopeID, requestIdentity, tool, argsHash string) (string, error) {
 	if scopeID == "" || requestIdentity == "" || tool == "" || !IsHex64(argsHash) {
 		return "", fmt.Errorf("op id: scope, request identity, tool and args hash are required")

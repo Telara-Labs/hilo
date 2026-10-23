@@ -59,7 +59,7 @@ type Record struct {
 	Body      any    // pointer to the typed body; nil when absent
 }
 
-// Parse runs the record-level admission steps of R1.6 in order: (1) size,
+// Parse runs the record-level admission steps in order: (1) size,
 // (2) canonical header bytes, the version gate, (3) id, (4) body digest and
 // size, (5) header decoded from header_jcs alone, and (8) type rules.
 // Signatures (6) are checked by package sig and tombstones (7) by the
