@@ -27,6 +27,7 @@ import (
 var debugRun = flag.Bool("e2e-debug", false, "Record allowlisted peer proof diagnostics without credentials or request bodies")
 var dryRun = flag.Bool("e2e-dry-run", false, "Exercise native node lifecycle with synthetic MCP sessions and hook input; never launch clients")
 var childTimeout = flag.Duration("e2e-child-timeout", 90*time.Second, "Deadline for every child process")
+var rawChildOutput = flag.String("e2e-raw-child-output", "", "Operator-only: existing private directory that receives raw child output files for debugging")
 var resultsDir = flag.String("e2e-results-dir", "", "Existing status directory for private JSON receipts; required for lifecycle tests")
 var tempParent = flag.String("e2e-temp-parent", "", "Optional existing private temporary parent; paths must stay short enough for a macOS Unix socket")
 
@@ -56,21 +57,22 @@ type hookObservation struct {
 	Result                        clients.HookResult
 }
 type receipt struct {
-	Client      string             `json:"client"`
-	Mode        string             `json:"mode"`
-	Verdict     string             `json:"verdict"`
-	Started     time.Time          `json:"started"`
-	Seconds     float64            `json:"seconds"`
-	Version     string             `json:"version"`
-	Paths       map[string]string  `json:"isolated_paths"`
-	Timings     map[string]float64 `json:"timings_seconds"`
-	Calls       []observation      `json:"observed_calls"`
-	Hooks       []hookObservation  `json:"observed_hooks"`
-	SessionIDs  []string           `json:"session_record_ids"`
-	Checks      map[string]string  `json:"checks"`
-	Failure     string             `json:"failure,omitempty"`
-	Cleanup     string             `json:"cleanup"`
-	Diagnostics []proofDiagnostic  `json:"proof_diagnostics,omitempty"`
+	Client       string             `json:"client"`
+	Mode         string             `json:"mode"`
+	Verdict      string             `json:"verdict"`
+	Started      time.Time          `json:"started"`
+	Seconds      float64            `json:"seconds"`
+	Version      string             `json:"version"`
+	Paths        map[string]string  `json:"isolated_paths"`
+	Timings      map[string]float64 `json:"timings_seconds"`
+	Calls        []observation      `json:"observed_calls"`
+	Hooks        []hookObservation  `json:"observed_hooks"`
+	SessionIDs   []string           `json:"session_record_ids"`
+	Checks       map[string]string  `json:"checks"`
+	Failure      string             `json:"failure,omitempty"`
+	Cleanup      string             `json:"cleanup"`
+	Diagnostics  []proofDiagnostic  `json:"proof_diagnostics,omitempty"`
+	FailureCodes []string           `json:"failure_reason_codes,omitempty"`
 }
 
 func nonce() string {
@@ -164,9 +166,14 @@ func isolatedEnv(home, config string, s clientSpec) []string {
 }
 
 type cappedBuffer struct {
-	bytes.Buffer
+	buffer   bytes.Buffer
 	overflow bool
 }
+
+// Keep the buffer named. Embedding bytes.Buffer would promote ReadFrom and let
+// os/exec's io.Copy bypass Write and its output cap.
+func (b *cappedBuffer) Len() int      { return b.buffer.Len() }
+func (b *cappedBuffer) Bytes() []byte { return b.buffer.Bytes() }
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
 	n := len(p)
@@ -177,7 +184,7 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 		if len(p) > left {
 			p = p[:left]
 		}
-		_, _ = b.Buffer.Write(p)
+		_, _ = b.buffer.Write(p)
 	}
 	return n, nil
 }
@@ -208,14 +215,22 @@ func run(ctx context.Context, dir string, env []string, input []byte, exe string
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
+	if *rawChildOutput != "" {
+		// Operator-only debugging on the operator's own machine: raw child output
+		// can contain anything the client printed, so it goes to a private file
+		// in an operator-chosen directory and never into receipts or logs.
+		name := fmt.Sprintf("%s-%d.out", filepath.Base(exe), time.Now().UnixNano())
+		_ = os.WriteFile(filepath.Join(*rawChildOutput, name), append(append(append([]byte(nil), out.Bytes()...), "\n--- stderr ---\n"...), diagnostic.Bytes()...), 0600)
+	}
+	codes := childFailureCodes(exe, diagnostic.Bytes())
 	clear(diagnostic.Bytes())
 	if out.overflow || diagnostic.overflow {
 		clear(out.Bytes())
-		return nil, errors.New("child output exceeded 8 MiB")
+		return nil, &childFailure{Codes: append(codes, string(reasonChildOutputLimit)), Debug: *debugRun, TimedOut: ctx.Err() != nil}
 	}
 	if err != nil {
 		clear(out.Bytes())
-		return nil, fmt.Errorf("child failed (output withheld), deadline=%v, exit=%v", ctx.Err(), err)
+		return nil, &childFailure{Codes: codes, Debug: *debugRun, TimedOut: ctx.Err() != nil}
 	}
 	return out.Bytes(), nil
 }
@@ -226,7 +241,15 @@ func clientArgs(s clientSpec, prompt string) []string {
 	case "claude":
 		args = []string{"-p", "--output-format", "stream-json", "--verbose", "--max-turns", "6", "--allowedTools", "mcp__telara-memory__telara_task_create,mcp__telara-memory__telara_task_list", "--tools", "", prompt}
 	case "codex":
-		args = []string{"exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", prompt}
+		// Account-level apps (a hosted Telara connector among them) expose tools
+		// with the same names; the run must exercise only the local node.
+		args = []string{"exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "-c", "features.apps=false",
+			// The isolated config holds only the hooks the adapter just wrote, which
+			// is the vetted-automation case Codex documents for this flag.
+			"--dangerously-bypass-hook-trust",
+			// Headless exec refuses unapproved MCP calls; approve only this server's two tools.
+			"-c", `mcp_servers.telara-memory.default_tools_approval_mode="approve"`,
+			"-c", `mcp_servers.telara-memory.enabled_tools=["telara_task_create","telara_task_list"]`, prompt}
 	case "cursor":
 		args = []string{"--print", "--output-format", "stream-json", prompt}
 	case "pi":
@@ -246,16 +269,42 @@ func codeRoot(binary string) string {
 	}
 	return filepath.Dir(binary)
 }
+
+// Permit traversal/stat of install ancestors without granting directory listings
+// or file contents elsewhere in the real home. Full reads cover only codeRoot.
+func installationMetadata(realHome, code string) string {
+	var rules strings.Builder
+	for p := filepath.Dir(code); p == realHome || under(realHome, p); p = filepath.Dir(p) {
+		b, _ := json.Marshal(p)
+		fmt.Fprintf(&rules, "(allow file-read-metadata (literal %s))\n", b)
+		if p == realHome {
+			break
+		}
+	}
+	return rules.String()
+}
 func clientProfile(realHome, binary string, cfg installedConfig) string {
 	q := func(s string) string { b, _ := json.Marshal(s); return string(b) }
 	return "(version 1)\n(allow default)\n" +
 		"(deny file-read* file-write* (subpath " + q(realHome) + ") (subpath " + q(filepath.Join(cfg.Root, "denied-read")) + "))\n" +
-		"(allow file-read* (subpath " + q(codeRoot(binary)) + "))\n" +
+		"(allow file-read* file-map-executable (subpath " + q(codeRoot(binary)) + "))\n" +
+		installationMetadata(realHome, codeRoot(binary)) +
+		"(allow file-read* file-map-executable (subpath \"/System/Library\") (subpath \"/usr/lib\") (subpath \"/Library/Apple/System/Library\") (subpath \"/opt/homebrew\"))\n" +
+		"(allow file-read* file-map-executable (subpath " + q(cfg.Install) + "))\n" +
+		"(allow process-exec process-fork)\n" +
+		"(allow network*)\n" +
 		"(deny file-write* (subpath " + q(cfg.Root) + "))\n" +
-		"(allow file-write* (subpath " + q(cfg.Home) + "))\n" +
+		"(allow file-read* file-write* (subpath " + q(cfg.Home) + "))\n" +
+		"(allow file-read* file-write* (subpath " + q(cfg.ClientConfig) + ") (subpath " + q(filepath.Join(cfg.Home, "tmp")) + "))\n" +
 		"(allow file-write* (subpath " + q(filepath.Join(cfg.Data, "spool")) + "))\n" +
 		"(allow file-write* (regex " + q("^"+regexp.QuoteMeta(filepath.Join(cfg.Data, "observations", "hook-"))+"[a-z0-9]+[.]json$") + "))\n" +
-		"(deny mach-lookup (global-name \"com.apple.securityd\") (global-name \"com.apple.secd\") (global-name \"com.apple.security.agent\"))\n"
+		// Login keychain items stay hidden because the real home is read-denied.
+		// SecurityServer must stay reachable: clients need it for TLS trust.
+		"(deny mach-lookup (global-name \"com.apple.securityd\") (global-name \"com.apple.secd\") (global-name \"com.apple.security.agent\"))\n" +
+		"(deny file-read* file-write* (subpath \"/Library/Keychains\"))\n" +
+		// A file-based keychain the process can read is opened in process; the
+		// isolated custody keychain lives under the root, outside the real home.
+		"(deny file-read* file-write* (literal " + q(cfg.Keychain) + ") (literal " + q(cfg.Keychain+"-db") + "))\n"
 }
 
 func validateResultsDir(dir string) error {

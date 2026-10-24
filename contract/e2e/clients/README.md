@@ -96,8 +96,12 @@ identity may still be refused by macOS peer binding.
 
 Every native client launch, including `--version`, uses a mandatory
 `/usr/bin/sandbox-exec` profile that denies real-home reads and writes, permits
-read access to its resolved installation code directory, and denies keychain service
-lookups. For npm installations, the code exception includes the corresponding
+read and executable-map access to its resolved installation code directory, and
+denies keychain service lookups. Install ancestors inside the real home receive
+metadata-only traversal access. System frameworks and Homebrew runtimes remain
+readable, DNS/provider networking and child execution remain allowed, and the
+installed shim stays readable/executable. The disposable client config root and
+TMPDIR have explicit read/write allowances. For npm installations, the code exception includes the corresponding
 `node_modules` tree so package dependencies can load. Writes beneath the harness
 root are denied except for the disposable client home, hook spool and hook traces.
 The driver, native utility, profile, database and daemon call observations are
@@ -178,7 +182,20 @@ hello are recorded as well. The harness calls public `peer.BindConnection`,
 Executable paths outside the disposable installation are replaced by a fixed
 marker. No credentials, token/connection-ID values, vault handles, argv,
 environment, prompt, transcript or tool bodies enter diagnostic records.
-Raw child output and errors stay withheld. Debug off follows the ordinary
+Raw child output and errors stay withheld. Every helper failure emits one fixed
+reason code on stderr. With `-e2e-debug`, `run` exposes only allowlisted whole-line
+codes in the test log and the receipt's `failure_reason_codes`. The closed codes
+distinguish helper arguments/configuration, install verification, adapter,
+bootstrap, shim, daemon, path canonicalization, denied-read probe, protected-write
+probe, writable-home/TMPDIR probes, and keychain-refusal probe. Known
+sandbox-exec profile-compilation and sandbox-application errors map to fixed
+codes; their raw suffixes are discarded. Unclassified failures get a fixed
+unclassified code. Neither partial matches nor stdout can supply diagnostic
+codes. Codes identify the failing check; they do not prove its underlying cause.
+The read/write denial probes require EACCES or EPERM, so missing/existing fixture
+paths cannot masquerade as sandbox enforcement.
+
+Debug off follows the ordinary
 production authority path. An adapter refusal after successful peer proof can
 still indicate custody/credential failure; diagnostics do not claim to expose
 private kernel or Security.framework internals.

@@ -19,7 +19,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -52,12 +51,15 @@ func loadInstalled(data string) (installedConfig, error) {
 		return cfg, err
 	}
 	root, err := filepath.EvalSymlinks(cfg.Root)
-	if err != nil || root != cfg.Root || cfg.Data != data || cfg.Timeout <= 0 || cfg.Timeout > 5*time.Minute {
-		return cfg, errors.New("invalid helper configuration")
+	if err != nil || root != cfg.Root || cfg.Data != data {
+		return cfg, reasonPathCanonicalization
+	}
+	if cfg.Timeout <= 0 || cfg.Timeout > 5*time.Minute {
+		return cfg, reasonHelperConfiguration
 	}
 	for _, p := range []string{cfg.Home, cfg.Data, cfg.Run, cfg.Install, cfg.Keychain, cfg.ClientConfig} {
 		if !under(root, p) || !filepath.IsAbs(p) || filepath.Clean(p) != p {
-			return cfg, errors.New("helper path escapes isolation")
+			return cfg, reasonPathCanonicalization
 		}
 	}
 	var spec *clientSpec
@@ -136,7 +138,7 @@ func TestMain(m *testing.M) {
 		switch os.Args[1] {
 		case "managed-daemon", "shim", "hook", "clients", "sandbox-probe", "bootstrap":
 			if err := helperMain(os.Args[1:]); err != nil {
-				fmt.Fprintln(os.Stderr, "isolated helper failed")
+				fmt.Fprintln(os.Stderr, helperFailureCode(err))
 				os.Exit(1)
 			}
 			os.Exit(0)
@@ -145,7 +147,20 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func helperMain(args []string) error {
+func helperMain(args []string) (result error) {
+	// Collapse every untyped product/OS error to a fixed stage code. Neither
+	// Error() nor the stderr dispatcher can disclose input paths or secrets.
+	stage := reasonHelperArguments
+	defer func() {
+		if result != nil {
+			if _, ok := result.(helperReason); !ok {
+				result = stage
+			}
+		}
+	}()
+	if len(args) == 0 {
+		return reasonHelperArguments
+	}
 	fs := flag.NewFlagSet("isolated-helper", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var o clients.Options
@@ -160,6 +175,11 @@ func helperMain(args []string) error {
 	fs.StringVar(&dir, "install-dir", "", "")
 	fs.StringVar(&runDir, "run-dir", "", "")
 	mode := args[0]
+	switch mode {
+	case "managed-daemon", "shim", "hook", "clients", "sandbox-probe", "bootstrap":
+	default:
+		return reasonHelperArguments
+	}
 	rest := args[1:]
 	action := ""
 	if mode == "clients" {
@@ -172,12 +192,14 @@ func helperMain(args []string) error {
 		return errors.New("invalid helper flags")
 	}
 	if mode == "managed-daemon" {
+		stage = reasonHelperInstall
 		r, err := install.VerifyRunning(dir)
 		if err != nil {
 			return err
 		}
 		o.StateDir = r.DataDir
 	}
+	stage = reasonHelperConfiguration
 	cfg, err := loadInstalled(o.StateDir)
 	if err != nil {
 		return err
@@ -190,32 +212,28 @@ func helperMain(args []string) error {
 	if (mode == "hook" || mode == "clients") && (o.Home != cfg.Home || o.ConfigRoot != cfg.ClientConfig || string(o.Client) != cfg.Client) {
 		return errors.New("adapter helper escaped isolated options")
 	}
+	stage = reasonPathCanonicalization
 	p, err := isolatedPaths(cfg)
 	if err != nil {
 		return err
 	}
 	switch mode {
 	case "sandbox-probe":
-		if _, err := os.ReadFile(filepath.Join(cfg.Root, "denied-read", "canary")); err == nil {
-			return errors.New("sandbox failed to deny synthetic home read")
-		}
-		for _, path := range []string{filepath.Join(cfg.Data, "write-probe"), filepath.Join(cfg.Root, "write-probe")} {
-			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-			if err == nil {
-				f.Close()
-				return errors.New("sandbox failed to protect node state or helper code")
-			}
-		}
-		if err := privateWrite(filepath.Join(cfg.Home, "sandbox-allow-probe"), []byte("synthetic")); err != nil {
-			return errors.New("sandbox denied disposable client writes")
-		}
 		v := isolatedVault{cfg: cfg, exe: mustExecutable()}
-		_, err := v.Get(ctx, strings.Repeat("0", 32))
-		if !errors.Is(err, vault.ErrUnavailable) {
-			return errors.New("sandbox did not deny explicit isolated keychain lookup")
-		}
-		return nil
+		return checkSandboxProbe(ctx, cfg, sandboxProbeIO{
+			read: os.ReadFile,
+			create: func(path string) error {
+				f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+				if err == nil {
+					_ = f.Close()
+				}
+				return err
+			},
+			write: privateWrite,
+			get:   v.Get,
+		})
 	case "clients":
+		stage = reasonHelperClients
 		var r clients.Report
 		if action == "install" {
 			r, err = clients.Install(ctx, o)
@@ -246,6 +264,7 @@ func helperMain(args []string) error {
 		_ = evidence(cfg.Data, "hook", hookObservation{At: time.Now().UTC(), Phase: phase(cfg.Data), Client: string(o.Client), Event: h.Event, Session: h.Session, Result: result})
 		return nil
 	case "bootstrap":
+		stage = reasonHelperBootstrap
 		if _, err := install.VerifyRunning(cfg.Install); err != nil {
 			return err
 		}
@@ -256,11 +275,13 @@ func helperMain(args []string) error {
 		defer lock.Close()
 		return disclosure.BootstrapInstalled(ctx, cfg.Data, "Disposable client probe", disclosure.Grant{Repos: disclosure.AllLocalRepos(), Channels: []disclosure.Channel{disclosure.S, disclosure.P, disclosure.E}}, disclosure.TaskWriteGrant{Repos: disclosure.AllLocalRepos(), AllowUnscoped: true, Actions: []disclosure.TaskMutation{disclosure.Create}}, isolatedVault{cfg, mustExecutable()})
 	case "shim":
+		stage = reasonHelperShim
 		if _, err := install.VerifyRunning(cfg.Install); err != nil {
 			return err
 		}
 		return shim.Run(ctx, os.Stdin, os.Stdout, shim.Config{Paths: p})
 	case "managed-daemon":
+		stage = reasonHelperDaemon
 		if _, e := os.Lstat(filepath.Join(cfg.Data, "pending")); !os.IsNotExist(e) && !*manual {
 			return nil
 		}
@@ -441,7 +462,7 @@ func (i *installation) setup(ctx context.Context) error {
 	_, err = run(ctx, cfg.Home, env, password[:], i.keychainTool, "create", cfg.Keychain)
 	clear(password[:])
 	if err != nil {
-		return errors.New("dedicated native keychain creation failed")
+		return fmt.Errorf("dedicated native keychain creation failed: %w", err)
 	}
 	i.keychainCreated = true
 	source, err := filepath.EvalSymlinks(mustExecutable())
@@ -486,7 +507,7 @@ func (i *installation) setup(ctx context.Context) error {
 		return err
 	}
 	if _, err = run(ctx, cfg.Home, env, nil, r.Record.Executable, "bootstrap", "--data-dir", cfg.Data); err != nil {
-		return errors.New("isolated bootstrap through installed target failed")
+		return fmt.Errorf("isolated bootstrap through installed target failed: %w", err)
 	}
 	// Registered job exits successfully while pending. Start explicitly using the
 	// verified installed image, like the existing installed-authority integration.

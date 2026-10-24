@@ -132,6 +132,7 @@ func runClient(t *testing.T, s clientSpec) {
 	defer cancel()
 	start := time.Now()
 	installed, err = setupInstallation(ctx, cfg)
+	recordFailureCodes(t, &r, err)
 	r.Timings["install"] = time.Since(start).Seconds()
 	if err != nil {
 		r.Failure = "native installation failed"
@@ -142,6 +143,7 @@ func runClient(t *testing.T, s clientSpec) {
 	start = time.Now()
 	args := []string{"clients", "install", "--client", s.name, "--home", cfg.Home, "--config-root", cfg.ClientConfig, "--state-dir", cfg.Data, "--executable", installed.record.Executable}
 	out, err := run(ctx, cfg.Home, env, nil, installed.record.Executable, args...)
+	recordFailureCodes(t, &r, err)
 	if err != nil {
 		r.Failure = "adapter install failed"
 		t.Fatal(err)
@@ -170,6 +172,7 @@ func runClient(t *testing.T, s clientSpec) {
 			}
 			start = time.Now()
 			out, err = syntheticCall(ctx, cfg, installed.record.Executable, tool, args)
+			recordFailureCodes(t, &r, err)
 			r.Timings["session_"+phaseName] = time.Since(start).Seconds()
 			if err != nil || !bytes.Contains(out, []byte(n)) {
 				r.Failure = "synthetic MCP round trip failed"
@@ -243,7 +246,13 @@ func runClient(t *testing.T, s clientSpec) {
 	if err = privateWrite(filepath.Join(cfg.Root, "denied-read", "canary"), []byte("synthetic blocked-home canary")); err != nil {
 		t.Fatal(err)
 	}
+	canaryVault := isolatedVault{cfg: cfg, exe: installed.record.Executable}
+	if err = canaryVault.Put(ctx, keychainCanaryHandle, keychainCanaryValue); err != nil {
+		t.Fatal("keychain canary could not be planted", err)
+	}
+	defer func() { _ = canaryVault.Delete(context.Background(), keychainCanaryHandle) }()
 	if _, err = run(ctx, cfg.Home, env, nil, "/usr/bin/sandbox-exec", "-f", profile, installed.record.Executable, "sandbox-probe", "--data-dir", cfg.Data); err != nil {
+		recordFailureCodes(t, &r, err)
 		r.Failure = "native client sandbox preflight failed"
 		t.Fatal(err)
 	}
@@ -252,6 +261,7 @@ func runClient(t *testing.T, s clientSpec) {
 		return run(ctx, filepath.Join(cfg.Home, "work-"+strings.ToLower(phaseName)), env, nil, "/usr/bin/sandbox-exec", append([]string{"-f", profile, binary}, args...)...)
 	}
 	if out, err = launch("A", []string{"--version"}); err != nil {
+		recordFailureCodes(t, &r, err)
 		r.Failure = "isolated version preflight failed"
 		t.Fatal(err)
 	}
@@ -272,6 +282,7 @@ func runClient(t *testing.T, s clientSpec) {
 		}
 		start = time.Now()
 		out, err = launch(phaseName, clientArgs(s, prompts[phaseName]))
+		recordFailureCodes(t, &r, err)
 		r.Timings["session_"+phaseName] = time.Since(start).Seconds()
 		if err != nil {
 			failures = append(failures, "client session "+phaseName+" failed")
@@ -295,6 +306,7 @@ func runClient(t *testing.T, s clientSpec) {
 				// synthetic fixtures, even after a terminal hook has published.
 				time.Sleep(2100 * time.Millisecond)
 				drainOut, drainErr := syntheticCall(ctx, cfg, installed.record.Executable, "telara_task_list", map[string]any{"query": n, "mode": "detail"})
+				recordFailureCodes(t, &r, drainErr)
 				if drainErr != nil || responseError(drainOut) {
 					failures = append(failures, "terminal capture drain failed")
 				}
