@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/peer"
@@ -92,11 +94,65 @@ func requestCustodyHandoff(ctx context.Context, p ipc.Paths, digest string) erro
 
 // The owning retained image deletes its native item after settled uninstall.
 // This also removes staging custody left by an interrupted upgrade.
+type installationCustody interface {
+	disclosure.SecretVault
+	DeleteForInstall(context.Context, install.Record, string) error
+	DeleteCreatedForInstall(context.Context, install.Record, string) error
+	ReadForInstall(context.Context, install.Record, string) ([]byte, error)
+}
+
 type installedDeletionVault struct {
-	*vault.Vault
+	installationCustody
 	record install.Record
 }
 
 func (v installedDeletionVault) Delete(ctx context.Context, handle string) error {
-	return v.Vault.DeleteForInstall(ctx, v.record, handle)
+	p, e := readPending(v.record.DataDir)
+	if e != nil && !os.IsNotExist(e) {
+		return e
+	}
+	if e == nil && p.Phase != "provisioning" && p.Creator == nil && vault.UpgradeHandoffRequired() {
+		if p.Handle != handle {
+			return install.ErrUnverified
+		}
+		// Old installers could bind custody to a different calling build. Absence
+		// in the receipt image is not deletion proof. A successful own-slot read
+		// establishes custody, then persist it before any idempotent deletion.
+		secret, err := v.installationCustody.ReadForInstall(ctx, v.record, handle)
+		size := len(secret)
+		clear(secret)
+		if err != nil || size != 96 {
+			return install.ErrUnverified
+		}
+		p.Creator = &v.record
+		if err = writePending(v.record.DataDir, p); err != nil {
+			return err
+		}
+	}
+	if e == nil && p.Phase == "provisioning" {
+		if p.Handle != handle {
+			return install.ErrUnverified
+		}
+		if p.Creator == nil {
+			if vault.UpgradeHandoffRequired() {
+				return install.ErrUnverified
+			}
+		} else if !validAuthorityCreator(*p.Creator, v.record.DataDir) || *p.Creator != v.record {
+			return install.ErrUnverified
+		}
+		// An interrupted provision can already have a valid manifest and a
+		// prepared transfer. Use the full staging-aware path when it does.
+		if _, e := os.Lstat(filepath.Join(v.record.DataDir, "installed-authority.json")); e == nil {
+			return v.installationCustody.DeleteForInstall(ctx, v.record, handle)
+		} else if !os.IsNotExist(e) {
+			return e
+		}
+		// No manifest is required for a crash during provisioning. The durable
+		// creator and handle precede Put and the receipt must still select it.
+		if _, e := os.Lstat(filepath.Join(v.record.DataDir, "custody-upgrade.json")); !os.IsNotExist(e) {
+			return install.ErrUnverified
+		}
+		return v.installationCustody.DeleteCreatedForInstall(ctx, v.record, handle)
+	}
+	return v.installationCustody.DeleteForInstall(ctx, v.record, handle)
 }

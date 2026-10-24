@@ -10,6 +10,7 @@ import (
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/peer"
 )
 
 func provisionAuthority(ctx context.Context, data string, native disclosure.SecretVault, install func() error) error {
@@ -36,6 +37,17 @@ func provisionAuthority(ctx context.Context, data string, native disclosure.Secr
 			return errors.New("runtime_authority_unavailable")
 		}
 	}
+	if err := writePending(data, pendingProfile{Version: 1}); err != nil {
+		return err
+	}
+	// The installer authenticates and persists the image/receipt before any
+	// once-only profile authority is committed. Keep db.lock throughout so a
+	// manager-started or unmanaged daemon cannot open an incomplete profile.
+	if install != nil {
+		if err := install(); err != nil {
+			return err
+		}
+	}
 	// Prove custody is available before creating a new database. This disposable
 	// OS-vault entry contains random probe bytes, never a device or client key.
 	var id [16]byte
@@ -48,22 +60,19 @@ func provisionAuthority(ctx context.Context, data string, native disclosure.Secr
 	}
 	defer clear(probe[:])
 	handle := hex.EncodeToString(id[:])
-	if err := native.Put(ctx, handle, probe[:]); err != nil {
+	if err := (provisioningVault{SecretVault: native, data: data}).Put(ctx, handle, probe[:]); err != nil {
 		return err
 	}
 	if err := native.Delete(ctx, handle); err != nil {
 		return err
 	}
-	if err := writePending(data, pendingProfile{Version: 1}); err != nil {
+	pending, err := readPending(data)
+	if err != nil {
 		return err
 	}
-	// The installer authenticates and persists the image/receipt before any
-	// once-only profile authority is committed. Keep db.lock throughout so a
-	// manager-started or unmanaged daemon cannot open an incomplete profile.
-	if install != nil {
-		if err := install(); err != nil {
-			return err
-		}
+	pending.Handle = ""
+	if err = writePending(data, pending); err != nil {
+		return err
 	}
 	err = disclosure.BootstrapInstalled(ctx, data, "Installed local clients",
 		disclosure.Grant{Repos: disclosure.AllLocalRepos(), Channels: []disclosure.Channel{disclosure.S, disclosure.P, disclosure.E}},
@@ -76,6 +85,13 @@ func provisionAuthority(ctx context.Context, data string, native disclosure.Secr
 	if err != nil {
 		return err
 	}
+	// Read authority back through the same installed target before publishing
+	// completion. A successful Put in another image's namespace is insufficient.
+	loaded, err := (disclosure.InstalledProvider{Dir: data, Vault: native, Peers: peer.Authority{}}).Load(ctx)
+	if err != nil {
+		return err
+	}
+	loaded.Material.Clear()
 	return completePending(data, p)
 }
 

@@ -323,7 +323,7 @@ func TestPendingRecoveryRejectsMalformedAndUnsafeRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(data, pendingAuthority)
-	for _, raw := range []string{`{}`, `{"version":2,"vault_handle":""}`, `{"version":1,"vault_handle":"invalid"}`, `{"version":1,"vault_handle":"","extra":true}`, `{"version":1,"vault_handle":""} {}`} {
+	for _, raw := range []string{`{"version":1,"phase":"complete","vault_handle":""}`, `{"version":1,"phase":"admitted","vault_handle":""}`, `{}`, `{"version":2,"vault_handle":""}`, `{"version":1,"vault_handle":"invalid"}`, `{"version":1,"vault_handle":"","extra":true}`, `{"version":1,"vault_handle":""} {}`} {
 		if err = os.WriteFile(path, []byte(raw), 0600); err != nil {
 			t.Fatal(err)
 		}

@@ -209,10 +209,22 @@ func (v *Vault) imageOperation(ctx context.Context, path, digest string, op byte
 	}
 	after, e := os.Lstat(path)
 	before, se := f.Stat()
-	if e != nil || se != nil || !os.SameFile(before, after) || output.n < 1 || output.b[0] != 0 {
+	if e != nil || se != nil || !os.SameFile(before, after) || output.n < 1 {
 		return nil, ErrUnavailable
 	}
-	return append([]byte(nil), output.b[1:output.n]...), nil
+	switch output.b[0] {
+	case 0:
+		if (op == 2 || op == 9) && output.n == 1 {
+			return nil, ErrUnavailable
+		}
+		return append([]byte(nil), output.b[1:output.n]...), nil
+	case 1:
+		return nil, ErrExists
+	case 2:
+		return nil, ErrNotFound
+	default:
+		return nil, ErrUnavailable
+	}
 }
 
 type custodyOutput struct {
@@ -376,6 +388,7 @@ func (v *Vault) RecoverUpgrade(ctx context.Context, current install.Record) erro
 func UpgradeHandoffRequired() bool { return true }
 
 const resumeArg = "native-custody-upgrade"
+const recoverArg = "native-custody-recover"
 
 type resumeRequest struct {
 	Source   install.Record `json:"source"`
@@ -384,7 +397,7 @@ type resumeRequest struct {
 }
 
 func runHandoffHelper(args []string, in io.Reader, out io.Writer) bool {
-	if len(args) != 1 || args[0] != resumeArg {
+	if len(args) != 1 || (args[0] != resumeArg && args[0] != recoverArg) {
 		return false
 	}
 	var req resumeRequest
@@ -410,7 +423,17 @@ func runHandoffHelper(args []string, in io.Reader, out io.Writer) bool {
 		}
 	}
 	if e == nil {
-		e = v.PrepareUpgrade(ctx, req.Source, req.Target)
+		if args[0] == resumeArg {
+			e = v.PrepareUpgrade(ctx, req.Source, req.Target)
+		} else {
+			report, re := install.Status(ctx, req.Source.Dir)
+			self, se := os.Executable()
+			if req.Target != "" || (re != nil && !errors.Is(re, install.ErrUnavailable)) || report.Record != req.Source || se != nil || self != req.Source.Executable {
+				e = install.ErrUnverified
+			} else {
+				e = v.RecoverUpgrade(ctx, req.Source)
+			}
+		}
 	}
 	code := byte(0)
 	if e != nil {
@@ -423,13 +446,22 @@ func runHandoffHelper(args []string, in io.Reader, out io.Writer) bool {
 // ResumeUpgrade uses the retained receipt image after an interrupted transfer.
 // It never depends on cached plaintext or launches a shim-supplied executable.
 func (v *Vault) ResumeUpgrade(ctx context.Context, source install.Record, target string) error {
+	if !digestValid(target) {
+		return ErrInvalid
+	}
+	return v.lifecycleImage(ctx, source, target, resumeArg)
+}
+
+// Keep RecoverUpgrade's startup self-path check. Teardown invoked by another
+// build dispatches recovery into the verified current image instead.
+func (v *Vault) lifecycleImage(ctx context.Context, source install.Record, target, arg string) error {
 	if ctx == nil {
 		return ErrInvalid
 	}
 	if e := ctx.Err(); e != nil {
 		return e
 	}
-	if v == nil || v.closed || !digestValid(target) || source.Executable != handoffTarget(source, source.SHA256) {
+	if v == nil || v.closed || source.Executable != handoffTarget(source, source.SHA256) {
 		return ErrInvalid
 	}
 	report, e := install.Status(ctx, source.Dir)
@@ -450,7 +482,7 @@ func (v *Vault) ResumeUpgrade(ctx context.Context, source install.Record, target
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, source.Executable, resumeArg)
+	cmd := exec.CommandContext(ctx, source.Executable, arg)
 	cmd.WaitDelay = time.Second
 	cmd.Stdin = bytes.NewReader(b)
 	out := &custodyOutput{}
@@ -506,7 +538,7 @@ func (v *Vault) DeleteForInstall(ctx context.Context, current install.Record, ha
 	}
 	if e == nil {
 		if current != m.Source {
-			if e = v.RecoverUpgrade(ctx, current); e != nil {
+			if e = v.lifecycleImage(ctx, current, "", recoverArg); e != nil {
 				return e
 			}
 		} else {

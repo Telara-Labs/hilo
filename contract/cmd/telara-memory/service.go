@@ -201,7 +201,7 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 		if err = ipc.WriteFrame(out, map[string]string{"credential_store": vault.Location()}); err != nil {
 			return err
 		}
-		err = provisionAuthority(ctx, p.Data, vault.New(), func() error {
+		err = provisionAuthority(ctx, p.Data, installationVault{vault.New(), dir, p.Data}, func() error {
 			r, installErr = install.Install(ctx, install.Config{Dir: dir, Home: home, Executable: *source, SHA256: *digest, Version: *version, DataDir: p.Data, RunDir: p.Run})
 			if errors.Is(installErr, install.ErrUpgrade) {
 				// Explicit retry of a never-opened setup may reuse only the exact
@@ -323,7 +323,7 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 					// A validated pending record plus exclusive writer admission
 					// proves no store was eligible to open, even if no daemon ever
 					// existed to write a clean-close receipt.
-					if err := deleteNeverAdmittedAuthority(ctx, r.Record.DataDir, vault.New()); err == nil {
+					if err := deleteNeverAdmittedAuthority(ctx, r.Record.DataDir, installedDeletionVault{vault.New(), r.Record}); err == nil {
 						return nil
 					} else if !errors.Is(err, ipc.ErrBusy) && !errors.Is(err, errAuthorityAdmitted) {
 						return err
@@ -378,7 +378,7 @@ func waitReadiness(ctx context.Context, p ipc.Paths, out io.Writer) error {
 		probe, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 		live, err := daemon.Probe(probe, p)
 		cancel()
-		if err == nil {
+		if err == nil && authorityReady(live) {
 			return ipc.WriteFrame(out, live)
 		}
 		select {

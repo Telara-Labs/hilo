@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/peer"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
@@ -19,9 +20,10 @@ const pendingAuthority = "authority-bootstrap.json"
 var errAuthorityReady = errors.New("authority_bootstrap_already_complete")
 
 type pendingProfile struct {
-	Version int    `json:"version"`
-	Handle  string `json:"vault_handle"`
-	Phase   string `json:"phase"`
+	Version int             `json:"version"`
+	Handle  string          `json:"vault_handle"`
+	Phase   string          `json:"phase"`
+	Creator *install.Record `json:"creator,omitempty"`
 }
 
 func readPending(data string) (pendingProfile, error) {
@@ -32,7 +34,10 @@ func readPending(data string) (pendingProfile, error) {
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
-	if d.Decode(&p) != nil || d.Decode(new(any)) != io.EOF || p.Version != 1 || (p.Handle != "" && !record.IsKeyID(p.Handle)) || (p.Phase != "provisioning" && p.Phase != "complete" && p.Phase != "admitted") {
+	if d.Decode(&p) != nil || d.Decode(new(any)) != io.EOF || p.Version != 1 || (p.Phase != "provisioning" && p.Handle == "") || (p.Handle != "" && !record.IsKeyID(p.Handle)) || (p.Phase != "provisioning" && p.Phase != "complete" && p.Phase != "admitted") {
+		return pendingProfile{}, errors.New("runtime_authority_unavailable")
+	}
+	if p.Creator != nil && !validAuthorityCreator(*p.Creator, data) {
 		return pendingProfile{}, errors.New("runtime_authority_unavailable")
 	}
 	return p, nil
@@ -151,10 +156,27 @@ func (v provisioningVault) Put(ctx context.Context, handle string, secret []byte
 	if err != nil || p.Handle != "" {
 		return errors.New("runtime_authority_unavailable")
 	}
+	if owner, ok := v.SecretVault.(interface {
+		Custodian(context.Context) (install.Record, error)
+	}); ok {
+		creator, err := owner.Custodian(ctx)
+		if err != nil || !validAuthorityCreator(creator, v.data) {
+			return errors.New("runtime_authority_unavailable")
+		}
+		p.Creator = &creator
+	}
 	p.Handle = handle
 	// Persist the opaque recovery handle before the key can enter native custody.
 	if err = writePending(v.data, p); err != nil {
 		return err
 	}
 	return v.SecretVault.Put(ctx, handle, secret)
+}
+
+// The receipt records the exact image which created native custody. Persist it
+// before Put so an interruption before the manifest cannot lose that identity.
+func validAuthorityCreator(r install.Record, data string) bool {
+	return r.DataDir == data && filepath.IsAbs(r.Dir) && filepath.Clean(r.Dir) == r.Dir &&
+		len(r.SHA256) == 64 && record.IsKeyID(r.SHA256[:32]) && record.IsKeyID(r.SHA256[32:]) &&
+		r.Executable == filepath.Join(r.Dir, "bin", r.SHA256, "telara-memory")
 }

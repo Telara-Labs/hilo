@@ -119,9 +119,11 @@ func TestHandoffImageAndHelperRefuseUntrustedInput(t *testing.T) {
 		t.Fatal("symlink image accepted")
 	}
 	for _, input := range []string{"", `{}`, `{"source":{},"unknown":true}`, string(make([]byte, 17000))} {
-		var out bytes.Buffer
-		if !runHandoffHelper([]string{resumeArg}, bytes.NewBufferString(input), &out) || !bytes.Equal(out.Bytes(), []byte{1}) {
-			t.Fatal("malformed recovery request accepted")
+		for _, arg := range []string{resumeArg, recoverArg} {
+			var out bytes.Buffer
+			if !runHandoffHelper([]string{arg}, bytes.NewBufferString(input), &out) || !bytes.Equal(out.Bytes(), []byte{1}) {
+				t.Fatal("malformed recovery request accepted", arg)
+			}
 		}
 	}
 	out := &custodyOutput{}
@@ -162,7 +164,11 @@ func runCustodyUpgradeFixture(args []string) bool {
 		fmt.Fprintln(os.Stderr, se)
 		os.Exit(1)
 	}
+	var bootstrapVault disclosure.SecretVault = v
 	switch action {
+	case "bootstrap-installed":
+		bootstrapVault = Installed{Vault: v, Record: report.Record}
+		e = disclosure.BootstrapInstalled(ctx, data, "Installed target fixture", disclosure.Grant{Repos: disclosure.AllLocalRepos(), Channels: []disclosure.Channel{disclosure.S}}, disclosure.TaskWriteGrant{}, bootstrapVault)
 	case "bootstrap":
 		e = disclosure.BootstrapInstalled(ctx, data, "Upgrade fixture", disclosure.Grant{Repos: disclosure.AllLocalRepos(), Channels: []disclosure.Channel{disclosure.S}}, disclosure.TaskWriteGrant{}, v)
 	case "poison":
@@ -212,8 +218,8 @@ func runCustodyUpgradeFixture(args []string) bool {
 		fmt.Fprintln(os.Stderr, e)
 		os.Exit(1)
 	}
-	if action == "bootstrap" || action == "load" || action == "recover" {
-		loaded, le := (disclosure.InstalledProvider{Dir: data, Vault: v, Peers: peer.Authority{}}).Load(ctx)
+	if action == "bootstrap" || action == "bootstrap-installed" || action == "load" || action == "recover" {
+		loaded, le := (disclosure.InstalledProvider{Dir: data, Vault: bootstrapVault, Peers: peer.Authority{}}).Load(ctx)
 		if le != nil {
 			fmt.Fprintln(os.Stderr, le)
 			os.Exit(1)
@@ -246,8 +252,8 @@ func TestNativeCustodyAcrossDifferentAdHocBuilds(t *testing.T) {
 		t.Fatal(e)
 	}
 	type image struct{ path, digest string }
-	builds := make([]image, 0, 2)
-	for _, variant := range []string{"first", "second"} {
+	builds := make([]image, 0, 3)
+	for _, variant := range []string{"first", "second", "third"} {
 		exe := filepath.Join(root, variant)
 		cmd := exec.Command("go", "test", "-p", "1", "-c", "-o", exe, "-ldflags=-X github.com/Telara-Labs/telara-memory/contract/internal/node/vault.custodyBuild="+variant, ".")
 		cmd.Env = append(os.Environ(), "GOWORK=off")
@@ -299,7 +305,13 @@ func TestNativeCustodyAcrossDifferentAdHocBuilds(t *testing.T) {
 		}
 		return string(bytes.TrimSpace(b))
 	}
-	owner := action(0, "bootstrap")
+	// The invoking build is neither the installed target nor its successor.
+	// Bootstrap and authority readback must both use the installed target.
+	owner := action(2, "bootstrap-installed")
+	if got := action(0, "load"); got != owner {
+		t.Fatal("target could not read initial custody")
+	}
+	action(2, "absent")
 	action(1, "poison")
 	failed := exec.CommandContext(ctx, builds[0].path, "custody-upgrade-fixture", "prepare", keychain, data, dir, builds[1].digest)
 	failed.Env = replaceHome(os.Environ(), home)
@@ -397,12 +409,45 @@ func TestNativeCustodyAcrossDifferentAdHocBuilds(t *testing.T) {
 	writeJSON("intent.json", map[string]string{"mode": "stop", "sha256": original.SHA256, "version": original.Version, "session": ""})
 	action(0, "bootstrap")
 	action(0, "prepare")
-	action(0, "uninstall-secret")
+	action(2, "uninstall-secret")
 	action(0, "absent")
 	action(1, "absent")
 	if _, e = readHandoff(data); !os.IsNotExist(e) {
 		t.Fatal("aborted transfer marker retained", e)
 	}
+	// A never-started profile without a transfer is deleted from another build.
+	data = filepath.Join(root, "never-started-data")
+	if e = ipc.ValidateDir(data, true); e != nil {
+		t.Fatal(e)
+	}
+	original.DataDir = data
+	writeJSON("install.json", original)
+	writeJSON("intent.json", map[string]string{"mode": "stop", "sha256": original.SHA256, "version": original.Version, "session": ""})
+	action(2, "bootstrap-installed")
+	action(1, "uninstall-secret")
+	action(0, "absent")
+
+	// Publication happened but startup recovery has not. A third build dispatches
+	// teardown into the current receipt image, then removes both native slots.
+	data = filepath.Join(root, "post-publication-data")
+	if e = ipc.ValidateDir(data, true); e != nil {
+		t.Fatal(e)
+	}
+	original.DataDir = data
+	writeJSON("install.json", original)
+	writeJSON("intent.json", map[string]string{"mode": "stop", "sha256": original.SHA256, "version": original.Version, "session": ""})
+	action(2, "bootstrap-installed")
+	action(0, "prepare")
+	next.DataDir = data
+	writeJSON("install.json", next)
+	writeJSON("intent.json", map[string]string{"mode": "stop", "sha256": next.SHA256, "version": next.Version, "session": ""})
+	action(2, "uninstall-secret")
+	action(0, "absent")
+	action(1, "absent")
+	if _, e = readHandoff(data); !os.IsNotExist(e) {
+		t.Fatal("post-publication marker retained", e)
+	}
+
 }
 
 var _ io.Writer = (*custodyOutput)(nil)
