@@ -12,7 +12,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-const RendererVersion = "quoted-local/1;xtext=0.43.0;unicode=15.0.0;empty=neutral/1;tenant-overlay=post-normalize/1;assembled-policy/2"
+const RendererVersion = "quoted-local/1;xtext=0.43.0;unicode=15.0.0;empty=neutral/1;tenant-overlay=post-normalize/1;assembled-policy/3;fitted-policy/1"
 const ClassifierVersion = "possible-recall-field/1;" + RendererVersion
 const MaxViewValue = 2 << 20
 const MaxViewOperation = 64 << 20

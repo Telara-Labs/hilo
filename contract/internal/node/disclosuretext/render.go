@@ -152,10 +152,50 @@ func Render(in RenderInput) (RenderResult, error) {
 	if err != nil {
 		return out, err
 	}
+	header := b.String()
+	fields := 0
+	for _, p := range prepared {
+		fields += len(p.labels) + len(p.values)
+	}
+	for pass := 0; pass <= fields; pass++ {
+		// Removal can create a new pre-fit join too. Recheck both representations.
+		if err := checkPreparedReply(prepared, in.Overlay, &work); err != nil {
+			return RenderResult{}, err
+		}
+		result, spans, err := renderPreparedReply(in, prepared, header, closing, &work, flags)
+		if err != nil {
+			return RenderResult{}, err
+		}
+		removed, err := fittedReplyMatches(result.Text, spans, in.Overlay, &work)
+		if err != nil {
+			return RenderResult{}, err
+		}
+		if len(removed) == 0 {
+			return result, nil
+		}
+		for _, src := range removed {
+			p := &prepared[src.item]
+			p.withheld = true
+			if src.label {
+				p.labels[src.field] = ""
+			} else {
+				p.values[src.field] = ""
+			}
+		}
+	}
+	return RenderResult{}, fail("render_limit")
+}
+
+func renderPreparedReply(in RenderInput, prepared []preparedRenderItem, header, closing string, work *WorkBudget, flags map[string]bool) (RenderResult, []renderSpan, error) {
+	delete(flags, "truncated")
+	var out RenderResult
+	var spans []renderSpan
+	var b strings.Builder
+	b.WriteString(header)
 	// Reserve a fixed bounded omission line, even if every item ultimately fits.
 	const omitReserve = 192
 	for i, item := range in.Items {
-		labels := prepared[i].labels
+		labels := append([]string(nil), prepared[i].labels...)
 		for j, s := range labels {
 			s, tr := fitRunes(s, 256)
 			if tr {
@@ -163,17 +203,29 @@ func Render(in RenderInput) (RenderResult, error) {
 			}
 			labels[j] = escape(strings.ReplaceAll(s, "\n", `\n`))
 		}
-		prefix := "<item marker=\"" + item.LID + "@" + item.ID + "\">\n    | source " + labels[0] + "; kind " + labels[1] + "; signature " + labels[2] + "; coverage " + labels[3] + "; trust " + labels[4] + "; evidence " + labels[5] + "\n"
+		var prefixBuilder strings.Builder
+		prefixBuilder.WriteString("<item marker=\"" + item.LID + "@" + item.ID + "\">\n")
+		var labelSpans []renderSpan
+		for j, name := range []string{"    | source ", "; kind ", "; signature ", "; coverage ", "; trust ", "; evidence "} {
+			prefixBuilder.WriteString(name)
+			start := prefixBuilder.Len()
+			prefixBuilder.WriteString(labels[j])
+			if prefixBuilder.Len() > start {
+				labelSpans = append(labelSpans, renderSpan{start, prefixBuilder.Len(), renderSource{i, j, true}})
+			}
+		}
+		prefixBuilder.WriteByte('\n')
+		prefix := prefixBuilder.String()
 		if item.TaskID != "" {
 			if !record.IsUUIDv4(item.TaskID) {
-				return out, fail("outcome_render_unavailable")
+				return RenderResult{}, nil, fail("outcome_render_unavailable")
 			}
 			prefix += "    | task_id " + item.TaskID + "\n"
 		}
 		suffix := "</item>\n"
 		var body strings.Builder
 		type sourceSpan struct{ start, end, field int }
-		var spans []sourceSpan
+		var bodySpans []sourceSpan
 		values := prepared[i].values
 		if prepared[i].withheld {
 			body.WriteString("    | Content withheld by current policy.\n")
@@ -182,6 +234,12 @@ func Render(in RenderInput) (RenderResult, error) {
 			if s == "" {
 				continue
 			}
+			// Charge escaping, quoting and line-coordinate allocation before work.
+			linesCost := 64 * (2*strings.Count(s, "\n") + 1)
+			if linesCost > MaxViewOperation-work.bytes || len(s) > (MaxViewOperation-work.bytes-linesCost)/8 {
+				return RenderResult{}, nil, fail("render_limit")
+			}
+			work.bytes += 8*len(s) + linesCost
 			lines := strings.Split(s, "\n")
 			for li, line := range lines {
 				body.WriteString("    | ")
@@ -189,14 +247,14 @@ func Render(in RenderInput) (RenderResult, error) {
 				start := body.Len()
 				body.WriteString(escaped)
 				if escaped != "" {
-					spans = append(spans, sourceSpan{start, body.Len(), fi})
+					bodySpans = append(bodySpans, sourceSpan{start, body.Len(), fi})
 				}
 				body.WriteByte('\n')
 				if li < len(lines)-1 {
-					spans = append(spans, sourceSpan{body.Len() - 1, body.Len(), fi})
+					bodySpans = append(bodySpans, sourceSpan{body.Len() - 1, body.Len(), fi})
 				}
 				if body.Len() > 12*MaxViewValue {
-					return out, fail("render_limit")
+					return RenderResult{}, nil, fail("render_limit")
 				}
 			}
 		}
@@ -207,7 +265,8 @@ func Render(in RenderInput) (RenderResult, error) {
 			continue
 		}
 		content := body.String()
-		headEnd, tailStart := len(content), len(content)
+		bodyLen := len(content)
+		headEnd, tailStart := bodyLen, bodyLen
 		if len(content) > available {
 			// Fit whole quoted lines first. Head/tail are both from the fully
 			// sanitized/escaped view; never split a prefix or marker.
@@ -218,14 +277,28 @@ func Render(in RenderInput) (RenderResult, error) {
 				continue
 			}
 		}
+		base := b.Len()
+		for _, span := range labelSpans {
+			span.start += base
+			span.end += base
+			spans = append(spans, span)
+		}
 		b.WriteString(prefix)
 		b.WriteString(content)
 		b.WriteString(suffix)
 		out.ShownIndices = append(out.ShownIndices, i)
 		shown := map[int]bool{}
-		for _, span := range spans {
-			if (span.start < headEnd && span.end > 0) || (span.end > tailStart && span.start < len(body.String())) {
-				shown[span.field] = true
+		for _, span := range bodySpans {
+			add := func(start, end, offset int) {
+				if start < end {
+					spans = append(spans, renderSpan{base + len(prefix) + offset + start, base + len(prefix) + offset + end, renderSource{i, span.field, false}})
+					shown[span.field] = true
+				}
+			}
+			add(span.start, min(span.end, headEnd), 0)
+			if tailStart < bodyLen {
+				// The fresh tail prefix and marker shift every retained tail byte.
+				add(max(span.start, tailStart), span.end, len(content)-bodyLen)
 			}
 		}
 		for fi := range item.Fields {
@@ -247,10 +320,10 @@ func Render(in RenderInput) (RenderResult, error) {
 	}
 	b.WriteString(closing)
 	if b.Len() > in.Budget.MaxBytes {
-		return RenderResult{}, fail("budget_too_small")
+		return RenderResult{}, nil, fail("budget_too_small")
 	}
 	out.Text = b.String()
-	return out, nil
+	return out, spans, nil
 }
 
 // preparedRenderItem contains detached views only. Source coordinates are kept
@@ -263,14 +336,8 @@ type preparedRenderItem struct {
 
 func prepareReplyAssembly(in RenderInput, work *WorkBudget, flags map[string]bool) ([]preparedRenderItem, error) {
 	prepared := make([]preparedRenderItem, len(in.Items))
-	type source struct {
-		item, field int
-		label       bool
-	}
-	var sources []source
-	var values []string
 	seen := map[string]bool{}
-	add := func(value string, src source) (string, error) {
+	add := func(value string, src renderSource) (string, error) {
 		s, stripped, err := normalizeOverlay(value, work, in.Overlay.FieldOverlay())
 		if err != nil {
 			return "", err
@@ -281,8 +348,6 @@ func prepareReplyAssembly(in RenderInput, work *WorkBudget, flags map[string]boo
 		if !src.label && instructionShape(s) {
 			flags["instruction_shaped"] = true
 		}
-		values = append(values, s)
-		sources = append(sources, src)
 		return s, nil
 	}
 	for i, item := range in.Items {
@@ -296,7 +361,7 @@ func prepareReplyAssembly(in RenderInput, work *WorkBudget, flags map[string]boo
 		p := &prepared[i]
 		p.labels = []string{item.Labels.Source, item.Labels.Kind, item.Labels.Signature, item.Labels.Coverage, item.Labels.Trust, item.Labels.Evidence}
 		for j, v := range p.labels {
-			s, err := add(v, source{i, j, true})
+			s, err := add(v, renderSource{i, j, true})
 			if err != nil {
 				return nil, err
 			}
@@ -313,16 +378,40 @@ func prepareReplyAssembly(in RenderInput, work *WorkBudget, flags map[string]boo
 				return nil, fail("unsupported_field")
 			}
 			keys[key] = true
-			s, err := add(f.Value, source{i, j, false})
+			s, err := add(f.Value, renderSource{i, j, false})
 			if err != nil {
 				return nil, err
 			}
 			p.values[j] = s
 		}
 	}
-	assembly, err := CheckAssembly(values, in.Overlay, work)
+	return prepared, nil
+}
+
+func checkPreparedReply(prepared []preparedRenderItem, policy AssemblyPolicy, work *WorkBudget) error {
+	count := 0
+	for _, p := range prepared {
+		count += len(p.labels) + len(p.values)
+	}
+	if count > (MaxViewOperation-work.bytes)/48 {
+		return fail("render_limit")
+	}
+	work.bytes += count * 48
+	var sources []renderSource
+	var values []string
+	for i, p := range prepared {
+		for j, v := range p.labels {
+			values = append(values, v)
+			sources = append(sources, renderSource{i, j, true})
+		}
+		for j, v := range p.values {
+			values = append(values, v)
+			sources = append(sources, renderSource{i, j, false})
+		}
+	}
+	assembly, err := CheckAssembly(values, policy, work)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, index := range assembly.Suppressed {
 		src := sources[index]
@@ -334,7 +423,7 @@ func prepareReplyAssembly(in RenderInput, work *WorkBudget, flags map[string]boo
 			p.values[src.field] = ""
 		}
 	}
-	return prepared, nil
+	return nil
 }
 
 func renderCounts(c CountSummary) (string, error) {
