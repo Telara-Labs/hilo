@@ -52,29 +52,39 @@ func TestSpoolCrashChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if mode == "pending-done" || mode == "pending-committed" {
+		if err = s.ObserveSignal(context.Background(), spoolTestHint(), spoolTestID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	switch mode {
-	case "announcement", "done":
+	case "announcement", "done", "observe-announcement", "pending-done":
 		table := "spool_announcement"
-		if mode == "done" {
+		if mode == "done" || mode == "pending-done" {
 			table = "spool_done"
 		}
 		if _, err = s.conn.ExecContext(context.Background(), "CREATE TRIGGER spool_kill AFTER INSERT ON "+table+" BEGIN SELECT spool_test_checkpoint(); END"); err != nil {
 			t.Fatal(err)
 		}
-	case "committed":
+	case "committed", "pending-committed", "observed":
 	default:
 		t.Fatal("unknown mode")
 	}
-	if _, err = s.CaptureSignal(context.Background(), spoolTestHint(), spoolTestID, in.Request, func(*CaptureTxn) (CommitPlan, error) { return in.Plan, nil }); err != nil {
+	if mode == "observe-announcement" || mode == "observed" {
+		err = s.ObserveSignal(context.Background(), spoolTestHint(), spoolTestID)
+	} else {
+		_, err = s.CaptureSignal(context.Background(), spoolTestHint(), spoolTestID, in.Request, func(*CaptureTxn) (CommitPlan, error) { return in.Plan, nil })
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
-	if mode != "committed" {
+	if mode != "committed" && mode != "pending-committed" && mode != "observed" {
 		t.Fatal("checkpoint not reached")
 	}
 	checkpoint()
 }
 func TestSpoolKillAtomicityAndRestartDrainExactlyOnce(t *testing.T) {
-	for _, mode := range []string{"announcement", "done", "committed"} {
+	for _, mode := range []string{"announcement", "done", "committed", "observe-announcement", "observed", "pending-done", "pending-committed"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			f := newProducer(t, "synthetic source crash canary")
@@ -140,12 +150,16 @@ func TestSpoolKillAtomicityAndRestartDrainExactlyOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := 0
-			if mode == "committed" {
+			if mode == "committed" || mode == "pending-committed" {
 				want = 1
 			}
 			for _, table := range []string{"spool_announcement", "spool_done", "spool_process", "capture_transition", "capture_progress"} {
-				if n := spoolCount(t, s, table); n != want {
-					t.Fatal("crash split", mode, table, n, want)
+				tableWant := want
+				if (mode == "pending-done" || mode == "observed") && (table == "spool_announcement" || table == "spool_process") {
+					tableWant = 1
+				}
+				if n := spoolCount(t, s, table); n != tableWant {
+					t.Fatal("crash split", mode, table, n, tableWant)
 				}
 			}
 			if n := len(f.w.snapshot().Entries); n != baseline+want*2 {

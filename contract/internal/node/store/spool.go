@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS spool_done(
 type spoolAdmission struct {
 	h                   transport.HookSignal
 	ulid, binding, mode string
+	hintBinding         string
 }
 
 func spoolID(client, ulid string) bool {
@@ -127,7 +128,43 @@ func (s *Store) prepareSpool(h transport.HookSignal, ulid, mode string, q *Captu
 	if err != nil {
 		return spoolAdmission{}, failure("invalid_signal")
 	}
-	return spoolAdmission{*parsed, ulid, binding, mode}, nil
+	hint, err := record.HE("spool-observation", string(raw))
+	if err != nil {
+		return spoolAdmission{}, failure("invalid_signal")
+	}
+	return spoolAdmission{h: *parsed, ulid: ulid, binding: binding, mode: mode, hintBinding: "observed:" + hint}, nil
+}
+
+// completedBinding retains the immutable hint independently of the request that
+// eventually captures it. Unprefixed bindings from older stores remain readable.
+func (a spoolAdmission) completedBinding() string { return a.hintBinding + ":" + a.binding }
+
+// ObserveSignal durably applies identity/path/ancestry metadata only. No capture
+// progress or spool_done is written, so a successful observation is never an ACK.
+func (s *Store) ObserveSignal(ctx context.Context, h transport.HookSignal, ulid string) error {
+	a, err := s.prepareSpool(h, ulid, "observe", nil)
+	if err != nil {
+		return err
+	}
+	return s.writeMode(ctx, true, func() error {
+		if err := s.checkInstance(ctx); err != nil {
+			return err
+		}
+		var binding string
+		err := s.conn.QueryRowContext(ctx, "SELECT binding FROM spool_announcement WHERE client=? AND ulid=?", h.Client, ulid).Scan(&binding)
+		if err == sql.ErrNoRows {
+			return s.persistAnnouncement(ctx, a, a.hintBinding)
+		}
+		if err != nil {
+			return failure("storage_error")
+		}
+		if binding == a.hintBinding || strings.HasPrefix(binding, a.hintBinding+":") && record.IsHex64(strings.TrimPrefix(binding, a.hintBinding+":")) {
+			return nil
+		}
+		// Legacy completion bindings cannot prove an observation's exact hint
+		// without the original request. Receipt-first collectors skip them.
+		return failure("signal_conflict")
+	})
 }
 
 // SignalDone is receipt-only and deliberately never opens or loads source bodies.
@@ -182,7 +219,8 @@ func (s *Store) AdmitSignal(ctx context.Context, h transport.HookSignal, ulid st
 }
 
 func (s *Store) spoolReceipt(ctx context.Context, a spoolAdmission) (CaptureReceipt, bool, error) {
-	var binding, mode string
+	var binding string
+	var mode sql.NullString
 	var raw []byte
 	err := s.conn.QueryRowContext(ctx, `SELECT a.binding,d.mode,d.receipt FROM spool_announcement a
  LEFT JOIN spool_done d USING(client,ulid) WHERE a.client=? AND a.ulid=?`, a.h.Client, a.ulid).Scan(&binding, &mode, &raw)
@@ -192,7 +230,13 @@ func (s *Store) spoolReceipt(ctx context.Context, a spoolAdmission) (CaptureRece
 	if err != nil {
 		return CaptureReceipt{}, false, failure("storage_error")
 	}
-	if binding != a.binding || mode != a.mode {
+	if !mode.Valid {
+		if raw != nil || binding != a.hintBinding {
+			return CaptureReceipt{}, false, failure("signal_conflict")
+		}
+		return CaptureReceipt{}, false, nil
+	}
+	if binding != a.binding && binding != a.completedBinding() || mode.String != a.mode {
 		return CaptureReceipt{}, false, failure("signal_conflict")
 	}
 	var out CaptureReceipt
@@ -202,14 +246,33 @@ func (s *Store) spoolReceipt(ctx context.Context, a spoolAdmission) (CaptureRece
 	return out, true, nil
 }
 
-func (s *Store) persistSpool(ctx context.Context, a spoolAdmission, r CaptureReceipt) error {
+func (s *Store) persistAnnouncement(ctx context.Context, a spoolAdmission, binding string) error {
 	h := a.h
-	if _, err := s.conn.ExecContext(ctx, `INSERT INTO spool_announcement VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, h.Client, a.ulid, a.binding, h.At, h.ClientVersion, h.Event, h.NativeSession, h.TranscriptPath, h.Cwd, h.PromptID, h.Source, h.Reason, h.Status, h.HookPID); err != nil {
+	if _, err := s.conn.ExecContext(ctx, `INSERT INTO spool_announcement VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, h.Client, a.ulid, binding, h.At, h.ClientVersion, h.Event, h.NativeSession, h.TranscriptPath, h.Cwd, h.PromptID, h.Source, h.Reason, h.Status, h.HookPID); err != nil {
 		return failure("storage_error")
 	}
 	for i, p := range h.Ancestry {
 		if _, err := s.conn.ExecContext(ctx, "INSERT INTO spool_process VALUES(?,?,?,?,?,?)", h.Client, a.ulid, i, p.PID, p.StartMS, p.Argv0); err != nil {
 			return failure("storage_error")
+		}
+	}
+	return nil
+}
+
+func (s *Store) persistSpool(ctx context.Context, a spoolAdmission, r CaptureReceipt) error {
+	// spoolReceipt has already checked identity under this same exclusive writer.
+	// Upgrade only an exact pending hint; do not rewrite its retained metadata.
+	result, err := s.conn.ExecContext(ctx, "UPDATE spool_announcement SET binding=? WHERE client=? AND ulid=? AND binding=?", a.completedBinding(), a.h.Client, a.ulid, a.hintBinding)
+	if err != nil {
+		return failure("storage_error")
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return failure("storage_error")
+	}
+	if n == 0 {
+		if err := s.persistAnnouncement(ctx, a, a.completedBinding()); err != nil {
+			return err
 		}
 	}
 	// CaptureReceipt contains only identifiers/counters/verification metadata.
@@ -219,7 +282,7 @@ func (s *Store) persistSpool(ctx context.Context, a spoolAdmission, r CaptureRec
 	if err != nil || len(raw) > 64<<10 {
 		return failure("receipt_limit")
 	}
-	if _, err = s.conn.ExecContext(ctx, "INSERT INTO spool_done VALUES(?,?,?,?)", h.Client, a.ulid, a.mode, raw); err != nil {
+	if _, err = s.conn.ExecContext(ctx, "INSERT INTO spool_done VALUES(?,?,?,?)", a.h.Client, a.ulid, a.mode, raw); err != nil {
 		return failure("storage_error")
 	}
 	return nil
