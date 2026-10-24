@@ -40,7 +40,7 @@ func ValidateDir(path string, create bool) error {
 }
 func openDir(path string, create bool) (int, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return -1, ErrUnsafe
+		return -1, unsafePath("openDir", path, "absolute clean path required", nil)
 	}
 	// macOS /var and /tmp are system symlinks. Resolve only these OS-owned aliases.
 	path = systemPath(path)
@@ -48,12 +48,14 @@ func openDir(path string, create bool) (int, error) {
 	if e != nil {
 		return -1, e
 	}
-	if checkACL(fd, false) != nil {
+	if e := checkACL(fd, false); e != nil {
 		unix.Close(fd)
-		return -1, ErrUnsafe
+		return -1, unsafePath("openDir", "/", "ancestor ACL validation required", e)
 	}
+	current := "/"
 	parts := splitPath(path)
 	for i, part := range parts {
+		current = filepath.Join(current, part)
 		next, e := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if errors.Is(e, unix.ENOENT) && create {
 			if e = unix.Mkdirat(fd, part, 0700); e == nil || errors.Is(e, unix.EEXIST) {
@@ -62,38 +64,46 @@ func openDir(path string, create bool) (int, error) {
 		}
 		unix.Close(fd)
 		if e != nil {
-			return -1, ErrUnsafe
+			return -1, unsafePath("openat directory", current, "no symlink; directory open/create required", e)
 		}
 		fd = next
 		var st unix.Stat_t
-		if unix.Fstat(fd, &st) != nil {
+		if e := unix.Fstat(fd, &st); e != nil {
 			unix.Close(fd)
-			return -1, ErrUnsafe
+			return -1, unsafePath("fstat directory", current, "metadata required", e)
 		}
-		if checkACL(fd, i == len(parts)-1) != nil {
+		if e := checkACL(fd, i == len(parts)-1); e != nil {
 			unix.Close(fd)
-			return -1, ErrUnsafe
+			return -1, unsafePath("openDir", current, "directory ACL validation required", e)
 		}
 		owned := st.Uid == uint32(os.Geteuid())
 		if i == len(parts)-1 {
-			if !owned || st.Mode&0777 != 0700 {
+			if !owned {
 				unix.Close(fd)
-				return -1, ErrUnsafe
+				return -1, unsafePath("validate directory", current, fmt.Sprintf("owner must be current uid=%d; got uid=%d", os.Geteuid(), st.Uid), nil)
+			}
+			if st.Mode&0777 != 0700 {
+				unix.Close(fd)
+				return -1, unsafePath("validate directory", current, fmt.Sprintf("mode must be 0700; got %#o", st.Mode), nil)
 			}
 		} else {
 			// A mutable ancestor owned by another uid can swap an otherwise
 			// private final directory between validation and pathname binding.
 			trusted := owned || st.Uid == 0
 			sticky := st.Mode&unix.S_ISVTX != 0
-			if !trusted || (st.Mode&0022 != 0 && !sticky) {
+			if !trusted {
 				unix.Close(fd)
-				return -1, ErrUnsafe
+				return -1, unsafePath("validate ancestor", current, fmt.Sprintf("owner must be root or current uid=%d; got uid=%d", os.Geteuid(), st.Uid), nil)
+			}
+			if st.Mode&0022 != 0 && !sticky {
+				unix.Close(fd)
+				return -1, unsafePath("validate ancestor", current, fmt.Sprintf("mode forbids group/other writes without sticky protection; got %#o", st.Mode), nil)
 			}
 		}
 	}
 	if len(parts) == 0 {
 		unix.Close(fd)
-		return -1, ErrUnsafe
+		return -1, unsafePath("openDir", path, "non-root private directory required", nil)
 	}
 	return fd, nil
 }
@@ -114,13 +124,13 @@ func Lock(path string) (*os.File, error) {
 		}
 	}
 	if e != nil {
-		return nil, ErrUnsafe
+		return nil, unsafePath("openat lock", path, "no symlink; lock file open required", e)
 	}
 	f := os.NewFile(uintptr(n), path)
 	var st unix.Stat_t
-	if unix.Fstat(n, &st) != nil || st.Uid != uint32(os.Geteuid()) || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&0777 != 0600 || st.Nlink != 1 || checkACL(n, true) != nil {
+	if e := privateFile(n, path, &st); e != nil {
 		f.Close()
-		return nil, ErrUnsafe
+		return nil, e
 	}
 	if e = unix.Flock(n, unix.LOCK_EX|unix.LOCK_NB); e != nil {
 		f.Close()
@@ -153,7 +163,7 @@ func Listen(p Paths) (net.Listener, error) {
 	if e == nil {
 		st, ok := fi.Sys().(*syscall.Stat_t)
 		if !ok || st.Uid != uint32(os.Geteuid()) || fi.Mode()&os.ModeSocket == 0 {
-			return nil, ErrUnsafe
+			return nil, unsafePath("Listen", p.Endpoint, "socket must have current owner and socket type", nil)
 		}
 		c, de := net.DialTimeout("unix", p.Endpoint, HandshakeTimeout)
 		if de == nil {
@@ -170,11 +180,11 @@ func Listen(p Paths) (net.Listener, error) {
 				return nil, ErrBusy
 			}
 		} else if !errors.Is(re, os.ErrNotExist) {
-			return nil, ErrUnsafe
+			return nil, unsafePath("Listen", filepath.Join(p.Run, "owner.pid"), "stale-owner record validation required", re)
 		}
 		again, se := os.Lstat(p.Endpoint)
 		if se != nil || !os.SameFile(fi, again) {
-			return nil, ErrUnsafe
+			return nil, unsafePath("Listen", p.Endpoint, "socket identity must be unchanged before removal", se)
 		}
 		if e = os.Remove(p.Endpoint); e != nil {
 			return nil, e
@@ -206,8 +216,8 @@ func readOwner(p Paths) ([]byte, error) {
 	f := os.NewFile(uintptr(n), "owner.pid")
 	defer f.Close()
 	var st unix.Stat_t
-	if unix.Fstat(n, &st) != nil || st.Uid != uint32(os.Geteuid()) || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&0777 != 0600 || st.Nlink != 1 || checkACL(n, true) != nil {
-		return nil, ErrUnsafe
+	if e := privateFile(n, filepath.Join(p.Run, "owner.pid"), &st); e != nil {
+		return nil, e
 	}
 	return io.ReadAll(io.LimitReader(f, 513))
 }
@@ -265,8 +275,8 @@ func RecordOwner(p Paths) error {
 	defer unix.Unlinkat(fd, name, 0)
 	f := os.NewFile(uintptr(n), name)
 	defer f.Close()
-	if checkACL(n, true) != nil {
-		return ErrUnsafe
+	if e := checkACL(n, true); e != nil {
+		return unsafePath("RecordOwner", filepath.Join(p.Run, name), "private ACL validation required", e)
 	}
 	if _, e = f.Write(b); e != nil {
 		return e
@@ -285,3 +295,28 @@ func RecordOwner(p Paths) error {
 	return unix.Fsync(fd)
 }
 func Cleanup(p Paths) { os.Remove(filepath.Join(p.Run, "owner.pid")); os.Remove(p.Endpoint) }
+
+func privateFile(fd int, path string, st *unix.Stat_t) error {
+	if e := unix.Fstat(fd, st); e != nil {
+		return unsafePath("fstat", path, "metadata required", e)
+	}
+	fail := func(rule string) error {
+		return unsafePath("validate private file", path, fmt.Sprintf("%s (uid=%d mode=%#o nlink=%d)", rule, st.Uid, st.Mode, st.Nlink), nil)
+	}
+	if st.Uid != uint32(os.Geteuid()) {
+		return fail("owner must be current user")
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFREG {
+		return fail("type must be regular file")
+	}
+	if st.Mode&0777 != 0600 {
+		return fail("mode must be 0600")
+	}
+	if st.Nlink != 1 {
+		return fail("link count must be one")
+	}
+	if e := checkACL(fd, true); e != nil {
+		return unsafePath("validate private file", path, "private ACL required", e)
+	}
+	return nil
+}

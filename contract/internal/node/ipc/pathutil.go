@@ -46,11 +46,11 @@ const (
 
 func checkDarwinACL(buf []byte, private bool) error {
 	if len(buf) < 12 {
-		return ErrUnsafe
+		return unsafePath("checkDarwinACL", "ACL", "ACL header truncated", nil)
 	}
 	n := int(binary.LittleEndian.Uint32(buf[:4]))
 	if n < 12 || n > len(buf) {
-		return ErrUnsafe
+		return unsafePath("checkDarwinACL", "ACL", "ACL size invalid", nil)
 	}
 	off := int(int32(binary.LittleEndian.Uint32(buf[4:8]))) + 4
 	size := int(binary.LittleEndian.Uint32(buf[8:12]))
@@ -58,18 +58,18 @@ func checkDarwinACL(buf []byte, private bool) error {
 		return nil
 	}
 	if off < 12 || size < 44 || off > n-size {
-		return ErrUnsafe
+		return unsafePath("checkDarwinACL", "ACL", "ACL reference out of bounds", nil)
 	}
 	acl := buf[off : off+size]
 	if binary.LittleEndian.Uint32(acl[:4]) != 0x012cc16d {
-		return ErrUnsafe
+		return unsafePath("checkDarwinACL", "ACL", "ACL magic invalid", nil)
 	}
 	count := binary.LittleEndian.Uint32(acl[36:40])
 	if count == 0xffffffff {
 		return nil
 	}
 	if count > 128 || int(count) > (len(acl)-44)/24 {
-		return ErrUnsafe
+		return unsafePath("checkDarwinACL", "ACL", "ACL entry count out of bounds", nil)
 	}
 	// Conservative allow policy. Private objects reject all effective permit
 	// entries, including owner permits. Ancestors may grant read/search only.
@@ -90,7 +90,7 @@ func checkDarwinACL(buf []byte, private bool) error {
 			continue
 		}
 		if flags&0xf != 1 || (private && rights != 0) || rights&mutation != 0 {
-			return ErrUnsafe
+			return unsafePath("checkDarwinACL", "ACL", "ACL grants forbidden access or has unsupported entry type", nil)
 		}
 	}
 	return nil

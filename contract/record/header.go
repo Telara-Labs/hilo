@@ -9,10 +9,10 @@ import (
 )
 
 // Version is the contract major version carried in Header.V.
-const Version = 2
+const Version = 3
 
 // ContractVersion is the full contract version this module implements.
-const ContractVersion = "mnc/2.0"
+const ContractVersion = "mnc/3.0"
 
 // Size limits.
 const (

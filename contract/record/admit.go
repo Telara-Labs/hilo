@@ -11,19 +11,21 @@ import (
 
 // Rejection codes. Hosted maps them to its wire errors.
 const (
-	CodeTooLarge           = "too_large"
-	CodeNotCanonical       = "not_canonical"
-	CodeUnsupportedVersion = "unsupported_version" // quarantine the full envelope
-	CodeUnknownKind        = "unknown_kind"        // quarantine; the transport class decides data vs control
-	CodeUnknownField       = "unknown_field"
-	CodeIDMismatch         = "id_mismatch"
-	CodeBodyMismatch       = "body_mismatch"
-	CodeInvalidHeader      = "invalid_header"
-	CodeInvalidBody        = "invalid_body"
-	CodeLIDMismatch        = "lid_mismatch"
-	CodeProfileNotAllowed  = "profile_not_allowed"
-	CodeProvNotAllowed     = "prov_not_allowed"
-	CodeListTooLong        = "list_too_long"
+	CodeTooLarge               = "too_large"
+	CodeNotCanonical           = "not_canonical"
+	CodeUnsupportedVersion     = "unsupported_version" // quarantine the full envelope
+	CodeUnknownKind            = "unknown_kind"        // quarantine; the transport class decides data vs control
+	CodeUnknownField           = "unknown_field"
+	CodeIDMismatch             = "id_mismatch"
+	CodeBodyMismatch           = "body_mismatch"
+	CodeInvalidHeader          = "invalid_header"
+	CodeInvalidBody            = "invalid_body"
+	CodeLIDMismatch            = "lid_mismatch"
+	CodeProfileNotAllowed      = "profile_not_allowed"
+	CodeProvNotAllowed         = "prov_not_allowed"
+	CodeNonMinimalControl      = "non_minimal_control"
+	CodeCommitmentDependencies = "commitment_dependencies"
+	CodeListTooLong            = "list_too_long"
 )
 
 // Error is an admission rejection.
@@ -95,7 +97,7 @@ func Parse(headerJCS, bodyJCS []byte, wantID string) (*Record, error) {
 		return nil, &Error{Code: CodeUnsupportedVersion, Msg: fmt.Sprintf("header v %d", v), Quarantine: true}
 	}
 	if v != Version {
-		return nil, rej(CodeInvalidHeader, "header v %d", v)
+		return nil, rej(CodeUnsupportedVersion, "header v %d", v)
 	}
 	// (3) id
 	id := ContentID(headerJCS)
@@ -124,6 +126,11 @@ func Parse(headerJCS, bodyJCS []byte, wantID string) (*Record, error) {
 			return nil, rej(CodeBodyMismatch, "body present but the header has no body reference")
 		}
 		bc, err := jcs.CanonicalizeRecord(bodyJCS)
+		if err != nil && h.Type == KindCall {
+			if depErr := checkCallDependenciesRaw(h, id, bodyJCS); depErr != nil {
+				return nil, depErr
+			}
+		}
 		if err != nil {
 			return nil, rej(CodeNotCanonical, "body: %v", err)
 		}
@@ -132,6 +139,11 @@ func Parse(headerJCS, bodyJCS []byte, wantID string) (*Record, error) {
 		}
 		if BodyDigest(bodyJCS) != h.Body.Digest || int64(len(bodyJCS)) != h.Body.Size {
 			return nil, rej(CodeBodyMismatch, "body digest or size differs from the header")
+		}
+	}
+	if bodyJCS != nil && h.Type == KindCall {
+		if err := checkCallDependenciesRaw(h, id, bodyJCS); err != nil {
+			return nil, err
 		}
 	}
 	r := &Record{ID: id, HeaderJCS: headerJCS, Header: h, BodyJCS: bodyJCS}
@@ -148,6 +160,11 @@ func Parse(headerJCS, bodyJCS []byte, wantID string) (*Record, error) {
 			return nil, err
 		}
 		r.Body = b
+		if h.Type == KindCall {
+			if err := validateCommitmentDependencies(r, nil); err != nil {
+				return nil, err
+			}
+		}
 	}
 	// Owner-scoped LIDs are checked again by the signature verifier, which
 	// knows the signer's owner.
@@ -157,47 +174,28 @@ func Parse(headerJCS, bodyJCS []byte, wantID string) (*Record, error) {
 	return r, nil
 }
 
-// strictBody reports body types that reject unknown fields: the v1 export
-// allowlists and the policy document.
-func strictBody(name string) bool {
-	return name == "SessionMetaBody" || name == "TaskMetaBody" || name == "PolicyBody"
-}
-
 func decodeBody(h *Header, bodyJCS []byte) (any, error) {
 	name := BodyTypeName(h.Type, h.Prov)
 	b := newBody(name)
 	if b == nil {
-		return nil, rej(CodeProvNotAllowed, "no body type for %s with prov %s", h.Type, h.Prov)
+		return nil, rej(CodeProvNotAllowed, "unknown body type")
 	}
-	dec := json.NewDecoder(bytes.NewReader(bodyJCS))
-	if strictBody(name) {
-		dec.DisallowUnknownFields()
-	}
-	if err := dec.Decode(b); err != nil {
-		if strictBody(name) {
-			return nil, rej(CodeUnknownField, "%s: %v", name, err)
+	if err := CheckClosedObject(bodyJCS, b); err != nil {
+		code := CodeInvalidBody
+		if h.Type.IsControl() && h.Type != KindPolicy {
+			code = CodeNonMinimalControl
 		}
-		return nil, rej(CodeInvalidBody, "%s: %v", name, err)
-	}
-	// encoding/json matches member names case-insensitively. Every member the
-	// typed body re-encodes must exist in the original bytes with the same
-	// spelling, or an author could smuggle a field past a reader.
-	again, err := json.Marshal(b)
-	if err != nil {
-		return nil, rej(CodeInvalidBody, "%s: %v", name, err)
-	}
-	var orig, typed any
-	if json.Unmarshal(bodyJCS, &orig) != nil || json.Unmarshal(again, &typed) != nil {
-		return nil, rej(CodeInvalidBody, "%s: not an object", name)
-	}
-	if err := sameSpelling(orig, typed, name); err != nil {
-		return nil, err
-	}
-	if strictBody(name) {
-		ac, err := jcs.CanonicalizeRecord(again)
-		if err != nil || !bytes.Equal(ac, bodyJCS) {
-			return nil, rej(CodeNotCanonical, "%s must match its allowlist byte for byte (no empty fields written)", name)
+		if h.Type == KindCall {
+			code = CodeCommitmentDependencies
 		}
+		return nil, rej(code, "%s schema invalid", name)
+	}
+	if err := json.Unmarshal(bodyJCS, b); err != nil {
+		return nil, rej(CodeInvalidBody, "body type invalid")
+	}
+	again, err := jcs.MarshalRecord(b)
+	if err != nil || !bytes.Equal(again, bodyJCS) {
+		return nil, rej(CodeNotCanonical, "body omission rules violated")
 	}
 	return b, nil
 }
@@ -230,4 +228,16 @@ func sameSpelling(orig, typed any, where string) error {
 		}
 	}
 	return nil
+}
+
+func checkCallDependenciesRaw(h Header, id string, bodyJCS []byte) error {
+	if _, err := jcs.Canonicalize(bodyJCS); err != nil {
+		return rej(CodeNotCanonical, "invalid call JSON")
+	}
+	var fields map[string]json.RawMessage
+	var deps []string
+	if json.Unmarshal(bodyJCS, &fields) != nil || len(fields["commitment_deps"]) == 0 || bytes.Equal(fields["commitment_deps"], []byte("null")) || json.Unmarshal(fields["commitment_deps"], &deps) != nil {
+		return rej(CodeCommitmentDependencies, "required dependency set")
+	}
+	return validateCommitmentDependencies(&Record{ID: id, Header: h, Body: &CallBody{CommitmentDeps: deps}}, nil)
 }

@@ -73,29 +73,35 @@ for f in load('v03-records.json'):
     assert canon(strict(header)) == header and canon(strict(body)) == body
     assert digest(header) == f['ID'] and digest(body) == f['Digest']
     h = json.loads(header)
-    assert h['v'] == 2
+    assert h['v'] == 3
     assert h['body']['digest'] == f['Digest'] and h['body']['size'] == len(body)
     assert 'subj' in h and 'trust' in h and 'epoch' in h['red'] and 'findings' in h['red']
 print('V3 PASS')
 f = load('v04-salt.json')
-msg = canon(['mnc1-salt', f['kind'], f['lid'], f['body_without_salt']])
-key = bytes.fromhex(f['salt_key_hex'])
-assert b64(hmac.new(key, msg, hashlib.sha256).digest()[:16]) == f['salt']
-assert b64(hmac.new(bytes([8])*32, msg, hashlib.sha256).digest()[:16]) != f['salt']
-assert b64(hmac.new(key, canon(['mnc1-salt', f['kind'], f['lid'], '{\"text\":\"sibling\"}']), hashlib.sha256).digest()[:16]) != f['salt']
+assert b64(bytes.fromhex(f['test_entropy_hex'])) == f['salt']
+assert len(bytes.fromhex(f['test_entropy_hex'])) == 16
+# These are explicitly public independent TEST-ONLY byte inputs, never a
+# production key/id/content-based salt-generation recipe.
 ef = load('v04-events.json')
 event = ef['event']
-salt_input = {k:v for k,v in event.items() if k not in ('revision', 'salt')}
-nonce = bytes.fromhex(ef['test_nonce_hex'])
-assert b64(hmac.new(bytes.fromhex(ef['salt_key_hex']), canon(['mnc2-event-salt', event['id'], b64(nonce), canon(salt_input).decode()]), hashlib.sha256).digest()[:16]) == event['salt']
+assert b64(bytes.fromhex(ef['test_nonce_hex'])) == event['salt']
 revision_input = {k:v for k,v in event.items() if k != 'revision'}
 assert H('event-rev', event['id'], canon(revision_input).decode()) == event['revision']
-assert 'nonce' not in event and 'test_nonce_hex' not in event
+if event.get('text', {}).get('digest'):
+    text = event['text']
+    key = base64.urlsafe_b64decode(event['salt'] + '==')
+    assert hmac.new(key, canon(['mnc3-event-text', text['body']]), hashlib.sha256).hexdigest() == text['digest']
+kf = load('v04-keyed-text.json')
+event = kf['event']
+key = bytes.fromhex(kf['test_entropy_hex'])
+assert b64(key) == event['salt']
+assert hmac.new(key, canon(['mnc3-event-text', kf['full_redacted_text']]), hashlib.sha256).hexdigest() == event['text']['digest']
+assert H('event-rev', event['id'], canon({k:v for k,v in event.items() if k != 'revision'}).decode()) == event['revision']
 print('V4 PASS')
 f = load('v05-signature.json')
 header = f['header_jcs'].encode()
 h = json.loads(header)
-assert canon(h) == header and h['v'] == 2
+assert canon(h) == header and h['v'] == 3
 assert hashlib.sha256(header).hexdigest() == f['record_id']
 assert h['author']['key_id'] == f['signature']['key_id']
 body = f['body_jcs'].encode()
@@ -122,3 +128,26 @@ except InvalidSignature:
 else:
     raise AssertionError('malleated signature accepted')
 print('V5 PASS')
+
+worked = load('v03-worked-example.json')
+assert digest(worked['header_jcs'].encode()) == worked['id']
+assert digest(worked['body_jcs'].encode()) == worked['digest']
+assert len(worked['body_jcs'].encode()) == worked['size'] == 86
+bundle = load('v20-exposures.json')
+manifest = strict(bundle['manifest_jcs'].encode())
+assert canon(manifest) == bundle['manifest_jcs'].encode()
+items = b''.join(line.encode() + b'\n' for line in bundle['facts_jcs'])
+assert digest(items) == manifest['items_digest']
+unsigned = {k:v for k,v in manifest.items() if k != 'sigs'}
+pub.verify(base64.urlsafe_b64decode(manifest['sigs'][0]['value'] + '=='), b'mnc/v1/bundle\x00' + bytes.fromhex(digest(canon(unsigned))))
+assert manifest['bundle'] == 'mnc/3'
+for line in bundle['facts_jcs']:
+    assert canon(strict(line.encode())) == line.encode()
+print('Worked examples and signed exposure manifest PASS')
+# Historical artifacts retain original byte/hash/signature semantics, while
+# strict major-3 admission refuses them. Never relabel these protected major-3.
+for old in json.loads((ROOT/'historical-mnc2/v03-records.json').read_text()):
+    assert json.loads(old['HeaderJCS'])['v'] == 2
+    assert digest(old['HeaderJCS'].encode()) == old['ID']
+    assert digest(old['BodyJCS'].encode()) == old['Digest']
+print('Historical major-2 integrity PASS')

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
 
@@ -17,6 +18,7 @@ type RenderField struct {
 }
 type RenderItem struct {
 	LID, ID string
+	TaskID  string
 	Labels  Labels
 	Fields  []RenderField
 }
@@ -26,6 +28,7 @@ type CountSummary struct {
 	RecordUnits, TotalUnits, SearchableUnits, ExcludedUnits, UnclassifiedUnits, RecordsWithExclusions *int64
 }
 type RenderInput struct {
+	Overlay          localpolicy.Overlay
 	CallRef, Nonce   string
 	Items            []RenderItem
 	Budget           ByteBudget
@@ -156,7 +159,7 @@ func Render(in RenderInput) (RenderResult, error) {
 		seen[item.LID+"@"+item.ID] = true
 		labels := []string{item.Labels.Source, item.Labels.Kind, item.Labels.Signature, item.Labels.Coverage, item.Labels.Trust, item.Labels.Evidence}
 		for j, v := range labels {
-			s, stripped, e := normalize(v, &work)
+			s, stripped, e := normalizeOverlay(v, &work, in.Overlay)
 			if e != nil {
 				return out, e
 			}
@@ -170,6 +173,12 @@ func Render(in RenderInput) (RenderResult, error) {
 			labels[j] = escape(strings.ReplaceAll(s, "\n", `\n`))
 		}
 		prefix := "<item marker=\"" + item.LID + "@" + item.ID + "\">\n    | source " + labels[0] + "; kind " + labels[1] + "; signature " + labels[2] + "; coverage " + labels[3] + "; trust " + labels[4] + "; evidence " + labels[5] + "\n"
+		if item.TaskID != "" {
+			if !record.IsUUIDv4(item.TaskID) {
+				return out, fail("outcome_render_unavailable")
+			}
+			prefix += "    | task_id " + item.TaskID + "\n"
+		}
 		suffix := "</item>\n"
 		var body strings.Builder
 		type sourceSpan struct{ start, end, field int }
@@ -184,7 +193,7 @@ func Render(in RenderInput) (RenderResult, error) {
 				return out, fail("unsupported_field")
 			}
 			keys[key] = true
-			s, stripped, e := normalize(f.Value, &work)
+			s, stripped, e := normalizeOverlay(f.Value, &work, in.Overlay)
 			if e != nil {
 				return out, e
 			}

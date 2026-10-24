@@ -303,7 +303,7 @@ func (e *DisclosureEngine) persistSelection(ctx context.Context, d *databaseStat
 		return nil
 	}
 	if p.inputCursor == "" {
-		_, err := e.store.conn.ExecContext(ctx, "INSERT INTO query_selection VALUES(?,?,?,?,?,?,'lexical-order/1',?,?,?,?)", p.id, c.id, sc.id, sc.generation, c.epoch, o.argsHash, e.id, len(p.ids), boolInt(p.known), sc.evidence)
+		_, err := e.store.conn.ExecContext(ctx, "INSERT INTO query_selection VALUES(?,?,?,?,?,?,'lexical-order/1',?,?,?,?)", p.id, c.id, sc.id, sc.generation, c.epoch, "", e.id, len(p.ids), boolInt(p.known), sc.evidence)
 		if err != nil {
 			return failure("storage_error")
 		}

@@ -1,0 +1,14 @@
+{
+  "event": {
+    "salt": "oW0FOV0elMREK3zykyk-qA",
+    "id": "ev1:10a609497cd38807b6ebf41c38d582b9be67c1de023c44e39ce27fe4c453efe0",
+    "revision": "06a8dba36b1fe8ac5b94d386a777a436537be0008e013691459759a2e5c21c36",
+    "kind": "assistant_final",
+    "prov": "transcript",
+    "text": {
+      "body": "private redacted prose"
+    }
+  },
+  "salt_key_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+  "test_nonce_hex": "0303030303030303030303030303030303030303030303030303030303030303"
+}

@@ -22,3 +22,11 @@ func RedactionCorpusV1() []byte { return []byte(redactionCorpusV1) }
 // RedactionGoldenV1 returns an independent copy of the pinned engine's expected
 // ruleset. It is contract data, not a caller-selected ruleset or runtime policy.
 func RedactionGoldenV1() []byte { return []byte(redactionGoldenV1) }
+
+// ConformanceRegistryDigest pins the registry and its referenced fixture hashes.
+const ConformanceRegistryDigest = "2c8c3652ca6a61087302d204ea322493b871dbd1f3ad1a320f4bd8d44e4cbeb7"
+
+//go:embed testdata/vectors.json
+var conformanceRegistry string
+
+func ConformanceRegistry() []byte { return []byte(conformanceRegistry) }

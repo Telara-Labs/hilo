@@ -12,7 +12,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-const RendererVersion = "quoted-local/1;xtext=0.43.0;unicode=15.0.0;empty=neutral/1"
+const RendererVersion = "quoted-local/1;xtext=0.43.0;unicode=15.0.0;empty=neutral/1;tenant-overlay=post-normalize/1"
 const ClassifierVersion = "possible-recall-field/1;" + RendererVersion
 const MaxViewValue = 2 << 20
 const MaxViewOperation = 64 << 20
@@ -34,11 +34,48 @@ func Capability() error {
 type WorkBudget struct{ bytes, candidates int }
 
 func normalize(value string, b *WorkBudget) (string, bool, error) {
-	if b == nil || !utf8.ValidString(value) || len(value) > MaxViewValue {
+	return normalizeOverlay(value, b, localpolicy.Overlay{})
+}
+
+func normalizeOverlay(value string, b *WorkBudget, overlay localpolicy.Overlay) (string, bool, error) {
+	value, stripped, err := NormalizePolicyValue(value, b)
+	if err != nil {
+		return "", false, err
+	}
+	// Apply the complete verified overlay after every display transformation,
+	// before classification, indexing, escaping or fitting can observe it.
+	out := overlay.Text(value)
+	if len(out) > MaxViewValue {
 		return "", false, fail("render_limit")
 	}
+	return out, stripped, nil
+}
+
+// NormalizePolicyValue returns the complete NFKC/control-stripped value for
+// admission checks. It is unredacted and must pass the current verified overlay
+// before any retention or release. The same bounded transform drives rendering.
+func NormalizePolicyValue(value string, b *WorkBudget) (string, bool, error) {
+	normalized, err := normalizeNFKC(value, b)
+	if err != nil {
+		return "", false, err
+	}
+	clean, stripped := removeControls([]byte(normalized))
+	defer clear(clean)
+	if !stripped {
+		return string(clean), false, nil
+	}
+	// Removing a control can join a base character and a combining mark (or
+	// Hangul jamo). Compose again so later rendering cannot create a new match.
+	normalized, err = normalizeNFKC(string(clean), b)
+	return normalized, true, err
+}
+
+func normalizeNFKC(value string, b *WorkBudget) (string, error) {
+	if b == nil || !utf8.ValidString(value) || len(value) > MaxViewValue {
+		return "", fail("render_limit")
+	}
 	if norm.Version != "15.0.0" {
-		return "", false, fail("normalization_unavailable")
+		return "", fail("normalization_unavailable")
 	}
 	src := []byte(value)
 	defer clear(src)
@@ -49,7 +86,8 @@ func normalize(value string, b *WorkBudget) (string, bool, error) {
 	for {
 		nD, nS, e := t.Transform(block[:], src, true)
 		if nD > MaxViewValue-dst.Len() {
-			return "", false, fail("render_limit")
+			clear(dst.Bytes())
+			return "", fail("render_limit")
 		}
 		dst.Write(block[:nD])
 		clear(block[:nD])
@@ -58,27 +96,18 @@ func normalize(value string, b *WorkBudget) (string, bool, error) {
 			break
 		}
 		if e != transform.ErrShortDst || nD == 0 && nS == 0 {
-			return "", false, fail("normalization_unavailable")
+			clear(dst.Bytes())
+			return "", fail("normalization_unavailable")
 		}
 	}
 	defer clear(dst.Bytes())
 	if dst.Len() > MaxViewOperation-b.bytes {
-		return "", false, fail("render_limit")
+		return "", fail("render_limit")
 	}
 	b.bytes += dst.Len()
-	clean, stripped := removeControls(dst.Bytes())
-	defer clear(clean)
-	if len(clean) > MaxViewValue {
-		return "", false, fail("render_limit")
-	}
-	// Control removal/NFKC can construct a credential shape absent in the
-	// original bytes. Redact the COMPLETE transformed value before any cap.
-	out := localpolicy.Text(string(clean))
-	if len(out) > MaxViewValue {
-		return "", false, fail("render_limit")
-	}
-	return out, stripped, nil
+	return string(dst.Bytes()), nil
 }
+
 func removeControls(in []byte) ([]byte, bool) {
 	out := make([]byte, 0, len(in))
 	stripped := false
@@ -166,6 +195,7 @@ func removeControls(in []byte) ([]byte, bool) {
 type FieldInput struct {
 	Family, EventKind, Value string
 	Ordinal                  int
+	Overlay                  localpolicy.Overlay
 }
 
 // PreparedField is a view, not provenance. Store owns completeness and must
@@ -205,7 +235,7 @@ func PrepareField(f FieldInput, b *WorkBudget) (PreparedField, error) {
 	if f.Ordinal < 0 || f.Ordinal > 4095 || !fieldFamilies[f.Family] {
 		return PreparedField{}, fail("unsupported_field")
 	}
-	s, _, e := normalize(f.Value, b)
+	s, _, e := normalizeOverlay(f.Value, b, f.Overlay)
 	if e != nil {
 		return PreparedField{}, e
 	}

@@ -91,7 +91,7 @@ func TestReductionSemanticHoldSQLUnionKeepsDistinctRootCauseTokens(t *testing.T)
 	}
 	var effects int
 	k.s.conn.QueryRowContext(ctx, "SELECT count(*) FROM erasure_effect").Scan(&effects)
-	if effects != 511 {
+	if effects != 512 {
 		t.Fatal("effect dedup differs from distinct hold-token accounting", effects)
 	}
 	candidate := k.control(98101, record.KindErasure, roots[1])

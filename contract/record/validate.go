@@ -1,6 +1,9 @@
 package record
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	tapredact "github.com/Telara-Labs/TAP-Runtime/discover/redact"
 	"regexp"
 	"sort"
 	"strings"
@@ -210,7 +213,7 @@ func runes(s string) int { return utf8.RuneCountInString(s) }
 func validateBody(h *Header, body any) error {
 	if salted(h.Type) {
 		salt, _ := saltOf(body)
-		if !saltRe.MatchString(salt) {
+		if !validEventSalt(salt) {
 			return rej(CodeInvalidBody, "%s body needs a 22-character base64url salt", h.Type)
 		}
 	}
@@ -221,7 +224,7 @@ func validateBody(h *Header, body any) error {
 		if b.NativeID == "" || (b.NativeIDKind != NativeGlobal && b.NativeIDKind != NativeLocal) {
 			return bad("session: native_id and native_id_kind (global|local) are required")
 		}
-		if b.Page < 0 || b.StartedAt < 0 || b.LastEventAt < 0 || b.EndedAt < 0 || b.SettledThrough < 0 {
+		if b.Page < 0 || b.StartedAt < 0 || b.LastEventAt < 0 || b.EndedAt < 0 || b.SettledThrough < -1 {
 			return bad("session: negative page, time or seq")
 		}
 		if (b.EndedAt == 0) != (b.End == "") || (b.End != "" && !sessionEnds[b.End]) {
@@ -266,6 +269,11 @@ func validateBody(h *Header, body any) error {
 		if b.StartedAt < 0 || b.LastEventAt < 0 || b.EndedAt < 0 {
 			return bad("session meta: negative time")
 		}
+		for _, p := range b.Pointers {
+			if p.Outcome != "" && !outcomes[p.Outcome] {
+				return bad("metadata pointer outcome")
+			}
+		}
 	case *ChunkBody:
 		if len(b.Events) == 0 {
 			return bad("chunk: at least one event")
@@ -286,6 +294,20 @@ func validateBody(h *Header, body any) error {
 			}
 			if rev, err := EventRevision(e); err != nil || rev != e.Revision {
 				return bad("chunk: event revision hash mismatch")
+			}
+			if err := ValidateEventText(e); err != nil {
+				return bad("event: invalid text commitment")
+			}
+			if e.Request != "" && !isToken(e.Request) {
+				return bad("event: invalid request token")
+			}
+			if e.Src != nil && e.Src.Line < 0 {
+				return bad("event: negative source line")
+			}
+			if e.Result != nil {
+				if e.Result.Bytes < 0 || len(e.Result.OutIDs) > 8 || len(e.Result.OutPaths) > 8 || len(e.Result.OutTokens) > 8 || e.Result.CallEventID != "" && !IsEventID(e.Result.CallEventID) {
+					return bad("event: result bounds")
+				}
 			}
 			seen[e.ID] = true
 			if i > 0 && e.Seq <= b.Events[i-1].Seq {
@@ -347,7 +369,7 @@ func validateBody(h *Header, body any) error {
 			return bad("task: status %q", b.Status)
 		}
 	case *TaskMetaBody:
-		if b.Status != "" && !taskStatuses[b.Status] {
+		if !taskStatuses[b.Status] {
 			return bad("task meta: status %q", b.Status)
 		}
 	case *CheckpointBody:
@@ -356,12 +378,17 @@ func validateBody(h *Header, body any) error {
 				return bad("checkpoint: supports must be event ids")
 			}
 		}
+		for _, step := range b.TaskTree {
+			if step.Status != "" && !taskStatuses[step.Status] {
+				return bad("checkpoint step status")
+			}
+		}
 	case *PauseBody:
 		if b.TokenEstimate != nil && *b.TokenEstimate < 0 {
 			return bad("pause: negative token_estimate")
 		}
 	case *CallBody:
-		if !IsCallRef(b.CallRef) || b.ScopeID == "" || b.Tool == "" {
+		if !IsCallRef(b.CallRef) || !ValidScopeID(b.ScopeID, h.Author.MachineID) || !ValidReceiptTool(b.Tool) {
 			return bad("call: call_ref, scope_id and tool are required")
 		}
 		if (b.ArgsHash != "" && !IsHex64(b.ArgsHash)) || (b.ResultHash != "" && !IsHex64(b.ResultHash)) {
@@ -372,6 +399,15 @@ func validateBody(h *Header, body any) error {
 		}
 		if b.Outcome != "" && !outcomes[b.Outcome] {
 			return bad("call: outcome %q", b.Outcome)
+		}
+		if b.Outcome == "error" {
+			switch b.Err {
+			case "invalid_request", "unauthorized", "not_found", "conflict", "unavailable", "timeout", "cancelled", "internal", "unknown":
+			default:
+				return bad("call: invalid error code")
+			}
+		} else if b.Err != "" {
+			return bad("call: error code without error outcome")
 		}
 	case *BindingBody:
 		if !IsCallRef(b.CallRef) {
@@ -417,17 +453,20 @@ func validateBody(h *Header, body any) error {
 		if n > MaxErasureEntries {
 			return long("erasure: %d selector entries, limit %d", n, MaxErasureEntries)
 		}
-		if !eraseReasons[b.Reason] || b.Resolved < 0 {
+		if b.EventCoverage != "complete" || !eraseReasons[b.Reason] || b.Resolved < 0 {
 			return bad("erasure: reason %q", b.Reason)
 		}
 		if err := checkSelectors(b.Selectors.IDs, b.Selectors.LIDs, b.Selectors.Tasks, b.Selectors.Sessions); err != nil {
+			return err
+		}
+		if err := validateEventSelectors(b.Selectors); err != nil {
 			return err
 		}
 		if !uniqueHex64(b.Selectors.Sources) {
 			return bad("erasure: sources must be distinct 64-hex source keys")
 		}
 	case *WithdrawalBody:
-		if b.Tenant == "" || !isToken(b.Tenant) || b.PolicySeq <= 0 {
+		if b.Tenant == "" || !isToken(b.Tenant) || b.All && b.PolicySeq <= 0 {
 			return bad("withdrawal: tenant is required")
 		}
 		if len(b.IDs) > MaxRetractionIDs {
@@ -504,6 +543,10 @@ func validateKeyOpShape(b *KeyOpBody) error {
 	if s.Alg != "ed25519" || !IsKeyID(s.KeyID) || s.Pub == "" {
 		return bad("key_op: subject must be an ed25519 key with key_id and pub")
 	}
+	pub, err := base64.RawURLEncoding.Strict().DecodeString(s.Pub)
+	if err != nil || len(pub) != 32 || base64.RawURLEncoding.EncodeToString(pub) != s.Pub || ContentID(pub)[:32] != s.KeyID {
+		return bad("key_op: invalid public key encoding/id")
+	}
 	if s.Role != RoleDevice && s.Role != RoleService && s.Role != RolePolicy {
 		return bad("key_op: subject role %q", s.Role)
 	}
@@ -547,6 +590,19 @@ func validateKeyOpShape(b *KeyOpBody) error {
 // ValidatePolicyShape checks a policy body's fields. Freshness and
 // sequence are checked by package policy.
 func ValidatePolicyShape(b *PolicyBody) error {
+	if b == nil {
+		return rej(CodeInvalidBody, "policy required")
+	}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return rej(CodeInvalidBody, "policy encoding")
+	}
+	secret := tapredact.Redact(string(raw)) != string(raw)
+	clear(raw)
+	if secret {
+		return rej(CodeInvalidBody, "policy credential literal")
+	}
+
 	bad := func(format string, a ...any) error { return rej(CodeInvalidBody, format, a...) }
 	if b.Tenant == "" || !isToken(b.Tenant) {
 		return bad("policy: tenant is required")
@@ -563,7 +619,12 @@ func ValidatePolicyShape(b *PolicyBody) error {
 	if len(b.Applies.Users) == 0 {
 		return bad("policy: applies.users is required")
 	}
+	seenUsers := map[string]bool{}
 	for _, u := range b.Applies.Users {
+		if seenUsers[u] {
+			return bad("policy: duplicate user")
+		}
+		seenUsers[u] = true
 		if u == "*" && len(b.Applies.Users) != 1 {
 			return bad("policy: \"*\" stands alone in applies.users")
 		}
@@ -608,4 +669,29 @@ func containsString(xs []string, x string) bool {
 // ValidOwner accepts only a genesis key id or a bounded tenant namespace.
 func ValidOwner(owner string) bool {
 	return IsKeyID(owner) || (strings.HasPrefix(owner, "tenant:") && isToken(strings.TrimPrefix(owner, "tenant:")))
+}
+
+func validateEventSelectors(s Selectors) error {
+	for _, xs := range [][]string{s.IDs, s.LIDs, s.Sessions, s.Sources} {
+		if !sort.StringsAreSorted(xs) {
+			return rej(CodeInvalidBody, "selectors must be sorted")
+		}
+	}
+	prior := ""
+	for _, t := range s.Tasks {
+		key := t.Owner + "/" + t.TaskID
+		if key <= prior {
+			return rej(CodeInvalidBody, "tasks must be sorted unique")
+		}
+		prior = key
+	}
+	prior = ""
+	for _, e := range s.Events {
+		key := e.Owner + "/" + e.SessionKey + "/" + e.EventID
+		if !ValidOwner(e.Owner) || !IsSessionKey(e.SessionKey) || !IsEventID(e.EventID) || key <= prior {
+			return rej(CodeInvalidBody, "invalid event selectors")
+		}
+		prior = key
+	}
+	return nil
 }

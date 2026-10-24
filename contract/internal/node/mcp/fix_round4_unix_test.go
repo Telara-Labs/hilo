@@ -12,7 +12,7 @@ import (
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcp"
+	mcp "github.com/Telara-Labs/telara-memory/contract/internal/node/mcp/internal/fixture"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcp/internal/teststore"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
@@ -106,7 +106,7 @@ func TestModernExplicitRetryIdentityStillDeduplicates(t *testing.T) {
 					t.Fatal("explicit conversation lost credential scope or original correlation")
 				}
 			} else {
-				wantOp, err := record.SuppliedOpID(teststore.Access().CredentialID, "explicit-operation")
+				wantOp, err := record.HE("fixture-supplied", teststore.Access().CredentialID, "explicit-operation")
 				if err != nil || call.Access.ScopeID != "" || call.Access.SessionKey != "" || call.Op != wantOp {
 					t.Fatal("explicit operation lost credential namespace or inferred continuity")
 				}

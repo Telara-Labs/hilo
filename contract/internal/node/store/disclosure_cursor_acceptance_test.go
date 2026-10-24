@@ -53,7 +53,7 @@ func TestDisclosureCursorUnrelatedWriteAndMonotonicLeaseRefuse(t *testing.T) {
 			if state != "expired" {
 				t.Fatal("expired cursor silently rebased", state)
 			}
-			if _, err := k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "expired-next"}, cursor, ByteBudget{MaxBytes: 4096}); Code(err) != "cursor_expired" {
+			if _, err := k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("expired-next")}, cursor, ByteBudget{MaxBytes: 4096}); Code(err) != "cursor_expired" {
 				t.Fatal(err)
 			}
 		})
@@ -70,7 +70,7 @@ func TestDisclosureConcurrentNextAndFallbackIdentity(t *testing.T) {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				_, err := k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: fmt.Sprint("concurrent-next", i)}, cursor, ByteBudget{MaxBytes: 4096})
+				_, err := k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued(fmt.Sprint("concurrent-next", i))}, cursor, ByteBudget{MaxBytes: 4096})
 				codes[i] = Code(err)
 			}(i)
 		}
@@ -103,7 +103,7 @@ func TestDisclosureConcurrentNextAndFallbackIdentity(t *testing.T) {
 		if _, err = k.e.Next(ctx, newer, sc, call, cursor, ByteBudget{MaxBytes: 4096}); Code(err) != "cursor_consumed" {
 			t.Fatal("reconnect fallback inherited live connection op", err)
 		}
-		if _, err = k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "cursor-search"}, cursor, ByteBudget{MaxBytes: 4096}); Code(err) != "op_conflict" {
+		if _, err = k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("cursor-search")}, cursor, ByteBudget{MaxBytes: 4096}); Code(err) != "op_conflict" {
 			t.Fatal("Next reused search operation identity", err)
 		}
 	})

@@ -72,7 +72,7 @@ func commandFor(t *testing.T, tool string, args any) TypedCommand {
 }
 func (k *kernelWorld) execute(op, tool string, args any) CommittedReplyHandle {
 	k.t.Helper()
-	r, err := k.e.Execute(context.Background(), k.h, k.sc, CallIdentity{SuppliedOpID: op}, commandFor(k.t, tool, args), ByteBudget{MaxBytes: 4096})
+	r, err := k.e.Execute(context.Background(), k.h, k.sc, CallIdentity{SuppliedOpID: k.issued(op)}, commandFor(k.t, tool, args), ByteBudget{MaxBytes: 4096})
 	if err != nil {
 		k.t.Fatal(op, err)
 	}
@@ -120,16 +120,16 @@ func TestKernelPositiveCompletenessSearchAndCursor(t *testing.T) {
 	if expected != g {
 		t.Fatal("own Release expired continuation", expected, g)
 	}
-	second, err := k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "page-two"}, cursor, ByteBudget{MaxBytes: 4096})
+	second, err := k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("page-two")}, cursor, ByteBudget{MaxBytes: 4096})
 	if err != nil {
 		t.Fatal(err)
 	}
 	k.release(second)
-	retry, err := k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "page-two"}, cursor, ByteBudget{MaxBytes: 4096})
+	retry, err := k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("page-two")}, cursor, ByteBudget{MaxBytes: 4096})
 	if err != nil || retry.op != second.op {
 		t.Fatal("lost page response replay", err)
 	}
-	_, err = k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "different-page"}, cursor, ByteBudget{MaxBytes: 4096})
+	_, err = k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("different-page")}, cursor, ByteBudget{MaxBytes: 4096})
 	if Code(err) != "cursor_consumed" {
 		t.Fatal("cursor reused", err)
 	}

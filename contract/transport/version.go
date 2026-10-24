@@ -13,6 +13,9 @@ func CheckEnvelope(e record.Envelope, decodedBody []byte) (*record.Record, error
 	if e.V != record.Version {
 		return nil, errors.New("unsupported envelope version")
 	}
+	if !record.IsHex64(e.ID) || len(e.Header) > base64.RawURLEncoding.EncodedLen(record.MaxHeaderBytes) {
+		return nil, errors.New("invalid or oversized envelope header")
+	}
 	header, err := base64.RawURLEncoding.Strict().DecodeString(e.Header)
 	if err != nil || base64.RawURLEncoding.EncodeToString(header) != e.Header {
 		return nil, errors.New("invalid envelope header encoding")
@@ -32,7 +35,7 @@ func CheckHello(h Hello, r HelloReply) error {
 	return nil
 }
 func CheckManifestVersion(m Manifest) error {
-	if m.Bundle != "mnc/2" {
+	if m.Bundle != "mnc/3" {
 		return errors.New("unsupported bundle version")
 	}
 	return nil

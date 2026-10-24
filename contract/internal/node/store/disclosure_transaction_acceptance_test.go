@@ -225,13 +225,13 @@ func TestDisclosureTransactionPhaseFailuresNeverReleasePartialAuthority(t *testi
 					}
 				case "next":
 					var r CommittedReplyHandle
-					r, err = k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "phase-next"}, cursor, ByteBudget{MaxBytes: 4096})
+					r, err = k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("phase-next")}, cursor, ByteBudget{MaxBytes: 4096})
 					if r.engine != nil {
 						t.Fatal("uncommitted cursor/page escaped")
 					}
 				case "count":
 					var r CommittedReplyHandle
-					r, err = k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "phase-count"}, commandFor(t, "local.lexical_search", map[string]any{"query": "phase_search_canary", "resource_types": []string{"checkpoint"}}), ByteBudget{MaxBytes: 4096})
+					r, err = k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("phase-count")}, commandFor(t, "local.lexical_search", map[string]any{"query": "phase_search_canary", "resource_types": []string{"checkpoint"}}), ByteBudget{MaxBytes: 4096})
 					if r.engine != nil {
 						t.Fatal("uncommitted count/page escaped")
 					}
@@ -270,11 +270,11 @@ func TestDisclosureTransactionPhaseFailuresNeverReleasePartialAuthority(t *testi
 						t.Fatal("rollback consumed input cursor", state)
 					}
 					if !commit {
-						if _, err = k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "phase-next"}, cursor, ByteBudget{MaxBytes: 4096}); err != nil {
+						if _, err = k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("phase-next")}, cursor, ByteBudget{MaxBytes: 4096}); err != nil {
 							t.Fatal("known rollback blocked safe Next retry", err)
 						}
 					} else {
-						if _, err = k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "phase-next"}, cursor, ByteBudget{MaxBytes: 4096}); Code(err) != "cursor_expired" {
+						if _, err = k.e.Next(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("phase-next")}, cursor, ByteBudget{MaxBytes: 4096}); Code(err) != "cursor_expired" {
 							t.Fatal("new engine revived monotonic cursor", err)
 						}
 					}

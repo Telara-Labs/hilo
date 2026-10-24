@@ -15,6 +15,7 @@ import (
 )
 
 type directory struct {
+	path    string
 	fd      int
 	private bool
 }
@@ -35,19 +36,21 @@ func alias(p string) string {
 // parent path, so a renamed parent cannot redirect publication outside the pin.
 func openDir(path string, create, private bool) (*directory, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return nil, ErrUnsafe
+		return nil, unsafePath("openDir", path, "absolute clean path required", nil)
 	}
 	if private && create {
-		if ipc.ValidateDir(path, true) != nil {
-			return nil, ErrUnsafe
+		if e := ipc.ValidateDir(path, true); e != nil {
+			return nil, unsafePath("openDir", path, "private directory validation", e)
 		}
 	}
 	fd, e := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if e != nil {
-		return nil, ErrUnsafe
+		return nil, unsafePath("open root", "/", "directory open required", e)
 	}
+	current := "/"
 	parts := strings.Split(strings.TrimPrefix(alias(path), "/"), "/")
 	for i, part := range parts {
+		current = filepath.Join(current, part)
 		n, e := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if errors.Is(e, unix.ENOENT) && create {
 			if e = unix.Mkdirat(fd, part, 0700); e == nil || errors.Is(e, unix.EEXIST) {
@@ -59,29 +62,33 @@ func openDir(path string, create, private bool) (*directory, error) {
 			if errors.Is(e, unix.ENOENT) {
 				return nil, os.ErrNotExist
 			}
-			return nil, ErrUnsafe
+			return nil, unsafePath("openat directory", current, "no symlink; directory open/create required", e)
 		}
 		fd = n
 		var st unix.Stat_t
-		if unix.Fstat(fd, &st) != nil || (st.Uid != uint32(os.Geteuid()) && st.Uid != 0) || (st.Mode&0022 != 0 && st.Mode&unix.S_ISVTX == 0) || (private && i == len(parts)-1 && (st.Uid != uint32(os.Geteuid()) || st.Mode&0777 != 0700)) {
+		if e := unix.Fstat(fd, &st); e != nil {
 			unix.Close(fd)
-			return nil, ErrUnsafe
+			return nil, unsafePath("fstat directory", current, "metadata required", e)
+		}
+		if e := clientStat(&st, current, true, private && i == len(parts)-1); e != nil {
+			unix.Close(fd)
+			return nil, e
 		}
 	}
 	if private {
 		if e := ipc.ValidateDir(path, false); e != nil {
 			unix.Close(fd)
-			return nil, ErrUnsafe
+			return nil, unsafePath("openDir", path, "private directory validation", e)
 		}
 	}
-	return &directory{fd: fd, private: private}, nil
+	return &directory{path: path, fd: fd, private: private}, nil
 }
 func validName(n string) bool {
 	return n != "" && n != "." && n != ".." && !strings.ContainsAny(n, "/\\:\x00")
 }
 func (d *directory) file(name string, flags int) (*os.File, error) {
 	if !validName(name) {
-		return nil, ErrUnsafe
+		return nil, unsafePath("openat file", filepath.Join(d.path, name), "single filename required", nil)
 	}
 	var n int
 	var e error
@@ -100,12 +107,16 @@ func (d *directory) file(name string, flags int) (*os.File, error) {
 		if errors.Is(e, unix.EEXIST) {
 			return nil, os.ErrExist
 		}
-		return nil, ErrUnsafe
+		return nil, unsafePath("openat file", filepath.Join(d.path, name), "no symlink; file open required", e)
 	}
 	var st unix.Stat_t
-	if unix.Fstat(n, &st) != nil || st.Uid != uint32(os.Geteuid()) || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1 || st.Mode&0022 != 0 || (d.private && st.Mode&0777 != 0600) {
+	if e := unix.Fstat(n, &st); e != nil {
 		unix.Close(n)
-		return nil, ErrUnsafe
+		return nil, unsafePath("fstat file", filepath.Join(d.path, name), "metadata required", e)
+	}
+	if e := clientStat(&st, filepath.Join(d.path, name), false, d.private); e != nil {
+		unix.Close(n)
+		return nil, e
 	}
 	return os.NewFile(uintptr(n), name), nil
 }
@@ -117,7 +128,7 @@ func (d *directory) read(name string, max int64) ([]byte, error) {
 	defer f.Close()
 	b, e := io.ReadAll(io.LimitReader(f, max+1))
 	if e != nil || int64(len(b)) > max {
-		return nil, ErrUnsafe
+		return nil, unsafePath("read", filepath.Join(d.path, name), "read must succeed within size limit", e)
 	}
 	return b, nil
 }
@@ -158,7 +169,7 @@ func (d *directory) lock() (func(), error) {
 }
 func (d *directory) remove(name string) error {
 	if !validName(name) {
-		return ErrUnsafe
+		return unsafePath("unlinkat", filepath.Join(d.path, name), "single filename required", nil)
 	}
 	return unix.Unlinkat(d.fd, name, 0)
 }

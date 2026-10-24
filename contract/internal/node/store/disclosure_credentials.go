@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosuretext"
 	"github.com/Telara-Labs/telara-memory/contract/jcs"
@@ -142,7 +143,7 @@ func (s *Store) credential(ctx context.Context, id string) (*credentialState, er
 	return c, nil
 }
 func (e *DisclosureEngine) client(ctx context.Context, h ClientHandle) (*credentialState, error) {
-	if h.engine != e || e.closed || h.connection == "" || e.closedClients[h.connection] {
+	if h.engine != e || e.closed || h.connection == "" || e.clients[h.connection] == nil {
 		return nil, failure("unauthorized")
 	}
 	if err := e.checkAuthority(ctx); err != nil {
@@ -186,10 +187,18 @@ func (e *DisclosureEngine) Authenticate(ctx context.Context, p CredentialProof) 
 		if err != nil {
 			return err
 		}
+		if len(e.clients) >= 4096 {
+			return failure("connection_limit")
+		}
+		id = strings.ReplaceAll(id, "-", "")
 		h = ClientHandle{e, c.id, id, c.epoch}
+		e.clients[id] = &liveClient{rpc: map[string]string{}}
 		return nil
 	})
 	if err != nil {
+		e.store.mu.Lock()
+		delete(e.clients, h.connection)
+		e.store.mu.Unlock()
 		return ClientHandle{}, err
 	}
 	return h, nil
@@ -546,6 +555,7 @@ func (e *DisclosureEngine) Resolve(ctx context.Context, h ClientHandle, input Id
 		if key == "" {
 			kind = "connection"
 			key = h.connection
+			e.clients[h.connection].ephemeral = true
 		}
 		var id string
 		var g, ev int64
@@ -568,6 +578,7 @@ func (e *DisclosureEngine) Resolve(ctx context.Context, h ClientHandle, input Id
 		if err != nil {
 			return err
 		}
+		id = "sc1:" + e.config.MachineID + ":" + strings.ReplaceAll(id, "-", "")
 		if _, err = e.store.conn.ExecContext(ctx, "INSERT INTO local_scope VALUES(?,?,?,?,?,?,1,0,'unknown','','')", id, e.config.OwnerGenesis, e.config.MachineID, h.credential, kind, key); err != nil {
 			return failure("storage_error")
 		}

@@ -284,7 +284,7 @@ func TestRuntimeSuppressionPreventsMissingPathReadAndNoReseal(t *testing.T) {
 		t.Fatal("missing committed chunk")
 	}
 	lid, _ := record.ControlLID(record.KindErasure, f.c.OwnerGenesis, strings.Repeat("b", 32))
-	control, err := record.Build(record.Header{Type: record.KindErasure, LID: lid, Author: record.Author{KeyID: f.c.OwnerGenesis, MachineID: f.c.MachineID}, At: time.Now().UnixMilli(), Prov: record.ProvUser, Red: record.Redact{Profile: record.ProfileLocal}}, &record.ErasureBody{Selectors: record.Selectors{IDs: []string{chunkID}}, Reason: "user_request"}, bytes.Repeat([]byte{52}, 32))
+	control, err := record.Build(record.Header{Type: record.KindErasure, LID: lid, Author: record.Author{KeyID: f.c.OwnerGenesis, MachineID: f.c.MachineID}, At: time.Now().UnixMilli(), Prov: record.ProvUser, Red: record.Redact{Profile: record.ProfileLocal}}, &record.ErasureBody{EventCoverage: "complete", Selectors: record.Selectors{IDs: []string{chunkID}, Events: runtimeErasureEvents(f.c.OwnerGenesis, recordsBefore)}, Reason: "user_request"})
 	if err != nil {
 		t.Fatal(err)
 	}

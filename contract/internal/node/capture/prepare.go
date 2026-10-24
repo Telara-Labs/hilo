@@ -81,7 +81,10 @@ type preparedBatch struct {
 
 // localPolicy is an immutable, fixed local ruleset, not a caller-provided
 // redaction callback. Other profiles and tenant overlays are unsupported.
-type localPolicy struct{ selected bool }
+type localPolicy struct {
+	selected bool
+	overlay  localpolicy.Overlay
+}
 
 func selectLocalPolicy(profile string, tenantOverlay bool) (localPolicy, error) {
 	if profile != "local" || tenantOverlay {
@@ -89,8 +92,8 @@ func selectLocalPolicy(profile string, tenantOverlay bool) (localPolicy, error) 
 	}
 	return localPolicy{selected: true}, nil
 }
-func (localPolicy) text(s string) string           { return localpolicy.Text(s) }
-func (localPolicy) argument(name, s string) string { return localpolicy.Argument(name, s) }
+func (p localPolicy) text(s string) string           { return p.overlay.Text(s) }
+func (p localPolicy) argument(name, s string) string { return p.overlay.Argument(name, s) }
 
 type fullFieldRules interface {
 	text(string) string

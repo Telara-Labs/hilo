@@ -10,13 +10,31 @@ import (
 	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcp"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/shim"
 )
 
-func existingOpener(context.Context) (daemon.Backend, error) { return mcp.New(nil, nil), nil }
+// Installed key custody and per-client proofs must be supplied by an installed
+// RuntimeProvider. Until one exists, Open reports the explicit authority gap and
+// leaves memory unavailable. Client and transport hints never fill that gap.
+func existingOpener(data string, provider mcp.RuntimeProvider) daemon.Opener {
+	return func(ctx context.Context) (daemon.Backend, error) {
+		installed := provider
+		if installed == nil {
+			installed = mcp.InstalledRuntimeProvider{Provider: disclosure.InstalledProvider{Dir: data}}
+		}
+		backend, err := mcp.Open(ctx, data, installed)
+		if err != nil && err.Error() == "runtime_authority_unavailable" {
+			// Keep doctor/lifecycle reachable with the explicit unavailable diagnostic.
+			// No vault or peer-verifier fallback may manufacture installed authority.
+			return mcp.Open(ctx, data, nil)
+		}
+		return backend, err
+	}
+}
 
 func runService(ctx context.Context, args []string, out io.Writer, in io.Reader) error {
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
@@ -76,7 +94,7 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 		if err != nil {
 			return err
 		}
-		err = daemon.Run(ctx, daemon.Config{Paths: p, Open: existingOpener, Verify: func() error {
+		err = daemon.Run(ctx, daemon.Config{Paths: p, Open: existingOpener(p.Data, nil), Verify: func() error {
 			current, err := install.VerifyRunning(*installDir)
 			if err != nil {
 				return err
@@ -98,7 +116,7 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 			return errors.New("invalid_paths")
 		}
 		if args[0] == "daemon" {
-			err = daemon.Run(ctx, daemon.Config{Paths: p, Open: existingOpener})
+			err = daemon.Run(ctx, daemon.Config{Paths: p, Open: existingOpener(p.Data, nil)})
 		} else {
 			err = shim.Run(ctx, in, out, shim.Config{Paths: p, Start: func() error { return shim.Spawn(p) }})
 		}

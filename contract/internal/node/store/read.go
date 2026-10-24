@@ -39,7 +39,7 @@ func (s *Store) Snapshot(ctx context.Context, q ReadRequest) (Snapshot, error) {
 			e.HeaderJCS = append([]byte(nil), x.rec.HeaderJCS...)
 			e.Sigs = append([]record.Signature(nil), x.sigs...)
 			e.AdvisoryID = x.rec.ID
-			if x.state == string(invalidate.Live) && x.sigStatus == sig.StatusVerified {
+			if x.state == string(invalidate.Live) && x.sigStatus == sig.StatusVerified && d.policyReadAllowed(x) {
 				e.BodyJCS = append([]byte(nil), x.rec.BodyJCS...)
 			}
 			if x.rec.Header.Subj.TaskID != "" {

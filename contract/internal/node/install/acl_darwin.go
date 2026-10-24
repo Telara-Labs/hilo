@@ -2,6 +2,7 @@ package install
 
 import (
 	"encoding/binary"
+	"fmt"
 	"golang.org/x/sys/unix"
 	"unsafe"
 )
@@ -11,7 +12,7 @@ func checkACL(fd int, private bool) error {
 	var b [4096]byte
 	_, _, e := unix.Syscall6(unix.SYS_FGETATTRLIST, uintptr(fd), uintptr(unsafe.Pointer(&attrs)), uintptr(unsafe.Pointer(&b[0])), uintptr(len(b)), 0, 0)
 	if e != 0 {
-		return ErrUnsafe
+		return unsafePath("fgetattrlist", fmt.Sprintf("fd=%d", fd), "ACL metadata query required", e)
 	}
 	return darwinACL(b[:], private)
 }
@@ -20,7 +21,7 @@ func checkACL(fd int, private bool) error {
 // are safe; unknown grants, inherited mutation and private read grants refuse.
 func darwinACL(b []byte, private bool) error {
 	if len(b) < 12 {
-		return ErrUnsafe
+		return unsafePath("darwinACL", "ACL", "ACL header truncated", nil)
 	}
 	size := int(binary.LittleEndian.Uint32(b[:4]))
 	off := int(int32(binary.LittleEndian.Uint32(b[4:8]))) + 4
@@ -29,21 +30,21 @@ func darwinACL(b []byte, private bool) error {
 		if size >= 12 && size <= len(b) && length == 0 {
 			return nil
 		}
-		return ErrUnsafe
+		return unsafePath("darwinACL", "ACL", "ACL size invalid", nil)
 	}
 	if off < 12 || length < 44 || off > size-length {
-		return ErrUnsafe
+		return unsafePath("darwinACL", "ACL", "ACL reference out of bounds", nil)
 	}
 	x := b[off : off+length]
 	if binary.LittleEndian.Uint32(x[:4]) != 0x012cc16d {
-		return ErrUnsafe
+		return unsafePath("darwinACL", "ACL", "ACL magic invalid", nil)
 	}
 	count := binary.LittleEndian.Uint32(x[36:40])
 	if count == 0xffffffff {
 		return nil
 	}
 	if count > 128 || 44+int(count)*24 > len(x) {
-		return ErrUnsafe
+		return unsafePath("darwinACL", "ACL", "ACL entry count out of bounds", nil)
 	}
 	for i := 0; i < int(count); i++ {
 		entry := x[44+i*24 : 44+(i+1)*24]
@@ -56,7 +57,7 @@ func darwinACL(b []byte, private bool) error {
 		// newly created install files, so it is not exempted here.
 		const mutation = 0x4 | 0x10 | 0x20 | 0x40 | 0x100 | 0x400 | 0x1000 | 0x2000 | 1<<21 | 1<<23 | 1<<25 | 1<<26
 		if flags&0xf != 1 || private || rights&mutation != 0 {
-			return ErrUnsafe
+			return unsafePath("darwinACL", "ACL", "ACL grants forbidden access or has unsupported entry type", nil)
 		}
 	}
 	return nil

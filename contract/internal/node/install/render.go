@@ -27,7 +27,7 @@ func systemdQuote(s string) string {
 // possible without mistaking cross-compilation for platform runtime evidence.
 func Definition(platform string, r Record) ([]byte, error) {
 	if !labelPattern.MatchString(r.Label) || !cleanValue(r.Executable) || !cleanValue(r.Dir) {
-		return nil, ErrUnsafe
+		return nil, unsafePath("Definition", r.Dir, "valid label and control-free executable/install paths required", nil)
 	}
 	args := []string{"managed-daemon", "--install-dir", r.Dir}
 	switch platform {
@@ -47,7 +47,7 @@ func Definition(platform string, r Record) ([]byte, error) {
 		return []byte("[Unit]\nDescription=Local memory node\nStartLimitIntervalSec=180\nStartLimitBurst=3\n\n[Service]\nType=exec\nExecStart=" + strings.Join(command, " ") + "\nRestart=on-failure\nRestartSec=30\nUMask=0077\nTimeoutStopSec=infinity\n\n[Install]\nWantedBy=default.target\n"), nil
 	case "windows":
 		if !cleanValue(r.UserID) {
-			return nil, ErrUnsafe
+			return nil, unsafePath("Definition", r.UserID, "control-free user identity required", nil)
 		}
 		// InteractiveToken + LeastPrivilege and a specific SID prohibit elevated
 		// or other-user logon. Windows command line quoting is separate from XML.

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
@@ -149,6 +150,14 @@ func (p *Pipeline) capture(ctx context.Context, unit Unit, prepare preparationSt
 		return empty, hold("unknown_root")
 	}
 	policy, _ := selectLocalPolicy("local", false)
+	policyID, tenant, err := p.store.CapturePolicy(ctx)
+	if err != nil {
+		return refused(storeFailure(err))
+	}
+	policy.overlay, err = localpolicy.TenantOverlay(tenant)
+	if err != nil {
+		return refused(hold("policy_unavailable"))
+	}
 	c := preparationConfig{root: root.AbsPath, home: p.config.Home, owner: p.config.OwnerGenesis, machine: p.config.MachineID, enabled: true, policy: policy}
 	// Derive keys from the validated UUID filename before any source read.
 	u := unitLocator{client: root.Client, relative: unit.RelativePath, source: strings.Repeat("0", 64), session: "sk1:" + strings.Repeat("0", 64)}
@@ -209,7 +218,7 @@ func (p *Pipeline) capture(ctx context.Context, unit Unit, prepare preparationSt
 	for i, e := range events {
 		ids[i] = e.ID
 	}
-	request := store.CaptureRequest{Occurrence: query, AuthorKeyID: p.keys.keyID, ExpectedVersion: inspection.Progress.Version, Reader: record.SourceRef{Reader: root.Client, ReaderVersion: runtimeReaderVersion}, RulesetFingerprint: p.ruleset.Fingerprint(), EventIDs: ids, Range: store.CaptureRange{First: 0, LastExclusive: int64(len(events))}}
+	request := store.CaptureRequest{PolicyID: policyID, Occurrence: query, AuthorKeyID: p.keys.keyID, ExpectedVersion: inspection.Progress.Version, Reader: record.SourceRef{Reader: root.Client, ReaderVersion: runtimeReaderVersion}, RulesetFingerprint: p.ruleset.Fingerprint(), EventIDs: ids, Range: store.CaptureRange{First: 0, LastExclusive: int64(len(events))}}
 	if ctx.Err() != nil {
 		return empty, hold("cancelled")
 	}

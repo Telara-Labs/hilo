@@ -4,8 +4,6 @@ package disclosuretext
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"math"
@@ -48,6 +46,8 @@ type Arguments struct {
 	TaskTree                                                                                                       []Step
 	TokenEstimate                                                                                                  *int64
 	IncludeCompleted                                                                                               bool
+	IncludeContent                                                                                                 bool
+	RecordKind                                                                                                     record.Kind
 	Limit                                                                                                          int
 }
 
@@ -128,7 +128,16 @@ func DecodeCommand(tool string, raw []byte) (Command, error) {
 }
 
 func NormalizeCommand(c Command, budget ByteBudget, schemaID, fingerprint string) (NormalizedCommand, error) {
+	return NormalizeTenantCommand(c, budget, schemaID, fingerprint, nil)
+}
+
+// NormalizeTenantCommand applies the verified policy before bounds and sealing.
+func NormalizeTenantCommand(c Command, budget ByteBudget, schemaID, fingerprint string, tenant *record.PolicyBody) (NormalizedCommand, error) {
 	var out NormalizedCommand
+	overlay, err := localpolicy.TenantOverlay(tenant)
+	if err != nil {
+		return out, fail("local_policy_unavailable")
+	}
 	if CurrentSchema(c.tool) == "" || schemaID != CurrentSchema(c.tool) {
 		return out, fail("op_schema_unavailable")
 	}
@@ -156,7 +165,7 @@ func NormalizeCommand(c Command, budget ByteBudget, schemaID, fingerprint string
 		"local.pause_task":      "task_id resume_context progress_notes handoff_hint token_estimate",
 		"local.complete_task":   "task_id final_summary changes_made token_estimate",
 		"local.resume_task":     "task_id", "local.list_tasks": "include_completed include_receipts limit mode query",
-		"local.lookup_record": "record_id max_neighbors", "local.lexical_search": "query limit resource_types include_history",
+		"local.lookup_record": "record_id record_kind include_content max_neighbors", "local.lexical_search": "query limit resource_types include_history",
 		"local.next_page": "cursor_id",
 	}
 	allowed := map[string]bool{}
@@ -170,6 +179,24 @@ func NormalizeCommand(c Command, budget ByteBudget, schemaID, fingerprint string
 	}
 	a := Arguments{}
 	canon := map[string]any{"budget_unit": "utf8-bytes", "max_bytes": budget.MaxBytes}
+	work := &WorkBudget{}
+	redact := func(k, s string) (string, error) {
+		s = overlay.Argument(k, overlay.Text(s))
+		if tenant == nil {
+			return s, nil
+		}
+		v, _, err := NormalizePolicyValue(s, work)
+		if err != nil {
+			return "", err
+		}
+		redacted := overlay.Argument(k, overlay.Text(v))
+		if redacted != v {
+			// Preserve ordinary Unicode argument identity. Only a policy hit
+			// constructed by display normalization needs a sanitized replacement.
+			return redacted, nil
+		}
+		return s, nil
+	}
 	text := func(k string, max int, required bool) (string, error) {
 		v, ok := m[k]
 		if !ok {
@@ -182,7 +209,11 @@ func NormalizeCommand(c Command, budget ByteBudget, schemaID, fingerprint string
 		if json.Unmarshal(v, &s) != nil || bytes.Equal(v, []byte("null")) {
 			return "", fail("invalid_arguments")
 		}
-		s = localpolicy.Argument(k, localpolicy.Text(s))
+		var err error
+		s, err = redact(k, s)
+		if err != nil {
+			return "", err
+		}
 		if len(s) > max {
 			return "", fail("argument_limit")
 		}
@@ -206,7 +237,11 @@ func NormalizeCommand(c Command, budget ByteBudget, schemaID, fingerprint string
 			if json.Unmarshal(element, &s) != nil || bytes.Equal(element, []byte("null")) {
 				return nil, fail("invalid_arguments")
 			}
-			ss[i] = localpolicy.Argument(k, localpolicy.Text(s))
+			var err error
+			ss[i], err = redact(k, s)
+			if err != nil {
+				return nil, err
+			}
 			if len(ss[i]) > max {
 				return nil, fail("argument_limit")
 			}
@@ -280,7 +315,6 @@ func NormalizeCommand(c Command, budget ByteBudget, schemaID, fingerprint string
 		if e = setList("file_paths", &a.FilePaths, 64, 1000); e != nil {
 			return out, e
 		}
-		canon["name"] = nil
 		if _, ok := m["name"]; ok {
 			s, e := text("name", MaxEnvelope, false)
 			if e != nil {
@@ -337,7 +371,11 @@ func NormalizeCommand(c Command, budget ByteBudget, schemaID, fingerprint string
 				if json.Unmarshal(stepRaw, &entry.Step) != nil || json.Unmarshal(statusRaw, &entry.Status) != nil {
 					return out, fail("invalid_arguments")
 				}
-				entry.Step = localpolicy.Argument("step", localpolicy.Text(entry.Step))
+				var err error
+				entry.Step, err = redact("step", entry.Step)
+				if err != nil {
+					return out, err
+				}
 				if len(entry.Step) > 1000 {
 					return out, fail("argument_limit")
 				}
@@ -359,7 +397,6 @@ func NormalizeCommand(c Command, budget ByteBudget, schemaID, fingerprint string
 			return out, e
 		}
 	case "local.complete_task":
-		canon["final_summary"] = nil
 		if _, ok := m["final_summary"]; ok {
 			s, e := text("final_summary", 16384, false)
 			if e != nil {
@@ -414,6 +451,24 @@ func NormalizeCommand(c Command, budget ByteBudget, schemaID, fingerprint string
 			return out, e
 		}
 		canon["record_id"] = a.RecordID
+		if raw, ok := m["record_kind"]; ok {
+			var kind string
+			if json.Unmarshal(raw, &kind) != nil || !record.Kind(kind).Known() || record.Kind(kind).IsControl() {
+				return out, fail("unsupported_filter")
+			}
+			a.RecordKind = record.Kind(kind)
+			canon["record_kind"] = kind
+		}
+		// Preserve the preexisting local lookup's full projection by default.
+		// Public get_context must explicitly select its metadata-only default.
+		a.IncludeContent = true
+		if _, ok := m["include_content"]; ok {
+			a.IncludeContent, e = boolean("include_content")
+			if e != nil {
+				return out, e
+			}
+		}
+		canon["include_content"] = a.IncludeContent
 		n, e := integer("max_neighbors", 0, 0, 0, false)
 		if e != nil {
 			return out, fail("unsupported_argument")
@@ -475,8 +530,9 @@ func NormalizeCommand(c Command, budget ByteBudget, schemaID, fingerprint string
 	if len(b) > MaxEnvelope {
 		return out, fail("argument_limit")
 	}
-	hash := sha256.Sum256(b)
-	return NormalizedCommand{c.tool, schemaID, fingerprint, hex.EncodeToString(hash[:]), b, a, budget}, nil
+	// Content comparators belong only to a live signed CallBody's erasable
+	// key. Normalization must never manufacture a standalone prose digest.
+	return NormalizedCommand{c.tool, schemaID, fingerprint, "", b, a, budget}, nil
 }
 
 // exactInteger validates the ORIGINAL JSON number as an exact decimal before

@@ -1,12 +1,7 @@
 package record
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
-
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
 )
 
 // LID constructors. Each returns the 64-hex logical id.
@@ -160,20 +155,11 @@ func ExpectedLID(h *Header, body any, owner string) (lid string, ok bool) {
 	return "", false
 }
 
-// SaltKeySize is the size of the device salt key.
+// SaltKeySize is retained only to identify retired device-key callers.
 const SaltKeySize = 32
 
-// Salt returns base64url(HMAC-SHA256(key, JCS(["mnc1-salt", type, lid,
-// body_jcs_without_salt]))[:16]) without padding.
+// Salt refuses the retired deterministic-content construction. New authoring
+// uses Build's internal independent randomness; committed retries copy seals.
 func Salt(key []byte, k Kind, lid string, bodyJCSWithoutSalt []byte) (string, error) {
-	if len(key) != SaltKeySize {
-		return "", fmt.Errorf("salt: device salt key must be %d bytes", SaltKeySize)
-	}
-	msg, err := jcs.StringArray("mnc1-salt", string(k), lid, string(bodyJCSWithoutSalt))
-	if err != nil {
-		return "", err
-	}
-	mac := hmac.New(sha256.New, key)
-	mac.Write(msg)
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16]), nil
+	return "", fmt.Errorf("deterministic salt authoring is unsupported")
 }

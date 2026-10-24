@@ -41,7 +41,7 @@ func policyRecord(t *testing.T, signer ed25519.PrivateKey, b record.PolicyBody) 
 	t.Helper()
 	h := record.Header{Type: record.KindPolicy, LID: record.PolicyLID(b.Tenant), Author: record.Author{KeyID: sig.KeyID(pub(signer))},
 		At: b.IssuedAt, Prov: record.ProvUser, Red: record.Redact{Profile: record.ProfileLocal}}
-	r, err := record.Build(h, &b, nil)
+	r, err := record.Build(h, &b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestClockAndFreshness(t *testing.T) {
 		t.Fatal(f)
 	}
 	// a fresh hosted Date above the floor clears it; T follows the anchor
-	clk2.ObserveDate(floor+10, 1000, t0)
+	observeTestDate(clk2, floor+10, 1000, t0)
 	if clk2.Rollback() {
 		t.Fatal("fresh date must clear rollback")
 	}
@@ -145,7 +145,7 @@ func TestClockAndFreshness(t *testing.T) {
 	// a Date below the floor does not clear it
 	clk3 := RestoreClock(floor)
 	clk3.Now(t0, 0)
-	clk3.ObserveDate(floor-1, 0, t0)
+	observeTestDate(clk3, floor-1000, 0, t0)
 	if !clk3.Rollback() {
 		t.Fatal("stale date cleared rollback")
 	}
@@ -175,6 +175,8 @@ func TestEffects(t *testing.T) {
 		t.Fatalf("invalid: %+v", e)
 	}
 	b.Kill = record.PolicyKill{Sync: true, WithdrawPulled: true}
+	b.Seq = 2
+	c.Offer(&Policy{ID: "p2", Body: &b})
 	if e := EffectsOf(c, Fresh); e.DataPush || e.DataPull || !e.CancelOutbox || !e.WithdrawPulled || !e.ControlRefresh {
 		t.Fatalf("kill: %+v", e)
 	}
@@ -202,7 +204,7 @@ func TestAuthenticatedAnchorAcknowledgesPriorWallRegression(t *testing.T) {
 	if c.Now(900, 0) != 1000 || !c.Rollback() {
 		t.Fatal("rollback not detected")
 	}
-	c.ObserveDateAt(1100, 10, 900)
+	observeTestDate(c, 1100, 10, 900)
 	if got := c.Now(900, 20); got != 1110 || c.Rollback() {
 		t.Fatalf("same behind-floor wall must recover: %d %v", got, c.Rollback())
 	}
@@ -215,12 +217,16 @@ func TestAuthenticatedAnchorAcknowledgesPriorWallRegression(t *testing.T) {
 	if got := c.Now(899, 50); got < 1130 || !c.Rollback() {
 		t.Fatal("new backward wall step must fail closed")
 	}
-	c.ObserveDateAt(1000, 60, 899)
+	observeTestDate(c, 1, 60, 899)
 	if !c.Rollback() {
 		t.Fatal("stale date must not recover")
 	}
-	c.ObserveDateAt(1200, 70, 899)
+	observeTestDate(c, 1200, 70, 899)
 	if c.Rollback() || c.Now(899, 80) != 1210 {
 		t.Fatal("new authenticated date recovers")
 	}
+}
+
+func observeTestDate(c *Clock, date, mono, wall int64) error {
+	return c.ObserveAnchor(DateObservation{Date: date, RequestStartMono: mono, ReceiptMono: mono, ReceiptWall: wall, Authenticated: true, ConfiguredEndpoint: true, BoundLiveResponse: true, NoStore: true, DateCount: 1})
 }

@@ -32,7 +32,7 @@ func parse(in SignedRecord) (*record.Record, []record.Signature, error) {
 		return nil, nil, failure("invalid_record")
 	}
 	h := r.Header
-	if h.Pol != "" || h.Red.Profile != record.ProfileLocal || h.Prov == record.ProvGateway || h.Type == record.KindPolicy || h.Type == record.KindWithdrawal {
+	if h.Red.Profile != record.ProfileLocal || h.Prov == record.ProvGateway || h.Type == record.KindWithdrawal {
 		return nil, nil, failure("unsupported_context")
 	}
 	if h.Type.IsControl() {
@@ -55,6 +55,9 @@ func (s *Store) Append(ctx context.Context, in SignedRecord) (AdmissionResult, e
 	r, signatures, err := parse(in)
 	if err != nil {
 		return AdmissionResult{}, err
+	}
+	if r.Header.Type == record.KindPolicy {
+		return s.OfferTenantPolicy(ctx, in)
 	}
 	var result AdmissionResult
 	err = s.write(ctx, func() error {
@@ -81,9 +84,6 @@ func (s *Store) Append(ctx context.Context, in SignedRecord) (AdmissionResult, e
 		if err != nil {
 			return err
 		}
-		if d.blocked && !r.Header.Type.IsControl() {
-			return ownerBlocked()
-		}
 		if old := d.byID[r.ID]; old != nil {
 			a, _ := jcs.MarshalRecord(old.sigs)
 			b, _ := jcs.MarshalRecord(signatures)
@@ -102,6 +102,11 @@ func (s *Store) Append(ctx context.Context, in SignedRecord) (AdmissionResult, e
 		x, err := s.prepareNew(d, r, signatures)
 		if err != nil {
 			return err
+		}
+		// Pending coverage admits restrictive verified late-body facts only.
+		// A new ordinary live/held record cannot bypass owner unavailability.
+		if d.blocked && !r.Header.Type.IsControl() && x.state != "invalidated" {
+			return ownerBlocked()
 		}
 		if err = s.persistPrepared(ctx, d, []*stored{x}); err != nil {
 			return err
@@ -165,10 +170,8 @@ func (s *Store) insertMaterial(ctx context.Context, x *stored) error {
 			return failure("storage_error")
 		}
 	}
-	for _, e := range x.events {
-		if _, err = s.conn.ExecContext(ctx, "INSERT OR IGNORE INTO item_event VALUES(?,?)", r.ID, e); err != nil {
-			return failure("storage_error")
-		}
+	if err = s.persistEventMembership(ctx, x); err != nil {
+		return err
 	}
 	for _, e := range x.recalls {
 		if _, err = s.conn.ExecContext(ctx, "INSERT OR IGNORE INTO item_recall VALUES(?,?,?)", r.ID, e.Seq, e.ID); err != nil {
@@ -177,6 +180,23 @@ func (s *Store) insertMaterial(ctx context.Context, x *stored) error {
 	}
 	for _, p := range r.Header.Links.Supersedes {
 		if _, err = s.conn.ExecContext(ctx, "INSERT OR IGNORE INTO supersession VALUES(?,?,?,?,?)", x.owner, string(r.Header.Type), r.Header.LID, r.ID, p); err != nil {
+			return failure("storage_error")
+		}
+	}
+	return nil
+}
+
+// Persist the exact membership and its completeness proof together, before any
+// body purge. Rebuild may learn these facts for an EXISTING session when a late
+// chunk arrives, so insertion of the new record alone is insufficient.
+func (s *Store) persistEventMembership(ctx context.Context, x *stored) error {
+	for _, e := range x.events {
+		if _, err := s.conn.ExecContext(ctx, "INSERT OR IGNORE INTO item_event VALUES(?,?)", x.rec.ID, e); err != nil {
+			return failure("storage_error")
+		}
+	}
+	if x.membershipComplete {
+		if _, err := s.conn.ExecContext(ctx, "INSERT INTO event_membership VALUES(?,?) ON CONFLICT(id) DO UPDATE SET event_count=excluded.event_count", x.rec.ID, len(x.events)); err != nil {
 			return failure("storage_error")
 		}
 	}
@@ -277,6 +297,9 @@ func (s *Store) enrichBody(ctx context.Context, d *databaseState, x *stored, r *
 	if d.generation == math.MaxInt64 {
 		return AdmissionResult{}, failure("ordinal_limit")
 	}
+	if err := s.verifyCandidate(d, r, x.sigs, x.seq); err != nil {
+		return AdmissionResult{}, err
+	}
 	res := sig.VerifyRecord(r, x.sigs, d.kr.State(), sig.Context{Route: record.RouteLocal, AdmittedSeq: x.seq})
 	if res.Status != sig.StatusVerified || res.Owner != x.owner || r.Header.Author.MachineID != s.opts.LocalMachineID {
 		return AdmissionResult{}, failure("unauthorized_record")
@@ -373,6 +396,12 @@ func (s *Store) persistPrepared(ctx context.Context, d *databaseState, added []*
 // verifyCandidate is shared by ordinary admission and producer verification,
 // including a full candidate whose identity is already retained in SQL.
 func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures []record.Signature, sequence int64) error {
+	if err := d.tenant.validateBody(r); err != nil {
+		return err
+	}
+	if r.Header.Type == record.KindCall && r.Body != nil && record.ValidateCommitmentDependencies(r, knownCallRoots(d, r)) != nil {
+		return failure("commitment_dependencies")
+	}
 	st := d.kr.State()
 	if r.Header.Type == record.KindKeyOp {
 		if d.authorityEpoch == math.MaxInt64 {

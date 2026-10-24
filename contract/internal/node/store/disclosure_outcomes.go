@@ -33,6 +33,9 @@ type operationOutcome struct {
 	includeCompleted                                                                                                bool
 	queryRequired                                                                                                   bool
 	query                                                                                                           string
+	lookup                                                                                                          bool
+	includeContent                                                                                                  bool
+	recordKind                                                                                                      record.Kind
 }
 type countSnapshot struct {
 	id, state, reason, scopeKey                                         string
@@ -62,6 +65,12 @@ func (s *Store) loadOutcome(ctx context.Context, credential, op string) (*operat
 		o.total = ptr64(total.Int64)
 	}
 	o.isError = isError != 0
+	err = s.conn.QueryRowContext(ctx, "SELECT record_kind,include_content FROM outcome_lookup WHERE owner=? AND credential=? AND op=?", o.owner, credential, op).Scan(&o.recordKind, &o.includeContent)
+	if err == nil {
+		o.lookup = true
+	} else if err != sql.ErrNoRows {
+		return nil, failure("storage_error")
+	}
 	rows, err := s.conn.QueryContext(ctx, "SELECT role,required,record_owner,id,task,presentation FROM outcome_member WHERE owner=? AND credential=? AND op=? ORDER BY ordinal", o.owner, credential, op)
 	if err != nil {
 		return nil, failure("storage_error")
@@ -159,6 +168,11 @@ func (s *Store) persistOutcome(ctx context.Context, o *operationOutcome) error {
 	_, err := s.conn.ExecContext(ctx, "INSERT INTO operation VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", o.owner, o.credential, o.op, o.tool, o.argsHash, o.callRef, o.callID, o.schema, o.ruleset, o.builder, "outcome/1", o.kind, o.renderer, "lexical-subset/1", o.selected, nullInt(o.total), o.result, boolInt(o.isError), o.createdSeq, o.scope, o.grantEpoch, o.scopeGeneration, o.evidence, o.dbGeneration, o.budget)
 	if err != nil {
 		return failure("storage_error")
+	}
+	if o.lookup {
+		if _, err = s.conn.ExecContext(ctx, "INSERT INTO outcome_lookup VALUES(?,?,?,?,?)", o.owner, o.credential, o.op, string(o.recordKind), boolInt(o.includeContent)); err != nil {
+			return failure("storage_error")
+		}
 	}
 	for i, m := range o.members {
 		if _, err = s.conn.ExecContext(ctx, "INSERT INTO outcome_member VALUES(?,?,?,?,?,?,?,?,?,?)", o.owner, o.credential, o.op, i, m.role, boolInt(m.required), m.owner, m.id, m.task, m.mode); err != nil {
@@ -265,6 +279,9 @@ func currentHeads(d *databaseState) map[string]bool {
 }
 func readPermitted(d *databaseState, c *credentialState, sc scopeState, x *stored) bool {
 	if d.blocked || x == nil || x.owner == "" || !available(x) || !c.channels[S] || x.rec.Header.Type.IsControl() {
+		return false
+	}
+	if !d.policyReadAllowed(x) {
 		return false
 	}
 	if c.readKind == "all-local" {
@@ -417,8 +434,9 @@ func (e *DisclosureEngine) selectRead(ctx context.Context, d *databaseState, c *
 	head := currentHeads(d)
 	switch n.Tool {
 	case "local.lookup_record":
+		o.lookup, o.includeContent, o.recordKind = true, a.IncludeContent, a.RecordKind
 		x := d.byID[a.RecordID]
-		if !readPermitted(d, c, sc, x) {
+		if !readPermitted(d, c, sc, x) || a.RecordKind != "" && x.rec.Header.Type != a.RecordKind {
 			o.kind = "error_result"
 			o.renderer = "error_v1"
 			o.result = "not_found"

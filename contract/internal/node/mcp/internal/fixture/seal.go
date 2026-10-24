@@ -1,4 +1,4 @@
-package mcp
+package fixture
 
 import (
 	"bytes"
@@ -104,6 +104,9 @@ func (s *Sealer) Mutation(call Call, m Mutation, at int64, heads []string) (Seal
 				}
 			}
 		}
+		if len(anchors.Files)+len(anchors.Commits)+len(anchors.Refs) == 0 {
+			anchors = nil
+		}
 		body = &record.TaskBody{Name: boundText(stringValue(f, "name"), 100), Goal: stringValue(f, "goal"), Anchors: anchors, Status: "active"}
 		lid = record.TaskLID(s.owner, m.TaskID)
 	case "checkpoint":
@@ -175,18 +178,29 @@ func (s *Sealer) Receipt(call Call, ref, task string, res Result, at int64) (Sea
 	if scope == "" {
 		scope = record.H("unidentified-call", ref)
 	}
-	body := &record.CallBody{CallRef: ref, ScopeID: scope, Tool: call.Tool, ArgsHash: call.ArgsHash, ResultHash: record.BodyDigest(clean), TaskID: task, Outcome: outcome}
+	scope = "sc1:" + s.machine + ":" + record.H("fixture-scope", scope)[:32]
+	body := &record.CallBody{CallRef: ref, ScopeID: scope, Tool: call.Tool, TaskID: task, Outcome: outcome, CommitmentDeps: []string{}}
+	if res.IsError {
+		body.Err = "unavailable"
+	}
+	_ = clean
 	return s.build(call, task, record.KindCall, record.ProvMCPExplicit, record.CallLID(ref), body, at, nil, call.RedactionFindings)
 }
 func (s *Sealer) build(call Call, task string, kind record.Kind, prov record.Prov, lid string, body any, at int64, heads []string, findings int) (Sealed, error) {
 	h := record.Header{Type: kind, LID: lid, At: at, Author: record.Author{MachineID: s.machine, KeyID: s.keyID}, Prov: prov, Subj: record.Subject{TaskID: task, RepoID: call.Access.RepoID, SessionKey: call.Access.SessionKey, Client: &record.ClientRef{ID: call.Access.Client}}, Op: call.Op, Red: record.Redact{Profile: record.ProfileLocal, Epoch: s.rules.Epoch, Fingerprint: s.rules.Fingerprint(), Findings: findings}, Trust: record.Trust{Coverage: "incomplete", Taint: []string{"taint-unknown"}}, Links: record.Links{Supersedes: append([]string(nil), heads...)}}
-	r, e := record.Build(h, body, s.salt[:])
+	var r *record.Record
+	var e error
+	if cb, ok := body.(*record.CallBody); ok {
+		r, e = record.BuildCall(h, *cb, nil, nil)
+	} else {
+		r, e = record.Build(h, body)
+	}
 	if e != nil {
-		return Sealed{}, errors.New("seal_unavailable")
+		return Sealed{}, e
 	}
 	signature, e := sig.SignRecord(ed25519.PrivateKey(s.private[:]), r.ID)
 	if e != nil {
-		return Sealed{}, errors.New("seal_unavailable")
+		return Sealed{}, e
 	}
 	return Sealed{r.HeaderJCS, r.BodyJCS, []record.Signature{signature}, r.ID}, nil
 }

@@ -1,6 +1,7 @@
 package record
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/hex"
@@ -170,8 +171,14 @@ func EventID(sessionKey, eventKind string, a Anchor) (string, error) {
 var callRefEnc = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // NewCallRef returns "m1." + 10 lowercase base32 characters (RFC 4648
-// alphabet) carrying 50 random bits read from r.
-func NewCallRef(r io.Reader) (string, error) {
+// alphabet) carrying 50 random bits from the internal CSPRNG.
+func NewCallRef(legacyEntropy ...io.Reader) (string, error) {
+	if len(legacyEntropy) != 0 {
+		return "", fmt.Errorf("caller entropy forbidden")
+	}
+	return newCallRef(rand.Reader)
+}
+func newCallRef(r io.Reader) (string, error) {
 	var b [7]byte // 56 bits read; the low 6 are dropped
 	if _, err := io.ReadFull(r, b[:]); err != nil {
 		return "", err
@@ -181,72 +188,35 @@ func NewCallRef(r io.Reader) (string, error) {
 	return "m1." + s[:10], nil
 }
 
-// OpID returns H("op", scope_id, request_identity, tool, args_hash).
+// OpID refuses the retired content-hash operation construction.
 func OpID(scopeID, requestIdentity, tool, argsHash string) (string, error) {
-	if scopeID == "" || requestIdentity == "" || tool == "" || !IsHex64(argsHash) {
-		return "", fmt.Errorf("op id: scope, request identity, tool and args hash are required")
-	}
-	return HE("op", scopeID, requestIdentity, tool, argsHash)
+	return "", fmt.Errorf("content-derived operation identities forbidden")
 }
 
-var callerOpIDRe = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+var callerOpIDRe = regexp.MustCompile(`^op1:[0-9a-f]{32}$`)
 
-// ValidCallerOpID reports whether s is an acceptable caller-supplied
-// _meta["com.telara/op-id"].
 func ValidCallerOpID(s string) bool { return callerOpIDRe.MatchString(s) }
 
-// SuppliedOpID uses authenticated installed credential identity, independent of
-// scope and reconnect. Bind tool and redacted args on first use in replay.Cache.
-func SuppliedOpID(installedCredentialID, suppliedID string) (string, error) {
-	if installedCredentialID == "" || !ValidCallerOpID(suppliedID) {
-		return "", fmt.Errorf("invalid supplied operation identity")
-	}
-	return HE("op-supplied", installedCredentialID, suppliedID)
+// SuppliedOpID cannot establish issuance from syntax. Use OperationTokens.Resolve
+// against the durable credential-bound receiver ledger instead.
+func SuppliedOpID(credential, token string) (string, error) {
+	return "", fmt.Errorf("node issuance ledger required")
 }
 
-// FallbackOpID follows the exact five-part fallback hash; reconnect may duplicate.
-func FallbackOpID(scopeID, connectionID string, rpcID []byte, tool, argsHash string) (string, error) {
-	if scopeID == "" || connectionID == "" || tool == "" || !IsHex64(argsHash) {
-		return "", fmt.Errorf("invalid fallback operation identity")
+// FallbackOpID accepts only receiver-minted opaque protocol identities. The RPC
+// argument is a receiver token, never the wire id or a hash of content/wire bytes.
+func FallbackOpID(credential, scopeID, connectionID, requestToken, tool string) (string, error) {
+	parts := strings.Split(scopeID, ":")
+	if credential == "" || len(parts) != 3 || !ValidScopeID(scopeID, parts[1]) || !IsKeyID(connectionID) || !IsKeyID(requestToken) || !ValidReceiptTool(tool) {
+		return "", fmt.Errorf("invalid fallback identities")
 	}
-	canonical, err := jcs.Canonicalize(rpcID)
-	if err != nil {
-		return "", err
-	}
-	if _, err := RequestIdentityRPC(connectionID, canonical); err != nil {
-		return "", err
-	}
-	return HE("op", scopeID, connectionID, string(canonical), tool, argsHash)
+	return HE("op", credential, scopeID, connectionID, requestToken, tool)
 }
-
-// RequestIdentityMeta is the request identity of a call that carries a
-// caller-supplied op id.
 func RequestIdentityMeta(opID string) (string, error) {
-	if !ValidCallerOpID(opID) {
-		return "", fmt.Errorf("op id %q is not 1-128 chars of [A-Za-z0-9._:-]", opID)
-	}
-	return "meta:" + opID, nil
+	return "", fmt.Errorf("node issuance ledger required")
 }
-
-// RequestIdentityRPC is the request identity of a call identified by its
-// connection and its JSON-RPC id. rpcID is the raw JSON of the id (a string or
-// a number); it is canonicalized so that equal ids give equal identities.
 func RequestIdentityRPC(connectionID string, rpcID []byte) (string, error) {
-	if connectionID == "" {
-		return "", fmt.Errorf("request identity: connection id is required")
-	}
-	c, err := jcs.Canonicalize(rpcID)
-	if err != nil {
-		return "", err
-	}
-	if len(c) == 0 || (c[0] != '"' && c[0] != '-' && (c[0] < '0' || c[0] > '9')) {
-		return "", fmt.Errorf("request identity: JSON-RPC id must be a string or a number")
-	}
-	b, err := jcs.StringArray("rpc", connectionID, string(c))
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return "", fmt.Errorf("wire RPC identity is erasable connection state")
 }
 
 // Format checks shared by the package.

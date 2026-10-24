@@ -34,7 +34,7 @@ func checkACL(fd int, private bool) error {
 	if errors.Is(e, unix.ENODATA) || errors.Is(e, unix.ENOTSUP) {
 		return nil
 	}
-	return ErrUnsafe
+	return unsafePath("fgetxattr", fmt.Sprintf("fd=%d", fd), "ACL system.posix_acl_access must be absent or unsupported", e)
 }
 func processIdentity(pid int) (string, error) {
 	b, e := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
@@ -46,14 +46,14 @@ func processIdentity(pid int) (string, error) {
 	}
 	end := strings.LastIndexByte(string(b), ')')
 	if end < 0 {
-		return "", ErrUnsafe
+		return "", unsafePath("processIdentity", fmt.Sprintf("/proc/%d/stat", pid), "process name terminator missing", nil)
 	}
 	fields := strings.Fields(string(b[end+1:]))
 	if len(fields) < 20 {
-		return "", ErrUnsafe
+		return "", unsafePath("processIdentity", fmt.Sprintf("/proc/%d/stat", pid), "start-time field missing", nil)
 	}
 	if _, e := strconv.ParseUint(fields[19], 10, 64); e != nil {
-		return "", ErrUnsafe
+		return "", unsafePath("processIdentity", fmt.Sprintf("/proc/%d/stat", pid), "start-time must be unsigned decimal", e)
 	}
 	boot, e := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	if e != nil {

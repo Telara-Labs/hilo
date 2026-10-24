@@ -99,6 +99,7 @@ func Trust(in TrustInput) EffectiveTrust {
 }
 
 type ReadContext struct {
+	PolicyRequired, PolicyAllowed                                                                                bool // current authenticated tenant policy, independent of client grant
 	Channel                                                                                                      string
 	Kind                                                                                                         record.Kind
 	Verified, Quarantined, Held, Invalidated, SameRepo, OwnGenesis, HookEnabled, GrantAllowed, InstructionShaped bool
@@ -106,7 +107,7 @@ type ReadContext struct {
 }
 
 func Eligible(c ReadContext) bool {
-	if !c.GrantAllowed || c.Quarantined || c.Held || c.Invalidated {
+	if c.PolicyRequired && !c.PolicyAllowed || !c.GrantAllowed || c.Quarantined || c.Held || c.Invalidated {
 		return false
 	}
 	if c.Channel == "S" {

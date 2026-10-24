@@ -46,7 +46,7 @@ func verify(path, digest string) (*Executable, error) {
 	}
 	f, release, e := openTrusted(path, false)
 	if e != nil {
-		return nil, ErrUnsafe
+		return nil, unsafePath("verify executable source", path, "trusted executable source required", e)
 	}
 	fail := func() (*Executable, error) { f.Close(); release(); return nil, ErrUnverified }
 	h := sha256.New()

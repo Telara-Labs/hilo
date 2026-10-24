@@ -411,6 +411,17 @@ func serve(parent context.Context, c net.Conn, backend Backend, life *lifecycle)
 		return
 	}
 	ctx = context.WithValue(ctx, connectionKey{}, hex.EncodeToString(token))
+	ctx = context.WithValue(ctx, peerPIDKey{}, pid)
+	retirement := &connectionClose{}
+	ctx = context.WithValue(ctx, closeKey{}, retirement)
+	// This defer runs after the calls.Wait defer below, including cancellation,
+	// normal EOF and shutdown. Backend implementations can retire adapter caches.
+	defer func() {
+		retirement.close()
+		if hook, ok := backend.(interface{ ConnectionClosed(string) }); ok {
+			hook.ConnectionClosed(ConnectionID(ctx))
+		}
+	}()
 	if ipc.WriteFrame(c, map[string]any{"t": "hello", "v": ipc.WireVersion, "connection_id": ConnectionID(ctx)}) != nil {
 		return
 	}

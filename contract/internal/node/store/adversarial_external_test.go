@@ -58,14 +58,15 @@ func TestRejectedControlExtensionsLeaveNoManagedBytes(t *testing.T) {
 			Type: kind, LID: lid, At: 1761150000001, Prov: record.ProvUser,
 			Author: record.Author{KeyID: sig.KeyID(pub), MachineID: machine},
 			Red:    record.Redact{Profile: record.ProfileLocal},
-		}, body, nil)
+		}, body)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return r
 	}
 	erasure := buildControl(record.KindErasure, &record.ErasureBody{
-		Selectors: record.Selectors{IDs: []string{absent}}, Reason: "user_request",
+		EventCoverage: "complete",
+		Selectors:     record.Selectors{IDs: []string{absent}}, Reason: "user_request",
 	})
 	retraction := buildControl(record.KindRetraction, &record.RetractionBody{
 		IDs: []string{absent}, Reason: "redaction_repair",
@@ -101,13 +102,14 @@ func TestRejectedControlExtensionsLeaveNoManagedBytes(t *testing.T) {
 				t.Fatal(err)
 			}
 			parsed, err := record.Parse(headerJCS, bodyJCS, "")
-			if err != nil {
-				t.Fatalf("fixture must cross pure parser %v", err)
+			if record.CodeOf(err) != record.CodeNonMinimalControl {
+				t.Fatalf("pure parser must reject unknown control fields %v", err)
 			}
+			parsed = &record.Record{ID: record.ContentID(headerJCS), Header: h, HeaderJCS: headerJCS, BodyJCS: bodyJCS}
 			in := extensionInput(t, parsed, key)
 			before := append([]byte(nil), in.BodyJCS...)
 			_, err = s.Append(ctx, in)
-			if store.Code(err) != "non_minimal_control" || strings.Contains(err.Error(), canary) {
+			if store.Code(err) != "invalid_record" || strings.Contains(err.Error(), canary) {
 				t.Fatalf("unexpected refusal %v", err)
 			}
 			if !bytes.Equal(before, in.BodyJCS) {
@@ -115,7 +117,7 @@ func TestRejectedControlExtensionsLeaveNoManagedBytes(t *testing.T) {
 			}
 			if tc.r.Header.Type != record.KindKeyOp {
 				_, err = s.ApplyControl(ctx, in)
-				if store.Code(err) != "non_minimal_control" {
+				if store.Code(err) != "invalid_record" {
 					t.Fatalf("control entry bypassed retention gate %v", err)
 				}
 			}

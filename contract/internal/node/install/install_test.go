@@ -169,23 +169,32 @@ func TestManagedEntryHelper(t *testing.T) {
 
 func TestRealPinnedLaunchAndRunningIdentity(t *testing.T) {
 	dir := testRoot(t)
-	source, e := os.Executable()
+	// The Go builder controls its work-directory modes and executable links.
+	// Stage our own running test image as a private fixture; production must still
+	// reject an untrusted original build path rather than rely on its provenance.
+	source := filepath.Join(dir, "running-source")
+	running, e := os.Executable()
 	if e != nil {
 		t.Fatal(e)
 	}
-	source, e = filepath.EvalSymlinks(source)
+	in, e := os.Open(running)
 	if e != nil {
 		t.Fatal(e)
 	}
-	f, e := os.Open(source)
+	defer in.Close()
+	out, e := os.OpenFile(source, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
 	if e != nil {
 		t.Fatal(e)
 	}
 	h := sha256.New()
-	if _, e = io.Copy(h, f); e != nil {
-		t.Fatal(e)
+	_, copyErr := io.Copy(io.MultiWriter(out, h), in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		t.Fatal(copyErr)
 	}
-	f.Close()
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
 	digest := hex.EncodeToString(h.Sum(nil))
 	r := Record{1, dir, dir, "dev.memory.running", runtime.GOOS, userID(), imagePath(dir, digest), digest, "fixture", filepath.Join(dir, "data"), filepath.Join(dir, "run")}
 	if e = copyImage(source, r); e != nil {

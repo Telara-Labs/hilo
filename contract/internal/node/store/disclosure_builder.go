@@ -2,8 +2,7 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/json"
 	"strings"
 
 	"github.com/Telara-Labs/telara-memory/contract/heads"
@@ -15,7 +14,13 @@ import (
 
 func (e *DisclosureEngine) buildRecord(d *databaseState, sc scopeState, o *operationOutcome, k record.Kind, lid string, body any, links record.Links, at int64) (*stored, error) {
 	h := record.Header{Type: k, LID: lid, At: at, Author: record.Author{MachineID: e.config.MachineID, KeyID: e.authority.keyID}, Prov: record.ProvMCPExplicit, Subj: record.Subject{TaskID: o.task}, Red: record.Redact{Profile: record.ProfileLocal, Epoch: e.ruleset.Epoch, Fingerprint: e.ruleset.Fingerprint()}, Trust: record.Trust{Coverage: "incomplete", Taint: []string{"taint-unknown"}}, Op: o.op, Links: links}
-	r, err := record.Build(h, body, e.authority.salt[:])
+	if d.tenant != nil {
+		if !d.tenant.sealAllowed("", h.Red.Epoch) {
+			return nil, failure("policy_violation")
+		}
+		h.Pol = d.tenant.chain.HighestID
+	}
+	r, err := record.Build(h, body)
 	if err != nil {
 		return nil, failure("builder_refused")
 	}
@@ -94,7 +99,7 @@ func (e *DisclosureEngine) prepareMutation(ctx context.Context, d *databaseState
 		case Checkpoint:
 			b := &record.CheckpointBody{Milestone: a.Milestone, NextSteps: a.NextSteps, KnowledgeRefs: append([]string(nil), a.KnowledgeRefs...)}
 			for _, step := range a.TaskTree {
-				b.TaskTree = append(b.TaskTree, record.Step{Title: step.Step, Status: step.Status})
+				b.TaskTree = append(b.TaskTree, record.Step{Title: step.Step, Status: wireStepStatus(step.Status)})
 			}
 			for _, id := range a.KnowledgeRefs {
 				if !readPermitted(d, c, sc, d.byID[id]) {
@@ -191,38 +196,87 @@ func (e *DisclosureEngine) persistBuilderFacts(ctx context.Context, d *databaseS
 	}
 	return nil
 }
-func logicalOutcomeHash(o *operationOutcome) (string, error) {
-	type member struct {
-		ID, Owner, Task, Role, Mode string
-		Required                    bool
-		Deps                        []string
-	}
-	var ms []member
+
+// This transient logical result is committed only under the original call key.
+// Its selected signed roots cover every result field and all comparison copies.
+func logicalOutcomeBytes(o *operationOutcome) ([]byte, error) {
+	ids := []string{}
 	for _, m := range o.members {
-		ms = append(ms, member{m.id, m.owner, m.task, m.role, m.mode, m.required, append([]string(nil), m.deps...)})
+		ids = append(ids, m.id)
 	}
-	var summary any
-	if c := o.count; c != nil {
-		summary = struct {
-			ID, State, Reason, Scope                                            string
-			Generation                                                          int64
-			Records, Total, Searchable, Excluded, Unclassified, RecordsExcluded *int64
-		}{c.id, c.state, c.reason, c.scopeKey, c.generation, c.records, c.total, c.searchable, c.excluded, c.unclassified, c.recordsExcluded}
-	}
-	raw, err := jcs.Marshal(struct {
-		Schema, Kind, Renderer, Retrieval, Task, Action, Result, Selection, Continuation string
-		Selected                                                                         int64
-		Total                                                                            *int64
-		IsError                                                                          bool
-		Start, End                                                                       int
-		UniverseKnown                                                                    bool
-		Members                                                                          []member
-		Warnings                                                                         []string
-		Summary                                                                          any
-	}{"outcome/1", o.kind, o.renderer, "lexical-subset/1", o.task, o.action, o.result, o.selection, o.cursor, o.selected, o.total, o.isError, o.start, o.end, o.universeKnown, ms, o.warnings, summary})
+	b, err := jcs.MarshalRecord(map[string]any{"schema": "outcome/2", "kind": o.kind, "task": o.task, "action": o.action, "result": o.result, "members": ids, "is_error": o.isError})
 	if err != nil {
-		return "", failure("outcome_unavailable")
+		return nil, failure("outcome_unavailable")
 	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
+	return b, nil
+}
+func wireStepStatus(status string) string {
+	if status == "done" {
+		return "completed"
+	}
+	return "active"
+}
+func (e *DisclosureEngine) buildCall(d *databaseState, sc scopeState, o *operationOutcome, body record.CallBody, args, result json.RawMessage, at int64) (*stored, error) {
+	if len(body.CommitmentDeps) > 128 {
+		return nil, failure("render_limit")
+	}
+	h := record.Header{Type: record.KindCall, LID: record.CallLID(body.CallRef), At: at, Author: record.Author{MachineID: e.config.MachineID, KeyID: e.authority.keyID}, Prov: record.ProvMCPExplicit, Subj: record.Subject{TaskID: o.task}, Red: record.Redact{Profile: record.ProfileLocal, Epoch: e.ruleset.Epoch, Fingerprint: e.ruleset.Fingerprint()}, Trust: record.Trust{Coverage: "incomplete", Taint: []string{"taint-unknown"}}, Op: o.op, Links: record.Links{DerivedFrom: body.CommitmentDeps}}
+	if d.tenant != nil {
+		h.Pol = d.tenant.chain.HighestID
+	}
+	r, err := record.BuildCall(h, body, args, result)
+	if err != nil {
+		return nil, failure("builder_refused")
+	}
+	sg, err := sig.SignRecord(e.authority.private[:], r.ID)
+	if err != nil {
+		return nil, failure("builder_refused")
+	}
+	repoState, repo := sc.repoState, sc.repo
+	if repoState != "known" {
+		repoState = "explicitly_unscoped"
+		repo = ""
+	}
+	d.attrs[r.ID] = attributionFact{owner: e.config.OwnerGenesis, machine: e.config.MachineID, scope: sc.id, kind: "fixed-mcp-builder", repoState: repoState, repo: repo}
+	return e.store.prepareNew(d, r, []record.Signature{sg})
+}
+func (e *DisclosureEngine) comparatorLive(d *databaseState, o *operationOutcome) bool {
+	x := d.byID[o.callID]
+	if !available(x) {
+		return false
+	}
+	b, ok := x.rec.Body.(*record.CallBody)
+	if !ok || b.ArgsHash == "" || b.Salt == "" {
+		return false
+	}
+	if record.ValidateCommitmentDependencies(x.rec, nil) != nil {
+		return false
+	}
+	_, err := dependencyClosure(d, x.rec.ID)
+	return err == nil
+}
+
+func (e *DisclosureEngine) comparatorPermitted(d *databaseState, c *credentialState, sc scopeState, o *operationOutcome) bool {
+	if !e.comparatorLive(d, o) {
+		return false
+	}
+	x := d.byID[o.callID]
+	if !d.policyReadAllowed(x) {
+		return false
+	}
+	// Authorization follows the signed commitment inputs. Later conservative
+	// exposure fences on the call itself are erasure ancestry (already checked
+	// by comparatorLive), not additional values in the committed args/result.
+	for _, root := range x.rec.Body.(*record.CallBody).CommitmentDeps {
+		deps, err := dependencyClosure(d, root)
+		if err != nil {
+			return false
+		}
+		for _, id := range deps {
+			if !readPermitted(d, c, sc, d.byID[id]) {
+				return false
+			}
+		}
+	}
+	return true
 }

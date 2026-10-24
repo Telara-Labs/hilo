@@ -1,6 +1,7 @@
 package sig
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/Telara-Labs/telara-memory/contract/record"
@@ -14,6 +15,7 @@ const (
 	StatusSignerRevoked SigStatus = "signer-revoked"
 	StatusUnsignedLocal SigStatus = "unsigned-local" // own record awaiting the key store; never pushed
 	StatusUnknownSigner SigStatus = "unknown-signer" // quarantined; retry after keyring sync, expire after 7 days
+	StatusRejected      SigStatus = "rejected"       // invalid recognized schema; discard raw bytes, never quarantine
 	StatusInvalid       SigStatus = "invalid"        // quarantined; never indexed, never rendered
 	StatusIgnored       SigStatus = "ignored"        // control kind over an unauthenticated route
 )
@@ -58,7 +60,11 @@ func VerifyRecord(r *record.Record, sigs []record.Signature, st *State, c Contex
 	}
 	parsed, err := record.Parse(r.HeaderJCS, r.BodyJCS, r.ID)
 	if err != nil {
-		return fail(StatusInvalid, "invalid canonical record")
+		var admission *record.Error
+		if errors.As(err, &admission) && admission.Quarantine {
+			return fail(StatusInvalid, "unsupported opaque record")
+		}
+		return fail(StatusRejected, "invalid canonical record")
 	}
 	r = parsed
 	c.RecordID = r.ID
@@ -106,6 +112,14 @@ func VerifyRecord(r *record.Record, sigs []record.Signature, st *State, c Contex
 	if k.Role != record.RoleDevice && h.Author.MachineID != "" {
 		res.Status, res.Reason = StatusInvalid, "a service or policy record names no machine"
 		return res
+	}
+	if erasure, ok := r.Body.(*record.ErasureBody); ok {
+		for _, event := range erasure.Selectors.Events {
+			if k.Role != record.RoleDevice || event.Owner != res.Owner {
+				res.Status, res.Reason = StatusInvalid, "event selector outside signer owner"
+				return res
+			}
+		}
 	}
 	if record.OwnerScoped(&h) {
 		lid, ok := record.ExpectedLID(&h, r.Body, res.Owner)

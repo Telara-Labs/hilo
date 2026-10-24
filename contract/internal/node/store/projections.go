@@ -8,9 +8,46 @@ import (
 	"strings"
 )
 
+// Policy authority changes suppress old projections in the SAME writer as the
+// new authority. Normal operations rebuild from currently permitted normalized
+// fields; stale passage/vector jobs must not survive until that later rebuild.
+func (s *Store) policyProjectionFence(ctx context.Context) error {
+	if err := s.clearSearch(ctx); err != nil {
+		return err
+	}
+	for _, table := range []string{"vector", "projection_job", "record_field_projection"} {
+		if _, err := s.conn.ExecContext(ctx, "DELETE FROM "+table); err != nil {
+			return failure("storage_error")
+		}
+	}
+	return s.bump(ctx)
+}
+
+func (s *Store) persistErasurePending(ctx context.Context, d *databaseState) error {
+	if _, err := s.conn.ExecContext(ctx, "DELETE FROM erasure_pending"); err != nil {
+		return failure("storage_error")
+	}
+	for _, x := range d.records {
+		if x.rec.Header.Type == record.KindErasure && !d.eval.ControlComplete[x.rec.ID] {
+			if _, err := s.conn.ExecContext(ctx, "INSERT INTO erasure_pending VALUES(?,?)", x.rec.ID, x.owner); err != nil {
+				return failure("storage_error")
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Store) persistState(ctx context.Context, d *databaseState) error {
+	if err := s.persistErasurePending(ctx, d); err != nil {
+		return err
+	}
 	if err := d.prepareRelations(); err != nil {
 		return err
+	}
+	for _, x := range d.records {
+		if err := s.persistEventMembership(ctx, x); err != nil {
+			return err
+		}
 	}
 	if err := s.persistLineage(ctx, d); err != nil {
 		return err
@@ -48,6 +85,10 @@ func (s *Store) persistState(ctx context.Context, d *databaseState) error {
 			x.generation = d.generation
 		}
 		if x.state == string(invalidate.Invalidated) {
+			// Standalone comparator copies never outlive their signed call key.
+			if _, err := s.conn.ExecContext(ctx, "UPDATE operation SET args_hash='' WHERE call_id=?", x.rec.ID); err != nil {
+				return failure("storage_error")
+			}
 			if _, err := s.conn.ExecContext(ctx, "DELETE FROM outcome_query"); err != nil {
 				return failure("storage_error")
 			}
@@ -61,6 +102,9 @@ func (s *Store) persistState(ctx context.Context, d *databaseState) error {
 				return failure("storage_error")
 			}
 			x.rec = x.rec.WithoutBody()
+			if _, err := s.conn.ExecContext(ctx, "INSERT INTO scrub_job VALUES(?,?,'pending',0) ON CONFLICT(control) DO UPDATE SET target_generation=excluded.target_generation,state='pending'", x.rec.ID, d.generation); err != nil {
+				return failure("storage_error")
+			}
 			d.groups = nil
 			if _, err := s.conn.ExecContext(ctx, "DELETE FROM field_completeness WHERE id=?", x.rec.ID); err != nil {
 				return failure("storage_error")

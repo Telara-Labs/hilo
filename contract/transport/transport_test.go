@@ -73,25 +73,24 @@ func TestBundleCuts(t *testing.T) {
 	if ValidateBundleMode(gen, gen, "transfer", []string{"x25519"}) != nil {
 		t.Fatal("transfer refused")
 	}
-	root := BundleRecord{ID: "r", Selected: true, CompleteSigned: true, SelectorIdentity: true, Live: true}
-	leaf := root
-	leaf.ID = "l"
-	leaf.RecalledRoots = []string{"r"}
-	rs := map[string]BundleRecord{"r": root, "l": leaf}
-	if !BundleEligible("l", rs) {
+	root := bundleTestRecord(t, "root", nil)
+	leaf := bundleTestRecord(t, "leaf", []string{root.ID})
+	rs := map[string]BundleRecord{root.ID: root, leaf.ID: leaf}
+	if !BundleEligible(leaf.ID, rs) {
 		t.Fatal("complete closure refused")
 	}
 	root.Selected = false
-	rs["r"] = root
-	if BundleEligible("l", rs) {
+	rs[root.ID] = root
+	if BundleEligible(leaf.ID, rs) {
 		t.Fatal("unselected private root accepted")
 	}
 	root.Selected = true
 	root.Grants = []record.GrantRef{{Tenant: "t", Generation: 1}}
-	rs["r"] = root
-	if BundleEligible("l", rs) {
+	rs[root.ID] = root
+	if BundleEligible(leaf.ID, rs) {
 		t.Fatal("granted root accepted")
 	}
+
 }
 func TestHookIdentityOnly(t *testing.T) {
 	h := HookSignal{V: 3, At: 1, Client: "c", Event: "Stop", HookPID: 1, TranscriptPath: "/root/transcripts/a"}
@@ -160,7 +159,7 @@ func TestContractMajorGates(t *testing.T) {
 	if CheckHello(h, r) == nil {
 		t.Fatal("legacy hello accepted")
 	}
-	if CheckManifestVersion(Manifest{Bundle: "mnc/1"}) == nil || CheckManifestVersion(Manifest{Bundle: "mnc/2"}) != nil {
+	if CheckManifestVersion(Manifest{Bundle: "mnc/1"}) == nil || CheckManifestVersion(Manifest{Bundle: "mnc/3"}) != nil {
 		t.Fatal("bundle major gate")
 	}
 	if _, err := CheckEnvelope(record.Envelope{V: 1}, nil); err == nil {
@@ -196,11 +195,11 @@ func TestVersionGatesCannotOverrideSignedHeader(t *testing.T) {
 		t.Fatal("v2 envelope overrode legacy signed header")
 	}
 	future := chunk
-	future.V = 3
+	future.V = 4
 	if _, err = CheckEnvelope(future, nil); err == nil {
 		t.Fatal("future envelope accepted")
 	}
-	object["v"] = 3
+	object["v"] = 4
 	futureHeader, _ := jcs.MarshalRecord(object)
 	future = chunk
 	future.Header = base64.RawURLEncoding.EncodeToString(futureHeader)
@@ -209,7 +208,7 @@ func TestVersionGatesCannotOverrideSignedHeader(t *testing.T) {
 		t.Fatal("future signed header accepted")
 	}
 	h := Hello{DeviceID: "11111111-1111-4111-8111-111111111111", Contract: record.ContractVersion}
-	for _, version := range []string{"mnc/1.7", "mnc/3.0", ""} {
+	for _, version := range []string{"mnc/1.7", "mnc/2.0", "mnc/4.0", ""} {
 		if CheckHello(h, HelloReply{ContractMin: version, ServerTime: 1}) == nil {
 			t.Fatal("server hello gate bypass")
 		}
@@ -217,4 +216,14 @@ func TestVersionGatesCannotOverrideSignedHeader(t *testing.T) {
 			t.Fatal("bundle gate bypass")
 		}
 	}
+}
+
+func bundleTestRecord(t *testing.T, name string, deps []string) BundleRecord {
+	t.Helper()
+	h := record.Header{Type: record.KindTask, LID: record.H("task", name), Author: record.Author{MachineID: "6f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b", KeyID: "11111111111111111111111111111111"}, At: 1, Prov: record.ProvMCPExplicit, Op: record.H("op", name), Subj: record.Subject{TaskID: "11111111-1111-4111-8111-111111111111"}, Red: record.Redact{Profile: record.ProfileLocal}, Links: record.Links{DerivedFrom: deps}}
+	r, err := record.Build(h, &record.TaskBody{Name: name, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return BundleRecord{ID: r.ID, Record: r, CompleteSigned: true, SelectorIdentity: true, Selected: true, Live: true, Authorization: BundleAuthorization{ProvenanceKnown: true}}
 }

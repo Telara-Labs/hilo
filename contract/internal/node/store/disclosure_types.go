@@ -111,7 +111,6 @@ type DisclosureConfig struct {
 	MaxReplyBytes           int
 }
 type PreloadedDisclosureAuthority struct {
-	salt    [32]byte
 	private [64]byte
 	keyID   string
 	valid   bool
@@ -127,7 +126,6 @@ func PreloadDisclosureAuthority(salt []byte, private ed25519.PrivateKey) (Preloa
 	if !bytes.Equal(private, expected) {
 		return p, failure("key_material")
 	}
-	copy(p.salt[:], salt)
 	copy(p.private[:], private)
 	p.keyID = sig.KeyID(private.Public().(ed25519.PublicKey))
 	p.valid = true
@@ -135,7 +133,6 @@ func PreloadDisclosureAuthority(salt []byte, private ed25519.PrivateKey) (Preloa
 }
 func (p *PreloadedDisclosureAuthority) Clear() {
 	if p != nil {
-		clear(p.salt[:])
 		clear(p.private[:])
 		p.keyID = ""
 		p.valid = false
@@ -172,14 +169,14 @@ type ACK struct {
 type ACKReceipt struct{ Status string }
 type DisclosureAdministration struct{ engine *DisclosureEngine }
 type DisclosureEngine struct {
-	store         *Store
-	authority     PreloadedDisclosureAuthority
-	config        DisclosureConfig
-	instance, id  string
-	closed        bool
-	closedClients map[string]bool
-	deadlines     map[string]time.Time
-	ruleset       record.Ruleset
+	store        *Store
+	authority    PreloadedDisclosureAuthority
+	config       DisclosureConfig
+	instance, id string
+	closed       bool
+	clients      map[string]*liveClient
+	deadlines    map[string]time.Time
+	ruleset      record.Ruleset
 }
 
 func (e *DisclosureEngine) Close() error {
@@ -191,17 +188,28 @@ func (e *DisclosureEngine) Close() error {
 	e.closed = true
 	e.authority.Clear()
 	clear(e.deadlines)
+	clear(e.clients)
 	return nil
 }
 func (e *DisclosureEngine) CloseClient(h ClientHandle) {
 	if e == nil || e.store == nil {
 		return
 	}
-	e.store.mu.Lock()
-	defer e.store.mu.Unlock()
-	if h.engine == e {
-		e.closedClients[h.connection] = true
-	}
+	_ = e.store.write(context.Background(), func() error {
+		if h.engine != e {
+			return nil
+		}
+		delete(e.clients, h.connection)
+		_, err := e.store.conn.ExecContext(context.Background(), "DELETE FROM synthetic_compaction_signal WHERE scope IN (SELECT id FROM local_scope WHERE credential=? AND identity_kind='connection' AND handle_key=?)", h.credential, h.connection)
+		if err != nil {
+			return failure("storage_error")
+		}
+		_, err = e.store.conn.ExecContext(context.Background(), "DELETE FROM local_scope WHERE credential=? AND identity_kind='connection' AND handle_key=?", h.credential, h.connection)
+		if err != nil {
+			return failure("storage_error")
+		}
+		return nil
+	})
 }
 func (e *DisclosureEngine) Administration(ctx context.Context) (*DisclosureAdministration, error) {
 	if e == nil || e.store == nil {

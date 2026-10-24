@@ -1,6 +1,6 @@
 # Contract interpretation and remaining gates
 
-This module implements the pure parts of `mnc/2.0`. The earlier draft's open
+This module implements the pure parts of `mnc/3.0`. The earlier draft's open
 questions are resolved as follows.
 
 - Canonical encoding reuses the published strict TAP contract. A narrower gate
@@ -39,36 +39,50 @@ questions are resolved as follows.
   Pending copied or semantic ancestry remains ineligible for disclosure.
   Present export origins participate in pending traversal; absent origins are
   expected for metadata received without its private source.
-- Event revisions have a body-only salt derived from a fresh internal CSPRNG nonce
-  mixed with the existing device salt key. Only the salt is persisted in the erasable
-  event body; nonce/HMAC intermediates are discarded. Stored retries/repack copy the
-  exact prior seal. Private unexposed candidates may be rebuilt only after recovered
-  same-store transition history proves noncommit; unknown settlement and unavailable
-  committed bodies never permit resealing. The runtime must retain committed transition
-  facts after erasure and check them before stale-progress refusal or minting. Restore
-  reconciliation is a separate unimplemented gate. Equality witnesses and complete admitted presence facts retain
-  provenance, never salt/payload/hash witnesses. Active causal equality rebuilds from
-  identity by least fixed point, so losing parent support deactivates dependent aliases.
-  Every managed capture of an erased source occurrence is purged and recapture is
-  banned before sealing. Fresh restores lacking erased witnesses fail closed.
-- Header/envelope2, bundle mnc/2 and HELLO2.0 gates reject legacy artifacts. Existing
-  mnc1/sk1/ev1 hash/identity domains and mnc/v1 signature-format domains keep their
-  unchanged primitive versions; the signed header major cannot be overridden.
+- Every new data body, binding, call and policy configuration draws its own
+  independent internal CSPRNG16 secret. Every event draws a separate secret.
+  No content, LID, operation or device/master key derives these secrets. Retired
+  deterministic authoring entry points reject. Import/retry copies exact seals.
+  Adapters resolve committed/unknown/erased transition settlement BEFORE authoring.
+  Missing committed bodies never license resealing. Historical major2 artifacts
+  remain test evidence and are rejected by every major3 admission boundary.
+- Text.digest is event-keyed over full redacted text before truncation. Call
+  arguments/results use separate keyed domains under the call body's secret.
+  Call commitment_deps is required, exactly matches signed derived_from, and
+  includes all mutation/input/render roots. Missing ancestry blocks the entire
+  comparator, including recursive origin ancestry. Bodyless calls restore no key.
+  Comparator copies depend on the call id AND its complete signed dependency set.
+- Closed recursive schemas reject nulls, unknown members, wrong types, noncanonical
+  optional zero/empty objects and unbounded lists before retaining bodies/facts.
+  Controls have finite reasons only; policy credential literals are rejected.
+- Signed owner/session/event selectors enforce cross-device bans without the
+  issuer chunk. Omitted known membership or unknown selected-body membership keeps
+  owner data blocked until authenticated supplemental coverage completes.
+  Invalid late bodies must fail the complete parser/signature gates before the
+  adapter supplies membership facts. Physical scrub and durable ACK remain adapters.
+- Header/envelope3, bundle mnc/3 and HELLO3.0 independently reject legacy artifacts.
+  Identity mnc1/sk1/ev1 and signature-format mnc/v1 domains remain unchanged.
 - Event corrections use explicit causal revisions. Repacking does not order
   revisions, and conflicts prevent automatic coverage. Settled coverage is a
   verified gap-free prefix; a later missing page does not erase an earlier
   settled prefix. Observed taint is separate from recomputed uncertainty.
-- Trusted time receives wall and monotonic readings from the adapter. A fresh
-  authenticated Date requires its receipt-time wall baseline, acknowledges
-  prior rollback and advances without going below the persisted floor. A new
-  backward step latches rollback again. Equal policy sequences with different
-  IDs fail closed until a higher verified policy. Repo globs use `path.Match`;
-  malformed restrictive globs fail closed.
-- Supplied operation IDs use the authenticated installed-client credential
-  namespace across scope changes/reconnect. First tool and redacted argument
-  hash are bound permanently. Eligibility and render freshness are reevaluated
-  before replay; no mutation repeats. Confirmed-delivery dedup is generation
-  bound and separate from conservative exposure.
+- Trusted time consumes measured authenticated configured-origin live responses,
+  no-store, exactly one Date, Age absent/zero and a maximum30s monotonic RTT.
+  Date-only legacy calls fail closed. Replacement evaluates the old clock first,
+  accepts D<W only when D+999+RTT>=W without lowering W, and detects arithmetic or
+  wall/monotonic regressions. Persist Floor periodically and at shutdown.
+- One active tenant authority applies. Equal-highest verified sequence conflicts
+  latch tamper until a higher verified sequence; logout purges current config/salt
+  and keeps rollback/tamper facts. Absent push.max_profile means local and cannot
+  authorize PUSH or governed bundles. Both directions deny policy-governed full
+  bodies; metadata needs current applicable push-metadata authority and all gates.
+- Operation tokens come from receiver issuance state bound to an installed
+  credential. The pure ledger generates exactly8 fresh tokens per eligible
+  initialize, never more than128 unused; no partial issuance or caller entropy.
+  Atomic durable issuance/consumption and mutation settlement are adapter gates.
+  Syntax-only supplied-op helpers reject. Fallback uses opaque receiver request
+  tokens with no arguments or arbitrary wire RPC ids. Erased/keyless replay returns
+  one unavailable result before candidate tool/args comparisons, never a new key.
 - Hook v3 contains identity/path hints only. Every nonempty native/version/path
   or process argv0 hint requires a client-specific validator plus byte/control
   character bounds. Unknown fields are rejected with content-free diagnostics.
@@ -104,3 +118,18 @@ and nonce-bound client acknowledgements, and apply each page/mutation atomically
 remaining adapter requirements. `cmd/conformance` reports these as incomplete
 until the real adapter supplies the missing storage/transport proof. Pure
 success never certifies a deployed node or hosted service.
+
+## Major3 adoption boundary
+
+These are pure source/reference guarantees only. Node producers, SQLite schema,
+MCP initialization and receipt wiring, real managed bundles/age restore, hosted
+contract mirroring and encrypted Postgres admission require separate adoption.
+All tenant-derived read channels consume current policy eligibility independently
+of client grants; a tamper latch also blocks them after current config is purged.
+NewCallRef uses internal CSPRNG entropy and rejects caller readers.
+Calls passing a third legacy key argument to Build/ReviseEvent now fail closed,
+including nil. Salt, SuppliedOpID and raw RPC identity helpers reject. Use BuildCall
+for newly authored commitments and OperationTokens for verified supplied identities.
+Physical byte scrubbing in managed artifacts, durable token/transition recovery and
+migration of orphan major2 content verifiers remain UNVERIFIED here. Never silently
+relabel, rewrap, replay a mutation or relax a retained erasure ban during migration.

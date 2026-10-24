@@ -70,14 +70,14 @@ func newCaptureFixture(t *testing.T, text string) *captureFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ev, err := record.ReviseEvent(record.Event{ID: eventID, Seq: 0, Kind: "user_prompt", Prov: "transcript", Ruleset: golden.Epoch, Text: &record.Text{Body: text, Bytes: len(text)}}, nil, bytes.Repeat([]byte{9}, 32))
+	ev, err := record.ReviseEvent(record.Event{ID: eventID, Seq: 0, Kind: "user_prompt", Prov: "transcript", Ruleset: golden.Epoch, Text: &record.Text{Body: text, Bytes: len(text)}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reader := record.SourceRef{Reader: "claude-code", ReaderVersion: "native-jsonl-runtime.1"}
 	f.req = store.CaptureRequest{Occurrence: store.SourceOccurrence{Owner: opts.PinnedGenesisID, Source: source, SessionKey: session}, AuthorKeyID: opts.PinnedGenesisID, Reader: reader, RulesetFingerprint: golden.Fingerprint(), EventIDs: []string{eventID}, Range: store.CaptureRange{First: 0, LastExclusive: 1}}
 	build := func(kind record.Kind, lid string, body any, links record.Links) store.SignedRecord {
-		r, err := record.Build(record.Header{Type: kind, LID: lid, At: 1761150000001, Author: record.Author{KeyID: opts.PinnedGenesisID, MachineID: machine}, Prov: record.ProvTranscript, Subj: record.Subject{SessionKey: session, Source: source, Client: &record.ClientRef{ID: "claude-code", Surface: "cli"}}, Red: record.Redact{Profile: record.ProfileLocal, Epoch: golden.Epoch, Fingerprint: golden.Fingerprint()}, Links: links}, body, bytes.Repeat([]byte{8}, 32))
+		r, err := record.Build(record.Header{Type: kind, LID: lid, At: 1761150000001, Author: record.Author{KeyID: opts.PinnedGenesisID, MachineID: machine}, Prov: record.ProvTranscript, Subj: record.Subject{SessionKey: session, Source: source, Client: &record.ClientRef{ID: "claude-code", Surface: "cli"}}, Red: record.Redact{Profile: record.ProfileLocal, Epoch: golden.Epoch, Fingerprint: golden.Fingerprint()}, Links: links}, body)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,7 +159,7 @@ func TestCaptureLostAckReceiptSurvivesErasureWithoutProducer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := record.Build(record.Header{Type: record.KindErasure, LID: lid, At: 1761150000002, Prov: record.ProvUser, Author: record.Author{KeyID: f.opts.PinnedGenesisID, MachineID: f.opts.LocalMachineID}, Red: record.Redact{Profile: record.ProfileLocal}}, &record.ErasureBody{Selectors: record.Selectors{IDs: []string{f.chunk.AdvisoryID}}, Reason: "user_request"}, nil)
+	r, err := record.Build(record.Header{Type: record.KindErasure, LID: lid, At: 1761150000002, Prov: record.ProvUser, Author: record.Author{KeyID: f.opts.PinnedGenesisID, MachineID: f.opts.LocalMachineID}, Red: record.Redact{Profile: record.ProfileLocal}}, &record.ErasureBody{EventCoverage: "complete", Selectors: record.Selectors{IDs: []string{f.chunk.AdvisoryID}, Events: []record.EventSelector{{Owner: f.opts.PinnedGenesisID, SessionKey: f.req.Occurrence.SessionKey, EventID: f.req.EventIDs[0]}}}, Reason: "user_request"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestCaptureRefusesAnotherSourceCompetingForSessionPage(t *testing.T) {
 	e := body.Events[0]
 	e.ID, e.Revision, e.Salt = eventID, "", ""
 	e.Text = &record.Text{Body: canary, Bytes: len(canary)}
-	e, err = record.ReviseEvent(e, nil, bytes.Repeat([]byte{9}, 32))
+	e, err = record.ReviseEvent(e, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +369,8 @@ func TestCaptureRefusesAnotherSourceCompetingForSessionPage(t *testing.T) {
 	h := chunk.Header
 	h.Subj.Source = q.Occurrence.Source
 	h.LID = record.ChunkLID(q.Occurrence.SessionKey, f.opts.LocalMachineID, eventID)
-	newChunk, err := record.Build(h, body, bytes.Repeat([]byte{8}, 32))
+	body.Salt = ""
+	newChunk, err := record.Build(h, body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +382,8 @@ func TestCaptureRefusesAnotherSourceCompetingForSessionPage(t *testing.T) {
 	pageBody.Chunks = []string{newChunk.ID}
 	h = page.Header
 	h.Subj.Source = q.Occurrence.Source
-	newPage, err := record.Build(h, pageBody, bytes.Repeat([]byte{8}, 32))
+	pageBody.Salt = ""
+	newPage, err := record.Build(h, pageBody)
 	if err != nil {
 		t.Fatal(err)
 	}

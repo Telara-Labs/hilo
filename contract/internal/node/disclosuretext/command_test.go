@@ -28,12 +28,12 @@ func TestCompleteCommandCanonicalGolden(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	want := `{"budget_unit":"utf8-bytes","file_paths":[],"goal":"ship","max_bytes":4096,"name":null}`
+	want := `{"budget_unit":"utf8-bytes","file_paths":[],"goal":"ship","max_bytes":4096}`
 	if string(n.Canonical) != want || n.Args.Name != nil {
 		t.Fatalf("unexpected canonical args %s", n.Canonical)
 	}
 	x, e := normalized(t, "local.create_task", `{"file_paths":[],"goal":"ship","name":""}`)
-	if e != nil || x.Args.Name == nil || n.ArgsHash == x.ArgsHash {
+	if e != nil || x.Args.Name == nil || bytes.Equal(n.Canonical, x.Canonical) {
 		t.Fatal("missing and supplied empty name collapsed")
 	}
 	n, e = normalized(t, "local.list_tasks", `{}`)
@@ -41,7 +41,7 @@ func TestCompleteCommandCanonicalGolden(t *testing.T) {
 		t.Fatal("list defaults")
 	}
 	x, e = normalized(t, "local.list_tasks", `{"include_completed":false,"include_receipts":false,"limit":10,"mode":"summary","query":""}`)
-	if e != nil || n.ArgsHash != x.ArgsHash {
+	if e != nil || !bytes.Equal(n.Canonical, x.Canonical) {
 		t.Fatal("equivalent declared defaults differ")
 	}
 	n, e = normalized(t, "local.lexical_search", `{"query":""}`)

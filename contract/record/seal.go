@@ -10,7 +10,10 @@ import (
 // The caller clears raw parser buffers before persistence. This helper is not a
 // complete record sealing/signing pipeline and stores no source digest.
 func SealText(raw string, r Redactor, maxBytes int) Text {
-	full := r.Redact(raw)
+	return boundText(r.Redact(raw), maxBytes)
+}
+
+func boundText(full string, maxBytes int) Text {
 	cut := full
 	if maxBytes < 0 {
 		maxBytes = 0
@@ -21,7 +24,7 @@ func SealText(raw string, r Redactor, maxBytes int) Text {
 			cut = cut[:len(cut)-1]
 		}
 	}
-	return Text{Body: cut, Bytes: len(full), Truncated: cut != full, Digest: BodyDigest([]byte(full))}
+	return Text{Body: cut, Bytes: len(full), Truncated: cut != full}
 }
 
 // TaskMetadata copies only the declared source status, never inferred lifecycle.

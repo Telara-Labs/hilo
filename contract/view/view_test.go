@@ -8,7 +8,7 @@ import (
 
 func rev(t *testing.T, id string, seq int64, text string, parents ...string) record.Event {
 	t.Helper()
-	e, err := record.ReviseEvent(record.Event{ID: id, Seq: seq, Kind: "assistant_final", Text: &record.Text{Body: text}}, parents, []byte("12345678901234567890123456789012"))
+	e, err := record.ReviseEvent(record.Event{ID: id, Seq: seq, Kind: "assistant_final", Text: &record.Text{Body: text}}, parents)
 	if err != nil {
 		t.Fatal(err)
 	}

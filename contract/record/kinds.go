@@ -215,7 +215,7 @@ func MatrixAllows(role Role, p Prov, k Kind) bool {
 // salted reports whether a kind's body must carry a salt.
 func salted(k Kind) bool {
 	switch k {
-	case KindSession, KindChunk, KindConclusion, KindTask, KindCheckpoint, KindPause, KindDigest, KindRollup:
+	case KindSession, KindChunk, KindConclusion, KindTask, KindCheckpoint, KindPause, KindDigest, KindRollup, KindCall, KindBinding, KindPolicy:
 		return true
 	}
 	return false

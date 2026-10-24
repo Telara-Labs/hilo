@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosuretext"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/replay"
 	"github.com/Telara-Labs/telara-memory/contract/view"
@@ -230,6 +231,9 @@ func (e *DisclosureEngine) prepareRender(ctx context.Context, d *databaseState, 
 			}
 		}
 		fields := d.fields[m.id]
+		if o.lookup && !o.includeContent {
+			fields = nil
+		}
 		if m.mode == "fresh_projection" {
 			fields = freshFields(d, m.id)
 			if len(fields) == 0 {
@@ -265,6 +269,10 @@ func (e *DisclosureEngine) prepareRender(ctx context.Context, d *databaseState, 
 			return nil, failure("label_unavailable")
 		}
 		item := disclosuretext.RenderItem{LID: x.rec.Header.LID, ID: x.rec.ID, Labels: disclosuretext.Labels{Source: "local", Kind: string(x.rec.Header.Type), Signature: "verified", Coverage: trust.Coverage, Trust: strings.Join(trust.Effective(), ","), Evidence: "agent-declared"}}
+		item.TaskID = x.rec.Header.Subj.TaskID
+		if o.lookup && o.recordKind != "" && x.rec.Header.Type != o.recordKind {
+			return nil, failure("unavailable")
+		}
 		if m.mode == "quoted_source" {
 			unavailableFresh := false
 			possible := false
@@ -315,6 +323,14 @@ func (e *DisclosureEngine) prepareRender(ctx context.Context, d *databaseState, 
 		return nil, failure("render_limit")
 	}
 	if r.unavailable {
+		// An unavailable proposal cannot discard newly verified restrictive
+		// facts about already retained bodies. Settle only the minimal hold.
+		if lateErasureCause(d) != "" {
+			if _, err := e.store.effectDelta(ctx, d); err != nil {
+				return nil, e.store.refuseBulk(ctx, d, err)
+			}
+			return nil, e.store.refuseVerified(ctx, d, failure("privacy_hold_required"))
+		}
 		r.text = replay.Unavailable
 		return r, nil
 	}
@@ -385,7 +401,11 @@ func (e *DisclosureEngine) prepareRender(ctx context.Context, d *databaseState, 
 			r.warnings = appendUnique(r.warnings, "cursor_expired")
 		}
 	}
-	input := disclosuretext.RenderInput{CallRef: o.callRef, Nonce: r.nonce, Items: r.items, Budget: budget, EmptyDisplayCode: r.empty, Warnings: r.warnings, SelectionCount: ptr64(o.selected), SelectionAsOf: o.createdSeq, Continuation: r.continuation}
+	overlay, err := localpolicy.TenantOverlay(d.tenant.body())
+	if err != nil {
+		return nil, failure("policy_violation")
+	}
+	input := disclosuretext.RenderInput{Overlay: overlay, CallRef: o.callRef, Nonce: r.nonce, Items: r.items, Budget: budget, EmptyDisplayCode: r.empty, Warnings: r.warnings, SelectionCount: ptr64(o.selected), SelectionAsOf: o.createdSeq, Continuation: r.continuation}
 	if r.count != nil {
 		input.Counts = &disclosuretext.CountSummary{State: r.count.state, AsOfGeneration: r.count.generation, RecordUnits: r.count.records, TotalUnits: r.count.total, SearchableUnits: r.count.searchable, ExcludedUnits: r.count.excluded, UnclassifiedUnits: r.count.unclassified, RecordsWithExclusions: r.count.recordsExcluded}
 	}

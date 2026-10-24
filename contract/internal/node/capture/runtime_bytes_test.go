@@ -100,7 +100,13 @@ func TestRuntimeRedactionAndPhysicalErasureComponentBytes(t *testing.T) {
 					callSeen = true
 				}
 				addSeal(e.Salt)
-				payload, e := record.EventPayload(e)
+				// Partial text is never an equality witness in v3. This test-only
+				// preimage inventory still scans for accidental partial hashes.
+				partial := e
+				partial.Salt = ""
+				partial.Revision = ""
+				partial.Replaces = nil
+				payload, e := json.Marshal(partial)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -124,7 +130,7 @@ func TestRuntimeRedactionAndPhysicalErasureComponentBytes(t *testing.T) {
 			quoteCapturedChunks(t, f, chunks, retained)
 			inspectManagedBytes(t, f, nodeDir, forbidden, retained, true)
 			lid, _ := record.ControlLID(record.KindErasure, f.c.OwnerGenesis, strings.Repeat("c", 32))
-			control, e := record.Build(record.Header{Type: record.KindErasure, LID: lid, Author: record.Author{KeyID: f.c.OwnerGenesis, MachineID: f.c.MachineID}, At: time.Now().UnixMilli(), Prov: record.ProvUser, Red: record.Redact{Profile: record.ProfileLocal}}, &record.ErasureBody{Selectors: record.Selectors{IDs: chunks}, Reason: "user_request"}, bytes.Repeat([]byte{52}, 32))
+			control, e := record.Build(record.Header{Type: record.KindErasure, LID: lid, Author: record.Author{KeyID: f.c.OwnerGenesis, MachineID: f.c.MachineID}, At: time.Now().UnixMilli(), Prov: record.ProvUser, Red: record.Redact{Profile: record.ProfileLocal}}, &record.ErasureBody{EventCoverage: "complete", Selectors: record.Selectors{IDs: chunks, Events: runtimeErasureEvents(f.c.OwnerGenesis, records)}, Reason: "user_request"})
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -195,7 +201,7 @@ func quoteCapturedChunks(t *testing.T, f *runtimeFixture, chunks []string, needl
 		if err != nil {
 			t.Fatal(err)
 		}
-		reply, err := client.Execute(ctx, scope, disclosure.CallIdentity{SuppliedOpID: "quote-captured-" + id, JSONRPCID: json.RawMessage(`1`)}, command, disclosure.ByteBudget{MaxBytes: 16384})
+		reply, err := client.Execute(ctx, scope, disclosure.CallIdentity{JSONRPCID: json.RawMessage(`"` + id + `"`)}, command, disclosure.ByteBudget{MaxBytes: 16384})
 		if err != nil {
 			t.Fatal(err)
 		}

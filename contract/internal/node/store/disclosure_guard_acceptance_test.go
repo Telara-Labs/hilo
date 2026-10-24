@@ -248,7 +248,7 @@ func TestDisclosureNewUnreleasedExposureWorkLimitCannotFreezeCompleteOldState(t 
 	}
 	k.seedPending(inputs)
 	command := commandFor(t, "local.lookup_record", map[string]any{"record_id": inputs[0].AdvisoryID})
-	r, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "work-bound-replay"}, command, ByteBudget{MaxBytes: 4096})
+	r, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("work-bound-replay")}, command, ByteBudget{MaxBytes: 4096})
 	if err != nil {
 		t.Fatal("initial authorized lookup", err)
 	}
@@ -281,7 +281,7 @@ func TestDisclosureNewUnreleasedExposureWorkLimitCannotFreezeCompleteOldState(t 
 	}
 	// Replay adds no signed Call or first-admission ordinal. Direct Release
 	// takes the independent delivery path through the same proposal boundary.
-	out, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "work-bound-replay"}, command, ByteBudget{MaxBytes: 4096})
+	out, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("work-bound-replay")}, command, ByteBudget{MaxBytes: 4096})
 	check("Execute replay", err, out.engine != nil)
 	delivery, err := k.e.Release(ctx, k.h, r)
 	check("Release", err, delivery.Text() != "")

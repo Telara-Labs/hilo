@@ -1,4 +1,4 @@
-package mcp
+package fixture
 
 import (
 	"github.com/Telara-Labs/telara-memory/contract/record"

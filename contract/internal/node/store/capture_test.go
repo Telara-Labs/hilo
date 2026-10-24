@@ -42,7 +42,7 @@ func producerFor(w *world, text string) *producerFixture {
 func newProducer(t *testing.T, text string) *producerFixture { return producerFor(newWorld(t), text) }
 func (f *producerFixture) event(id string, seq int64, text string, parents ...string) record.Event {
 	f.w.t.Helper()
-	e, err := record.ReviseEvent(record.Event{ID: id, Seq: seq, Kind: "user_prompt", Prov: "transcript", Text: &record.Text{Body: text, Bytes: len(text)}}, parents, bytes.Repeat([]byte{17}, 32))
+	e, err := record.ReviseEvent(record.Event{ID: id, Seq: seq, Kind: "user_prompt", Prov: "transcript", Text: &record.Text{Body: text, Bytes: len(text)}}, parents)
 	if err != nil {
 		f.w.t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func (f *producerFixture) event(id string, seq int64, text string, parents ...st
 func (f *producerFixture) build(k record.Kind, lid string, b any, links record.Links) SignedRecord {
 	f.w.t.Helper()
 	f.w.at++
-	r, e := record.Build(record.Header{Type: k, LID: lid, At: f.w.at, Author: record.Author{MachineID: testMachine, KeyID: f.q.AuthorKeyID}, Prov: record.ProvTranscript, Subj: record.Subject{Source: f.q.Occurrence.Source, SessionKey: f.q.Occurrence.SessionKey, Client: &record.ClientRef{ID: f.q.Reader.Reader, Surface: "cli"}}, Red: record.Redact{Profile: record.ProfileLocal, Fingerprint: f.q.RulesetFingerprint}, Links: links}, b, bytes.Repeat([]byte{18}, 32))
+	r, e := record.Build(record.Header{Type: k, LID: lid, At: f.w.at, Author: record.Author{MachineID: testMachine, KeyID: f.q.AuthorKeyID}, Prov: record.ProvTranscript, Subj: record.Subject{Source: f.q.Occurrence.Source, SessionKey: f.q.Occurrence.SessionKey, Client: &record.ClientRef{ID: f.q.Reader.Reader, Surface: "cli"}}, Red: record.Redact{Profile: record.ProfileLocal, Fingerprint: f.q.RulesetFingerprint}, Links: links}, b)
 	if e != nil {
 		f.w.t.Fatal(e)
 	}

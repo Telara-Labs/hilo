@@ -23,7 +23,7 @@ func item(name string, deps ...string) Item {
 }
 
 func erase(name string, sel record.Selectors) Control {
-	return Control{ID: hx("ctl-" + name), Kind: record.KindErasure, Owner: G, Erasure: &record.ErasureBody{Selectors: sel, Reason: "user_request"}}
+	return Control{ID: hx("ctl-" + name), Kind: record.KindErasure, Owner: G, Erasure: &record.ErasureBody{EventCoverage: "complete", Selectors: sel, Reason: "user_request"}}
 }
 
 type event struct {
@@ -92,7 +92,7 @@ func TestErasureChainEveryOrder(t *testing.T) {
 }
 
 func TestErasureSelectorKinds(t *testing.T) {
-	base := Item{Kind: record.KindChunk, Prov: record.ProvTranscript, Owner: G, Route: record.RouteLocal,
+	base := Item{Kind: record.KindChunk, EventMembershipComplete: true, Prov: record.ProvTranscript, Owner: G, Route: record.RouteLocal,
 		TaskID: "3f2a91c0-1111-4222-8333-444455556666", SessionKey: "sk1:" + hx("s"), Source: hx("src")}
 	cases := map[string]record.Selectors{
 		"ids":      {IDs: []string{hx("r")}},
@@ -197,7 +197,7 @@ func TestAuthority(t *testing.T) {
 	}
 	// TSK erasure may target gateway records of its tenant only (with grant)
 	m.Apply(Control{ID: hx("e1"), Kind: record.KindErasure, Owner: "tenant:acme",
-		Erasure: &record.ErasureBody{Selectors: record.Selectors{IDs: []string{gw.ID, mine.ID, theirs.ID}}, Reason: "user_request"}})
+		Erasure: &record.ErasureBody{EventCoverage: "complete", Selectors: record.Selectors{IDs: []string{gw.ID, mine.ID, theirs.ID}}, Reason: "user_request"}})
 	ev := m.Evaluate()
 	if ev.StatusOf(gw.ID) != Invalidated || ev.StatusOf(mine.ID) != Live || ev.StatusOf(theirs.ID) != Live {
 		t.Fatalf("TSK erasure: %s %s %s", ev.StatusOf(gw.ID), ev.StatusOf(mine.ID), ev.StatusOf(theirs.ID))
@@ -264,7 +264,7 @@ func TestWithdrawalByGrant(t *testing.T) {
 func TestLineageHold(t *testing.T) {
 	a := item("A")
 	sk := "sk1:" + hx("S")
-	chunk := Item{ID: hx("chunk"), LID: hx("cl"), Kind: record.KindChunk, Prov: record.ProvTranscript, Owner: G, SessionKey: sk, SessionSeq: 5,
+	chunk := Item{ID: hx("chunk"), LID: hx("cl"), Kind: record.KindChunk, EventMembershipComplete: true, Prov: record.ProvTranscript, Owner: G, SessionKey: sk, SessionSeq: 5,
 		Recalls: []Recall{{Seq: 5, ID: a.ID}}, Route: record.RouteLocal}
 	later := Item{ID: hx("concl"), LID: hx("c1"), Kind: record.KindConclusion, Prov: record.ProvTranscript, Owner: G, SessionKey: sk, SessionSeq: 9}
 	earlier := Item{ID: hx("concl0"), LID: hx("c0"), Kind: record.KindConclusion, Prov: record.ProvTranscript, Owner: G, SessionKey: sk, SessionSeq: 3}
@@ -507,14 +507,14 @@ func TestEventOccurrenceErasureAndRecaptureBan(t *testing.T) {
 	m := NewModel()
 	a, b, c := item("event-a"), item("event-b"), item("other-session")
 	for _, it := range []*Item{&a, &b, &c} {
-		it.SessionKey = "session"
-		it.Events = []string{"event-identity"}
+		it.SessionKey = "sk1:" + hx("session")
+		it.Events = []string{"ev1:" + hx("event-identity")}
 	}
-	c.SessionKey = "other"
+	c.SessionKey = "sk1:" + hx("other")
 	m.Admit(a)
 	m.Admit(b)
 	m.Admit(c)
-	m.Apply(erase("event", record.Selectors{IDs: []string{a.ID}}))
+	m.Apply(erase("event", record.Selectors{IDs: []string{a.ID}, Events: []record.EventSelector{{Owner: a.Owner, SessionKey: a.SessionKey, EventID: a.Events[0]}}}))
 	if m.Evaluate().StatusOf(b.ID) != Invalidated || m.Evaluate().StatusOf(c.ID) != Live || !m.EventErased(a.Owner, a.SessionKey, a.Events[0]) {
 		t.Fatal("equivalent event copy escaped source closure or crossed namespace")
 	}

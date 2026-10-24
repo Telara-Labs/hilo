@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -25,7 +24,7 @@ func TestReviewSessionDistinctEventWorkIsBoundedBeforeAdmission(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			event, e := record.ReviseEvent(record.Event{ID: eid, Seq: int64(seq), Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "bounded native event"}}, nil, bytes.Repeat([]byte{0x45}, 32))
+			event, e := record.ReviseEvent(record.Event{ID: eid, Seq: int64(seq), Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "bounded native event"}}, nil)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -250,7 +249,7 @@ func TestReviewReductionBudgetProposalCannotFreezePriorCompleteState(t *testing.
 		t.Fatal("prior state not complete", err)
 	}
 	command := commandFor(t, "local.lookup_record", map[string]any{"record_id": inputs[0].AdvisoryID})
-	_, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "new-native-budget-attempt"}, command, ByteBudget{MaxBytes: 4096})
+	_, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("new-native-budget-attempt")}, command, ByteBudget{MaxBytes: 4096})
 	t.Log("proposal code", Code(err))
 	var holds int
 	k.s.conn.QueryRowContext(ctx, "SELECT count(*) FROM projection_hold").Scan(&holds)
@@ -285,7 +284,7 @@ func TestReviewReductionBudgetProposalLargeStateCannotFreeze(t *testing.T) {
 	}
 	before := disclosureGuardState(t, k)
 	command := commandFor(t, "local.lookup_record", map[string]any{"record_id": inputs[0].AdvisoryID})
-	_, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "new-large-prior-attempt"}, command, ByteBudget{MaxBytes: 4096})
+	_, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("new-large-prior-attempt")}, command, ByteBudget{MaxBytes: 4096})
 	var holds int
 	k.s.conn.QueryRowContext(ctx, "SELECT count(*) FROM projection_hold").Scan(&holds)
 	t.Log("actual records/exposures/affects/oldwork/proposal", n, total, affects, total*n+affects, Code(err))

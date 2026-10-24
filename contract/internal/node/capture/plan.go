@@ -175,6 +175,7 @@ func (p *Pipeline) produce(tx *store.CaptureTxn, q store.CaptureRequest, batch p
 	if c.OwnerGenesis != p.config.OwnerGenesis || c.MachineID != p.config.MachineID || c.CheckedAuthorKeyID != p.keys.keyID || c.ProgressVersion != q.ExpectedVersion {
 		return empty, hold("authority_changed")
 	}
+	q.PolicyID = c.PolicyID
 	progress, err := tx.Progress()
 	if err != nil {
 		return empty, hold("transaction_expired")
@@ -313,7 +314,7 @@ func (p *Pipeline) produce(tx *store.CaptureTxn, q store.CaptureRequest, batch p
 		for i, d := range group {
 			e := d.event
 			if d.mint {
-				e, err = record.ReviseEvent(e, d.parents, lease.salt[:])
+				e, err = record.ReviseEvent(e, d.parents)
 				if err != nil {
 					return empty, hold("sealing_failed")
 				}
@@ -407,12 +408,15 @@ func (p *Pipeline) produce(tx *store.CaptureTxn, q store.CaptureRequest, batch p
 }
 
 func (p *Pipeline) reusableHeader(h record.Header, q store.CaptureRequest) bool {
-	return h.Prov == record.ProvTranscript && h.Author.MachineID == p.config.MachineID && h.Subj.SessionKey == q.Occurrence.SessionKey && h.Subj.Source == q.Occurrence.Source && h.Subj.Client != nil && h.Subj.Client.ID == q.Reader.Reader && h.Red.Profile == record.ProfileLocal && h.Red.Epoch == p.ruleset.Epoch && h.Red.Fingerprint == q.RulesetFingerprint && h.Trust.Coverage == "incomplete" && equalStrings(h.Trust.Taint, []string{"taint-unknown"})
+	return h.Pol == q.PolicyID && h.Prov == record.ProvTranscript && h.Author.MachineID == p.config.MachineID && h.Subj.SessionKey == q.Occurrence.SessionKey && h.Subj.Source == q.Occurrence.Source && h.Subj.Client != nil && h.Subj.Client.ID == q.Reader.Reader && h.Red.Profile == record.ProfileLocal && h.Red.Epoch == p.ruleset.Epoch && h.Red.Fingerprint == q.RulesetFingerprint && h.Trust.Coverage == "incomplete" && equalStrings(h.Trust.Taint, []string{"taint-unknown"})
 }
 func (p *Pipeline) build(q store.CaptureRequest, kind record.Kind, lid string, body any, links record.Links, lease PreloadedKeyMaterial) (store.SignedRecord, error) {
 	defer lease.Clear()
 	h := record.Header{Type: kind, LID: lid, Author: record.Author{MachineID: p.config.MachineID, KeyID: lease.keyID}, At: time.Now().UnixMilli(), Prov: record.ProvTranscript, Subj: record.Subject{SessionKey: q.Occurrence.SessionKey, Source: q.Occurrence.Source, Client: &record.ClientRef{ID: q.Reader.Reader, Surface: "cli"}}, Red: record.Redact{Profile: record.ProfileLocal, Epoch: p.ruleset.Epoch, Fingerprint: q.RulesetFingerprint}, Trust: record.Trust{Taint: []string{"taint-unknown"}, Coverage: "incomplete"}, Links: links}
-	r, err := record.Build(h, body, lease.salt[:])
+	// PolicyID comes from the same acquired store writer as authority/progress.
+	// The preparation snapshot alone cannot authorize a seal after a policy race.
+	h.Pol = q.PolicyID
+	r, err := record.Build(h, body)
 	if err != nil {
 		return store.SignedRecord{}, hold("record_invalid")
 	}

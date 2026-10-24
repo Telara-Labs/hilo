@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS dep(id TEXT NOT NULL REFERENCES record(id), parent TE
 CREATE INDEX IF NOT EXISTS dep_reverse ON dep(parent);
 CREATE TABLE IF NOT EXISTS item_event(id TEXT NOT NULL REFERENCES record(id), event_id TEXT NOT NULL, PRIMARY KEY(id,event_id));
 CREATE TABLE IF NOT EXISTS body_seen(id TEXT PRIMARY KEY REFERENCES record(id));
+CREATE TABLE IF NOT EXISTS event_membership(id TEXT PRIMARY KEY REFERENCES record(id),event_count INTEGER NOT NULL CHECK(event_count>=0));
 CREATE TABLE IF NOT EXISTS item_order(id TEXT PRIMARY KEY REFERENCES record(id), known INTEGER NOT NULL, first_seq INTEGER NOT NULL, last_seq INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS item_recall(id TEXT NOT NULL REFERENCES record(id), event_seq INTEGER NOT NULL, recalled TEXT NOT NULL, PRIMARY KEY(id,event_seq,recalled));
 CREATE TABLE IF NOT EXISTS tomb(target TEXT NOT NULL, kind TEXT NOT NULL, cause TEXT NOT NULL, PRIMARY KEY(target,kind,cause));
@@ -27,6 +28,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(text,content='passage',cont
 CREATE TABLE IF NOT EXISTS vector(id TEXT PRIMARY KEY REFERENCES record(id), generation INTEGER NOT NULL, model TEXT NOT NULL, value BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS projection_job(id TEXT PRIMARY KEY REFERENCES record(id), generation INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS scrub_job(control TEXT PRIMARY KEY, target_generation INTEGER NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS erasure_pending(control TEXT PRIMARY KEY,owner TEXT NOT NULL);
 `
 
 func (s *Store) initialize(ctx context.Context) error {
@@ -38,7 +40,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		return failure("storage_error")
 	}
 	if count == 0 {
-		if _, err := s.conn.ExecContext(ctx, "INSERT INTO meta VALUES(1,1,2,?,?,1,0,0)", s.opts.PinnedGenesisID, s.opts.LocalMachineID); err != nil {
+		if _, err := s.conn.ExecContext(ctx, "INSERT INTO meta VALUES(1,1,3,?,?,1,0,0)", s.opts.PinnedGenesisID, s.opts.LocalMachineID); err != nil {
 			return failure("storage_error")
 		}
 		if _, err := s.conn.ExecContext(ctx, "INSERT INTO search(search,rank) VALUES('secure-delete',1)"); err != nil {
@@ -47,7 +49,7 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	var schemaVersion, major int
 	var genesis, machine string
-	if s.conn.QueryRowContext(ctx, "SELECT schema_version,contract_major,genesis,machine FROM meta WHERE singleton=1").Scan(&schemaVersion, &major, &genesis, &machine) != nil || (schemaVersion != 1 && schemaVersion != 2) || major != 2 || genesis != s.opts.PinnedGenesisID || machine != s.opts.LocalMachineID {
+	if s.conn.QueryRowContext(ctx, "SELECT schema_version,contract_major,genesis,machine FROM meta WHERE singleton=1").Scan(&schemaVersion, &major, &genesis, &machine) != nil || (schemaVersion != 1 && schemaVersion != 2) || major != 3 || genesis != s.opts.PinnedGenesisID || machine != s.opts.LocalMachineID {
 		return failure("incompatible_database")
 	}
 	var secure int
@@ -59,6 +61,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	if err := s.initializeDisclosure(ctx); err != nil {
 		return err
+	}
+	if _, err := s.conn.ExecContext(ctx, tenantSchema); err != nil {
+		return failure("storage_error")
 	}
 	if schemaVersion == 1 {
 		// Old index rows have no trusted positive field-completeness facts.

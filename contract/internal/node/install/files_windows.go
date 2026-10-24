@@ -50,15 +50,15 @@ func trustedSID(s *windows.SID) bool {
 func security(h windows.Handle, private, root bool) error {
 	sd, e := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if e != nil {
-		return ErrUnsafe
+		return unsafePath("GetSecurityInfo", fmt.Sprintf("handle=%d", h), "owner/ACL metadata required", e)
 	}
 	owner, _, e := sd.Owner()
 	if e != nil || !trustedSID(owner) || (private && owner.String() != userID()) {
-		return ErrUnsafe
+		return unsafePath("security", fmt.Sprintf("handle=%d", h), "trusted owner required; private owner must be current user", e)
 	}
 	acl, _, e := sd.DACL()
 	if e != nil || acl == nil {
-		return ErrUnsafe
+		return unsafePath("security", fmt.Sprintf("handle=%d", h), "non-null DACL required", e)
 	}
 	const mutation = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES | 0x40 | windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER | windows.GENERIC_ALL | windows.GENERIC_WRITE | windows.MAXIMUM_ALLOWED
 	mask := uint32(mutation)
@@ -68,7 +68,7 @@ func security(h windows.Handle, private, root bool) error {
 	for i := uint32(0); i < uint32(acl.AceCount); i++ {
 		var a *windows.ACCESS_ALLOWED_ACE
 		if windows.GetAce(acl, i, &a) != nil {
-			return ErrUnsafe
+			return unsafePath("GetAce", fmt.Sprintf("handle=%d", h), "ACL entry must be readable", nil)
 		}
 		if a.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 {
 			continue
@@ -77,15 +77,15 @@ func security(h windows.Handle, private, root bool) error {
 			continue
 		}
 		if a.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
-			return ErrUnsafe
+			return unsafePath("security", fmt.Sprintf("handle=%d", h), "ACL entry type unsupported", nil)
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&a.SidStart))
 		if private {
 			if sid.String() != userID() && a.Mask != 0 {
-				return ErrUnsafe
+				return unsafePath("security", fmt.Sprintf("handle=%d", h), "private ACL forbids other-user grants", nil)
 			}
 		} else if uint32(a.Mask)&mask != 0 && !trustedSID(sid) {
-			return ErrUnsafe
+			return unsafePath("security", fmt.Sprintf("handle=%d", h), "ACL forbids untrusted mutation grants", nil)
 		}
 	}
 	return nil
@@ -98,7 +98,7 @@ func closeHandles(hs []windows.Handle) {
 func openHandle(path string, directory, private, root bool) (windows.Handle, error) {
 	u, e := windows.UTF16PtrFromString(path)
 	if e != nil {
-		return 0, ErrUnsafe
+		return 0, unsafePath("UTF16 path", path, "valid Windows string required", e)
 	}
 	flags := uint32(windows.FILE_FLAG_OPEN_REPARSE_POINT)
 	access := uint32(windows.READ_CONTROL | windows.GENERIC_READ)
@@ -111,19 +111,32 @@ func openHandle(path string, directory, private, root bool) (windows.Handle, err
 		return 0, e
 	}
 	var info windows.ByHandleFileInformation
-	if windows.GetFileInformationByHandle(h, &info) != nil || info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || (info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0) != directory || (!directory && info.NumberOfLinks != 1) || security(h, private, root) != nil {
+	e = windows.GetFileInformationByHandle(h, &info)
+	if e == nil {
+		switch {
+		case info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0:
+			e = unsafePath("openHandle", path, "symlink/reparse forbidden", nil)
+		case (info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0) != directory:
+			e = unsafePath("openHandle", path, "file/directory type mismatch", nil)
+		case !directory && info.NumberOfLinks != 1:
+			e = unsafePath("openHandle", path, "link count must be one", nil)
+		default:
+			e = security(h, private, root)
+		}
+	}
+	if e != nil {
 		windows.CloseHandle(h)
-		return 0, ErrUnsafe
+		return 0, unsafePath("openHandle", path, "metadata and security validation required", e)
 	}
 	return h, nil
 }
 func dirHandles(path string, private bool) ([]windows.Handle, error) {
 	if !absolute(path) || strings.HasPrefix(path, `\\`) || strings.Contains(strings.TrimPrefix(path, filepath.VolumeName(path)), ":") {
-		return nil, ErrUnsafe
+		return nil, unsafePath("dirHandles", path, "absolute clean local path without alternate streams required", nil)
 	}
 	root := filepath.VolumeName(path) + string(filepath.Separator)
 	if path == root {
-		return nil, ErrUnsafe
+		return nil, unsafePath("dirHandles", path, "non-root directory required", nil)
 	}
 	h, e := openHandle(root, true, false, true)
 	if e != nil {
@@ -156,11 +169,11 @@ func ensureDir(path string, private bool) error {
 		return nil
 	}
 	if !absolute(path) {
-		return ErrUnsafe
+		return unsafePath("ensureDir", path, "absolute clean path required", nil)
 	}
 	parent := filepath.Dir(path)
 	if parent == path {
-		return ErrUnsafe
+		return unsafePath("ensureDir", path, "non-root directory required", nil)
 	}
 	if e := ensureDir(parent, false); e != nil {
 		return e
@@ -173,7 +186,7 @@ func ensureDir(path string, private bool) error {
 }
 func openTrusted(path string, private bool) (*os.File, func(), error) {
 	if !absolute(path) {
-		return nil, nil, ErrUnsafe
+		return nil, nil, unsafePath("openTrusted", path, "absolute clean path required", nil)
 	}
 	hs, e := dirHandles(filepath.Dir(path), false)
 	if e != nil {
@@ -213,8 +226,8 @@ func writeAtomic(path string, b []byte, mode os.FileMode) error {
 	f := os.NewFile(uintptr(h), temp)
 	defer os.Remove(temp)
 	defer f.Close()
-	if security(h, true, false) != nil {
-		return ErrUnsafe
+	if e := security(h, true, false); e != nil {
+		return unsafePath("writeAtomic", temp, "private owner/ACL required", e)
 	}
 	if _, e = f.Write(b); e != nil {
 		return e

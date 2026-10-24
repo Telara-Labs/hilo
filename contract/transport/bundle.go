@@ -7,16 +7,27 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
 
+type ExposureSource struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+type Boundary struct {
+	Kind    string `json:"kind"`
+	OpID    string `json:"op_id,omitempty"`
+	Ordinal *int64 `json:"ordinal,omitempty"`
+	EventID string `json:"event_id,omitempty"`
+	Seq     *int64 `json:"seq,omitempty"`
+}
 type ExposureFact struct {
-	OriginMachine      string   `json:"origin_machine"`
-	ScopeID            string   `json:"scope_id"`
-	SessionKey         string   `json:"session_key,omitempty"`
-	Boundary           int64    `json:"boundary"`
-	RecalledID         string   `json:"recalled_id"`
-	SourceCallOrEvent  string   `json:"source_call_or_event"`
-	BindingEvidenceIDs []string `json:"binding_evidence_ids"`
-	AffectsIDs         []string `json:"affects_ids"`
-	PendingAttribution bool     `json:"pending_attribution"`
+	OriginMachine      string         `json:"origin_machine"`
+	ScopeID            string         `json:"scope_id,omitempty"`
+	SessionKey         string         `json:"session_key,omitempty"`
+	Boundary           Boundary       `json:"boundary"`
+	RecalledID         string         `json:"recalled_id"`
+	SourceCallOrEvent  ExposureSource `json:"source_call_or_event"`
+	BindingEvidenceIDs []string       `json:"binding_evidence_ids,omitempty"`
+	AffectsIDs         []string       `json:"affects_ids,omitempty"`
+	PendingAttribution bool           `json:"pending_attribution"`
 }
 type Manifest struct {
 	Bundle        string             `json:"bundle"`
@@ -42,6 +53,8 @@ func ItemsDigest(lines [][]byte) string {
 }
 
 type BundleRecord struct {
+	Record                                                    *record.Record
+	Authorization                                             BundleAuthorization
 	ID                                                        string
 	CompleteSigned, SelectorIdentity, Selected, Live, Pending bool
 	Grants                                                    []record.GrantRef
@@ -53,29 +66,54 @@ type BundleRecord struct {
 func BundleEligible(id string, records map[string]BundleRecord) bool {
 	seen := map[string]bool{}
 	active := map[string]bool{}
-	var walk func(string) bool
-	walk = func(id string) bool {
+	var walk func(string, bool) bool
+	walk = func(id string, strictOrigins bool) bool {
+		cacheKey := id
+		if strictOrigins {
+			cacheKey += "/strict"
+		}
 		if active[id] {
 			return false
 		}
-		if seen[id] {
+		if seen[cacheKey] {
 			return true
 		}
 		r, ok := records[id]
 		if !ok || r.ID != id || !r.CompleteSigned || !r.SelectorIdentity || !r.Selected || !r.Live || r.Pending || len(r.Grants) > 0 {
 			return false
 		}
+		if r.Record == nil || r.Record.ID != id {
+			return false
+		}
+		parsed, err := record.Parse(r.Record.HeaderJCS, r.Record.BodyJCS, id)
+		if err != nil || parsed.Body == nil || parsed.Header.Type.IsControl() || !BundlePolicyAllowed(parsed, r.Authorization) {
+			return false
+		}
 		active[id] = true
-		for _, root := range r.RecalledRoots {
-			if !walk(root) {
+		roots := append([]string(nil), r.RecalledRoots...)
+		roots = append(roots, parsed.Header.Links.DerivedFrom...)
+		if parsed.Header.Type == record.KindCall {
+			strictOrigins = true
+		}
+		if strictOrigins && parsed.Header.Links.Origin != "" {
+			roots = append(roots, parsed.Header.Links.Origin)
+		}
+		switch b := parsed.Body.(type) {
+		case *record.SessionBody:
+			roots = append(roots, b.Chunks...)
+		case *record.RollupBody:
+			roots = append(roots, b.Covers...)
+		}
+		for _, root := range roots {
+			if !walk(root, strictOrigins) {
 				return false
 			}
 		}
 		delete(active, id)
-		seen[id] = true
+		seen[cacheKey] = true
 		return true
 	}
-	return walk(id)
+	return walk(id, false)
 }
 
 // ValidateBundleMode rejects foreign identities and every plaintext exception.

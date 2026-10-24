@@ -37,11 +37,11 @@ func userSD() (*windows.SECURITY_DESCRIPTOR, error) {
 }
 func openDir(p string, create, private bool) (*directory, error) {
 	if !absoluteOS("windows", p) || filepath.Clean(p) != p {
-		return nil, ErrUnsafe
+		return nil, unsafePath("openDir", p, "absolute clean local path required", nil)
 	}
 	if private && create {
-		if ipc.ValidateDir(p, true) != nil {
-			return nil, ErrUnsafe
+		if e := ipc.ValidateDir(p, true); e != nil {
+			return nil, unsafePath("openDir", p, "private directory validation required", e)
 		}
 	}
 	d := &directory{path: p, private: private}
@@ -58,13 +58,13 @@ func openDir(p string, create, private bool) (*directory, error) {
 	for i, part := range all {
 		if i > 0 {
 			if !validName(part) {
-				return nil, ErrUnsafe
+				return nil, unsafePath("openDir", part, "single component required", nil)
 			}
 			curr = filepath.Join(curr, part)
 		}
 		ptr, e := windows.UTF16PtrFromString(curr)
 		if e != nil {
-			return nil, ErrUnsafe
+			return nil, unsafePath("UTF16 path", curr, "valid Windows string required", e)
 		}
 		if create && i > 0 {
 			sd, e := userSD()
@@ -74,7 +74,7 @@ func openDir(p string, create, private bool) (*directory, error) {
 			sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
 			e = windows.CreateDirectory(ptr, sa)
 			if e != nil && !errors.Is(e, windows.ERROR_ALREADY_EXISTS) {
-				return nil, ErrUnsafe
+				return nil, unsafePath("CreateDirectory", curr, "owner-only directory creation required", e)
 			}
 		}
 		h, e := windows.CreateFile(ptr, windows.FILE_LIST_DIRECTORY|windows.READ_CONTROL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
@@ -82,17 +82,23 @@ func openDir(p string, create, private bool) (*directory, error) {
 			if errors.Is(e, windows.ERROR_PATH_NOT_FOUND) || errors.Is(e, windows.ERROR_FILE_NOT_FOUND) {
 				return nil, os.ErrNotExist
 			}
-			return nil, ErrUnsafe
+			return nil, unsafePath("CreateFile directory", curr, "directory open required", e)
 		}
 		d.handles = append(d.handles, h)
 		var info windows.ByHandleFileInformation
-		if windows.GetFileInformationByHandle(h, &info) != nil || info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
-			return nil, ErrUnsafe
+		if e := windows.GetFileInformationByHandle(h, &info); e != nil {
+			return nil, unsafePath("validate directory", curr, "metadata query required", e)
+		}
+		if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+			return nil, unsafePath("validate directory", curr, "symlink/reparse forbidden", nil)
+		}
+		if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+			return nil, unsafePath("validate directory", curr, "type must be directory", nil)
 		}
 	}
 	if private {
-		if ipc.ValidateDir(p, false) != nil {
-			return nil, ErrUnsafe
+		if e := ipc.ValidateDir(p, false); e != nil {
+			return nil, unsafePath("openDir", p, "private directory validation required", e)
 		}
 	}
 	ok = true
@@ -100,11 +106,11 @@ func openDir(p string, create, private bool) (*directory, error) {
 }
 func (d *directory) file(n string, create, write bool) (*os.File, error) {
 	if !validName(n) {
-		return nil, ErrUnsafe
+		return nil, unsafePath("file", n, "single filename required", nil)
 	}
 	p, e := windows.UTF16PtrFromString(filepath.Join(d.path, n))
 	if e != nil {
-		return nil, ErrUnsafe
+		return nil, unsafePath("UTF16 file", filepath.Join(d.path, n), "valid Windows string required", e)
 	}
 	access := uint32(windows.GENERIC_READ | windows.READ_CONTROL)
 	disp := uint32(windows.OPEN_EXISTING)
@@ -131,24 +137,43 @@ func (d *directory) file(n string, create, write bool) (*os.File, error) {
 		if errors.Is(e, windows.ERROR_SHARING_VIOLATION) || errors.Is(e, windows.ERROR_LOCK_VIOLATION) {
 			return nil, ErrBusy
 		}
-		return nil, ErrUnsafe
+		return nil, unsafePath("CreateFile", filepath.Join(d.path, n), "no reparse; file open required", e)
 	}
 	f := os.NewFile(uintptr(h), n)
 	var info windows.ByHandleFileInformation
 	sd, e := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if e != nil {
 		f.Close()
-		return nil, ErrUnsafe
+		return nil, unsafePath("GetSecurityInfo", filepath.Join(d.path, n), "owner and ACL metadata required", e)
 	}
 	owner, _, e := sd.Owner()
 	u, ue := windows.GetCurrentProcessToken().GetTokenUser()
-	if e != nil || ue != nil || owner == nil || !windows.EqualSid(owner, u.User.Sid) || windows.GetFileInformationByHandle(h, &info) != nil || info.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 || info.NumberOfLinks != 1 {
+	if e == nil {
+		e = ue
+	}
+	if e != nil || owner == nil || !windows.EqualSid(owner, u.User.Sid) {
 		f.Close()
-		return nil, ErrUnsafe
+		return nil, unsafePath("validate file", filepath.Join(d.path, n), "owner must be current user", e)
+	}
+	if e = windows.GetFileInformationByHandle(h, &info); e != nil {
+		f.Close()
+		return nil, unsafePath("validate file", filepath.Join(d.path, n), "metadata query required", e)
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		f.Close()
+		return nil, unsafePath("validate file", filepath.Join(d.path, n), "symlink/reparse forbidden", nil)
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		f.Close()
+		return nil, unsafePath("validate file", filepath.Join(d.path, n), "type must be regular file", nil)
+	}
+	if info.NumberOfLinks != 1 {
+		f.Close()
+		return nil, unsafePath("validate file", filepath.Join(d.path, n), "link count must be one", nil)
 	}
 	if d.private && !privateACL(sd, u.User.Sid) {
 		f.Close()
-		return nil, ErrUnsafe
+		return nil, unsafePath("validate file", filepath.Join(d.path, n), "private ACL must grant only current user", nil)
 	}
 	return f, nil
 }
@@ -169,7 +194,7 @@ func (d *directory) read(n string, max int64) ([]byte, error) {
 	defer f.Close()
 	b, e := io.ReadAll(io.LimitReader(f, max+1))
 	if e != nil || int64(len(b)) > max {
-		return nil, ErrUnsafe
+		return nil, unsafePath("read", filepath.Join(d.path, n), "read must succeed within size limit", e)
 	}
 	return b, nil
 }
@@ -214,7 +239,7 @@ func (d *directory) lock() (func(), error) {
 }
 func (d *directory) remove(n string) error {
 	if !validName(n) {
-		return ErrUnsafe
+		return unsafePath("remove", n, "single filename required", nil)
 	}
 	return os.Remove(filepath.Join(d.path, n))
 }
@@ -223,7 +248,7 @@ func move(from *directory, n string, to *directory) error { return renameWindows
 func renameOwned(d *directory, from, to string) error     { return renameWindows(d, from, d, to) }
 func renameWindows(from *directory, a string, to *directory, b string) error {
 	if !validName(a) || !validName(b) {
-		return ErrUnsafe
+		return unsafePath("rename", a+" -> "+b, "single source and destination filenames required", nil)
 	}
 	src, e := windows.UTF16PtrFromString(filepath.Join(from.path, a))
 	if e != nil {

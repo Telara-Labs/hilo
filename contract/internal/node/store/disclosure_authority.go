@@ -59,7 +59,7 @@ func newDisclosureEntropy() (p *disclosureEntropy, err error) {
 		}
 		p.nonces = append(p.nonces, hex.EncodeToString(b[:]))
 		clear(b[:])
-		ref, e := record.NewCallRef(rand.Reader)
+		ref, e := record.NewCallRef()
 		if e != nil {
 			return p, failure("entropy_unavailable")
 		}
@@ -226,7 +226,7 @@ func NewDisclosureEngine(ctx context.Context, st *Store, material PreloadedDiscl
 		return nil, err
 	}
 	defer pool.clear()
-	e := &DisclosureEngine{store: st, config: cfg, authority: material, closedClients: map[string]bool{}, deadlines: map[string]time.Time{}, ruleset: rules}
+	e := &DisclosureEngine{store: st, config: cfg, authority: material, clients: map[string]*liveClient{}, deadlines: map[string]time.Time{}, ruleset: rules}
 	err = st.writeMode(ctx, true, func() error {
 		e.instance = st.instanceID
 		var err error

@@ -1,12 +1,12 @@
 package store
 
 import (
-	"bytes"
 	"context"
-	"crypto/ed25519"
+	"encoding/json"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -81,8 +81,11 @@ func TestCrashChild(t *testing.T) {
 	if e != nil {
 		os.Exit(10)
 	}
-	w := &world{t: t, s: s, o: o, key: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{8}, 32)), at: 1761150000000}
-	r := w.task(1000, "abrupt-recovery-marker")
+	var r SignedRecord
+	sealed, err := os.ReadFile(filepath.Join(dir, "crash-candidate.json"))
+	if err != nil || json.Unmarshal(sealed, &r) != nil {
+		os.Exit(17)
+	}
 	if mode == "after" {
 		if _, e = s.Append(ctx, r); e != nil {
 			os.Exit(11)
@@ -121,6 +124,13 @@ func TestAbruptProcessRecoveryBeforeAndAfterCommit(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			w := newWorld(t)
 			r := w.task(1000, "abrupt-recovery-marker")
+			sealed, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(w.o.Dir, "crash-candidate.json"), sealed, 0600); err != nil {
+				t.Fatal(err)
+			}
 			w.s.Close()
 			cmd := exec.Command(os.Args[0], "-test.run=^TestCrashChild$", "--", "--store-crash", mode, w.o.Dir, w.o.PinnedGenesisID)
 			if out, e := cmd.CombinedOutput(); e != nil {

@@ -1,5 +1,5 @@
 {
-  "contract": "mnc/2.0",
+  "contract": "mnc/3.0",
   "vectors": [
     {
       "id": "V1",
@@ -47,17 +47,39 @@
         },
         {
           "package": "./record",
-          "run": "^Test(BuildAndParseEveryKind|ParseRejections|UnknownBodyFieldKept)$"
+          "run": "^Test(BuildAndParseEveryKind|ParseRejections|UnknownBodyFieldRejected)$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3(CallCommitmentsAndSignedDependencies|RecursiveClosedSchemaShapes|OptionalOmissionAndPointerZeros)$"
+        },
+        {
+          "package": ".",
+          "run": "^TestV3WorkedAndHistoricalFixtures$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3NestedEnumsAndPolicyCredentials$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3MinimalPublicKeyFacts$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3(BuildRejectsInvalidUTF8BeforeClone|RequiredTaskStatusAdmission|CallCommitmentGeneralJSON)$"
         }
       ],
       "fixtures": [
-        "v03-records.json"
+        "v03-records.json",
+        "v03-worked-example.json",
+        "v03-task-status.json"
       ],
       "adapter_required": []
     },
     {
       "id": "V4",
-      "title": "Device salt and key outage",
+      "title": "Independent per-body and event secrets, exact committed seal reuse",
       "tests": [
         {
           "package": ".",
@@ -78,13 +100,28 @@
         {
           "package": "./record",
           "run": "^Test(ProductionEventDerivationMatchesFrozenVector|BuildPreservesCorrectionFrontier)$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3(IndependentSecretsEveryBody|KeyedTextBeforeTruncation)$"
+        },
+        {
+          "package": ".",
+          "run": "^TestV4KeyedTextJSON$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3(SelfReviewCallRefHasNoPublicEntropyOverride|CallRefInternalEntropyAndFailure)$"
         }
       ],
       "fixtures": [
         "v04-salt.json",
-        "v04-events.json"
+        "v04-events.json",
+        "v04-keyed-text.json"
       ],
-      "adapter_required": []
+      "adapter_required": [
+        "Durable transition-to-seal lookup before every producer, unknown/erased settlement never resealed, internal RNG failure leaves no progress/candidate, actual exact-id erasure and managed secret scrub across every body/config producer."
+      ]
     },
     {
       "id": "V5",
@@ -147,6 +184,14 @@
         {
           "package": "./view",
           "run": "^Test(CausalEventRepackingAndConflicts|SessionMultiMachineCorrectionSurvivesRepack|LaterMissingPageKeepsEarlierSettledPrefix|SaltedIndependentCapturesAndCausalOccurrences|EqualityWitnessDependencyInvalidationAndRestart|KnownErasedVersusUnknownPredecessorAndHeadLimit|AvailableInvalidBodyCannotReauthorizePresence|EqualCaptureTaintAndComplementaryCoverage|BodylessInvalidSourceOverridesRetainedHistory)$"
+        },
+        {
+          "package": "./view",
+          "run": "^TestV3EqualityRequiresCompleteOwnKeyText$"
+        },
+        {
+          "package": "./view",
+          "run": "^TestV3SelfReviewTruncatedResultCannotEstablishEquality$"
         }
       ],
       "fixtures": [],
@@ -171,10 +216,28 @@
         {
           "package": "./invalidate",
           "run": "^Test(Closure|ErasureChainEveryOrder|ErasureSelectorKinds|AncestryPendingAndRebuild|OrderIndependenceProperty)$"
+        },
+        {
+          "package": "./invalidate",
+          "run": "^TestV3(SignedCrossDeviceEventErasure|SupplementalCoveragePendingAndRecovery|CallOriginAncestryNeverDefaultEmpty)$"
+        },
+        {
+          "package": "./sig",
+          "run": "^TestV3SignedEventSelectorOwnerScope$"
+        },
+        {
+          "package": ".",
+          "run": "^TestV3InvalidLateBodyNoMembership$"
+        },
+        {
+          "package": "./invalidate",
+          "run": "^TestV3MissingMembership(SessionBanRecovery|AllNamespacesRequired)$"
         }
       ],
       "fixtures": [],
-      "adapter_required": []
+      "adapter_required": [
+        "Real two-device event control with unknown issuer chunk, durable membership/pending-owner blocks, supplemental controls and invalid late-body no-side-effect admission under the erasure fence, restart and no early ACK."
+      ]
     },
     {
       "id": "V12",
@@ -209,6 +272,10 @@
         {
           "package": "./record",
           "run": "^Test(BuildAndParseEveryKind|ParseRejections)$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3Export(MetadataAndRegrant|SessionUsesOnlyManifestPointers)$"
         }
       ],
       "fixtures": [],
@@ -229,6 +296,18 @@
         {
           "package": ".",
           "run": "^TestV15MatrixJSON$"
+        },
+        {
+          "package": "./sig",
+          "run": "^TestV3MalformedBodiesCannotAcquireQuarantine$"
+        },
+        {
+          "package": "./sig",
+          "run": "^TestV3SelfReviewUnknownMajorStillQuarantines$"
+        },
+        {
+          "package": "./transport",
+          "run": "^TestV3EnvelopeBoundsBeforeDecode$"
         }
       ],
       "fixtures": [
@@ -257,6 +336,14 @@
         {
           "package": "./transport",
           "run": "^Test(InterleavedCursorSnapshots|OwnControlCannotBeFiltered)$"
+        },
+        {
+          "package": "./transport",
+          "run": "^TestV3SupplementalControlScanDoesNotACKAhead$"
+        },
+        {
+          "package": "./transport",
+          "run": "^TestV3BodylessControlCannotCompletePrefix$"
         }
       ],
       "fixtures": [],
@@ -271,10 +358,28 @@
         {
           "package": "./policy",
           "run": "^Test"
+        },
+        {
+          "package": "./policy",
+          "run": "^TestV3(DatePrecisionFreshnessAndHighWater|RejectsUntrustedDates|OneTenantAndOmittedCeiling|PolicyReplacementLogoutAndTamperFacts)$"
+        },
+        {
+          "package": "./policy",
+          "run": "^TestV3SelfReview(LogoutTamperAndMonotonicBaseline|UnknownRepoAndGlobalBlock)$"
+        },
+        {
+          "package": "./policy",
+          "run": "^TestV3TamperBlocksAllTenantReadback$"
+        },
+        {
+          "package": "./view",
+          "run": "^TestV3TenantPolicyPrecedesEveryReadChannel$"
         }
       ],
       "fixtures": [],
-      "adapter_required": []
+      "adapter_required": [
+        "Actual configured TLS login/control freshness validation, FULL durable floor/equivocation facts, one active tenant, policy issuance exact retry and complete configuration/salt scrub on replacement/logout."
+      ]
     },
     {
       "id": "V19",
@@ -305,11 +410,26 @@
         {
           "package": "./transport",
           "run": "^Test(ContractMajorGates|VersionGatesCannotOverrideSignedHeader)$"
+        },
+        {
+          "package": "./transport",
+          "run": "^TestV3(ExposureFixturesAndManifest|BundlePolicyBothDirections)$"
+        },
+        {
+          "package": "./transport",
+          "run": "^TestV3SelfReviewLogoutFenceSurvivesRelogin$"
+        },
+        {
+          "package": "./replay",
+          "run": "^TestV3ReplayTransferredRenderRootErasure$"
         }
       ],
-      "fixtures": [],
+      "fixtures": [
+        "v20-exposures.json"
+      ],
       "adapter_required": [
-        "Node age transfer must use verified device EKs; backup must use sole scrypt recipient. Restore after co-signed device_add and verify signed manifest before atomic exposure union and data admission."
+        "Node age transfer must use verified device EKs; backup must use sole scrypt recipient. Restore after co-signed device_add and verify signed manifest before atomic exposure union and data admission.",
+        "Actual signed encrypted no-event checkpoint plus CallBody full recursive dependency transfer/restore, all managed unopened bundle/staging indexes rebuilt and scrubbed before erasure ACK, current policy rechecked independently on export/import."
       ]
     },
     {
@@ -345,7 +465,7 @@
       "fixtures": [],
       "adapter_required": [
         "Node modernc.org/sqlite v1.60.1 must verify FTS5 secure-delete config1 at open and planted token absence in DB WAL and shadow tables after FULL-synchronous erasure. Contract module has no database.",
-        "Contract2 event salts and nonce intermediates must be absent from every persisted equality workspace, cache, diagnostic and erased event copy; recapture tombs apply before sealing."
+        "Contract3 independent body/event/call/policy salts and commitment intermediates must be absent from every persisted equality workspace, cache, diagnostic and erased event copy; recapture tombs apply before sealing."
       ]
     },
     {
@@ -359,11 +479,28 @@
         {
           "package": "./invalidate",
           "run": "^TestOpCacheRows$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3(IssuedOperationTokens|TokenFailureIsAtomic)$"
+        },
+        {
+          "package": "./replay",
+          "run": "^TestComparatorDependencyUnion$"
+        },
+        {
+          "package": "./replay",
+          "run": "^TestV3SelfReviewCanonicalOperationLinkage$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3OperationSnapshotRejectsInvalidState$"
         }
       ],
       "fixtures": [],
       "adapter_required": [
-        "Node must atomically persist mutation, original tool/args, exposure, render version, dedup generation and confirmation with actual store transactions."
+        "Node must atomically persist mutation, original tool/args, exposure, render version, dedup generation and confirmation with actual store transactions.",
+        "Credential-bound initialize token issuance and consumption persisted atomically with mutation/CallBody/key/deps/outcome, competing retries/restart, uniform keyless result after actual secret scrub; no fallback for unknown supplied token."
       ]
     },
     {
@@ -456,5 +593,18 @@
       "fixtures": [],
       "adapter_required": []
     }
-  ]
+  ],
+  "fixture_digests": {
+    "v01-jcs.json": "b43d78e9d08e17696a558844485ba75345cb6bf84180ae5b192626b12ef80396",
+    "v02-identity.json": "94357d935b326c6b0fce9dabb490af76afc5e201ebfe5acebfcff1f69e5a678f",
+    "v03-records.json": "fc6b893241546c9ed84831ac5d9960d708cebc0809ea4e994d9b3e674ad5f83e",
+    "v03-worked-example.json": "b6cf13c6e243b33c580bede3fb5d3aafec36af857af2bb9e9f3e71c3ea1199ca",
+    "v04-events.json": "4e95e8cf97ca5ef57053e327e4202c8fe0914fd60451e22edb81f9ee17bf51a3",
+    "v04-keyed-text.json": "e0730bcfc0ece7d08d60d5bda663d44b484ec71218f86b75070b65ac88219c59",
+    "v04-salt.json": "c821458a5992c73a2e178278471d07d595f5cfe5c7fbf37d7e7c8bc9eec975aa",
+    "v05-signature.json": "2e9bc49d27855db4440dc52884358189738ef230dea81c77f088db52c10abb39",
+    "v15-matrix.json": "3621921eac204db397e9b44664ba94fb1e772808b4c54d2065a9db7665897bd2",
+    "v20-exposures.json": "456ce14ffa4cf721fffff7487af0a85107fa3cec7830f6909d52ce28a9554655",
+    "v03-task-status.json": "b484d1a2be6f209370a025b06945833e2b7b83cb6af28380ffa173f3aa0a7041"
+  }
 }

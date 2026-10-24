@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -145,6 +146,10 @@ func TestHeldDescriptorNeverFollowsReplacementAndRejectsChanges(t *testing.T) {
 					}
 				case "same_size_rewrite":
 					initial := h.initial.ModTime()
+					// Linux stamps ctime from a coarse clock (one jiffy, up to
+					// 10ms). A rewrite inside the same tick as the open keeps
+					// ctime equal, so step past it as any real writer would.
+					time.Sleep(20 * time.Millisecond)
 					rewrite := append([]byte(nil), data...)
 					rewrite[0] = '['
 					if err := os.WriteFile(path, rewrite, 0600); err != nil {

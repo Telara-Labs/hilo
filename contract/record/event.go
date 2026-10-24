@@ -1,9 +1,7 @@
 package record
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -32,7 +30,7 @@ func EventRevision(e Event) (string, error) {
 	return H("event-rev", e.ID, string(b)), nil
 }
 func eventFields(e Event) (map[string]json.RawMessage, error) {
-	raw, err := json.Marshal(e)
+	raw, err := jcs.MarshalRecord(e)
 	if err != nil {
 		return nil, err
 	}
@@ -44,9 +42,27 @@ func eventFields(e Event) (map[string]json.RawMessage, error) {
 // EventPayload is transient comparison material. Never persist it or an unsalted
 // hash of it. Causal frontiers are checked separately when deriving aliases.
 func EventPayload(e Event) ([]byte, error) {
+	if err := ValidateEventText(e); err != nil {
+		return nil, err
+	}
+	if e.Result != nil && e.Result.Bytes > len(e.Result.Excerpt) {
+		return nil, fmt.Errorf("event: complete result unavailable")
+	}
+	if e.Text != nil && e.Text.Truncated {
+		return nil, fmt.Errorf("event: complete text unavailable")
+	}
 	fields, err := eventFields(e)
 	if err != nil {
 		return nil, err
+	}
+	if e.Text != nil {
+		text := *e.Text
+		text.Digest = ""
+		raw, err := json.Marshal(text)
+		if err != nil {
+			return nil, err
+		}
+		fields["text"] = raw
 	}
 	delete(fields, "revision")
 	delete(fields, "salt")
@@ -63,46 +79,78 @@ func validEventSalt(s string) bool {
 // A private uncommitted candidate may be rebuilt only after the runtime proves
 // noncommit from recovered same-store transition history. Unknown settlement or
 // an unavailable committed body never permits resealing.
-func ReviseEvent(e Event, predecessors []string, saltKey []byte) (Event, error) {
-	return reviseEvent(e, predecessors, saltKey, rand.Reader)
+func ReviseEvent(e Event, predecessors []string, legacyKey ...[]byte) (Event, error) {
+	if len(legacyKey) != 0 {
+		return Event{}, fmt.Errorf("event: caller key forbidden")
+	}
+	return reviseEvent(e, predecessors, rand.Reader)
 }
-func reviseEvent(e Event, predecessors []string, saltKey []byte, entropy io.Reader) (Event, error) {
-	if len(saltKey) != SaltKeySize {
-		return e, fmt.Errorf("event: salt key unavailable")
+func reviseEvent(e Event, predecessors []string, entropy io.Reader) (Event, error) {
+	if e.Salt != "" || e.Revision != "" || e.Text != nil && e.Text.Digest != "" {
+		return Event{}, fmt.Errorf("event: authoring seal override forbidden")
 	}
 	if len(predecessors) > 8 || !uniqueHex64(predecessors) {
-		return e, fmt.Errorf("event: invalid predecessors")
+		return Event{}, fmt.Errorf("event: invalid predecessors")
 	}
 	e.Replaces = append([]string(nil), predecessors...)
 	sort.Strings(e.Replaces)
-	e.Salt = ""
-	e.Revision = ""
-	fields, err := eventFields(e)
+	salt, err := newSecret(entropy)
 	if err != nil {
-		return e, err
+		return Event{}, err
 	}
-	delete(fields, "salt")
-	delete(fields, "revision")
-	payload, err := jcs.MarshalRecord(fields)
-	if err != nil {
-		return e, err
-	}
-	defer clear(payload)
-	var nonce [32]byte
-	if _, err = io.ReadFull(entropy, nonce[:]); err != nil {
-		return e, fmt.Errorf("event: entropy unavailable")
-	}
-	msg, err := jcs.StringArray("mnc2-event-salt", e.ID, base64.RawURLEncoding.EncodeToString(nonce[:]), string(payload))
-	if err != nil {
-		return e, err
-	}
-	mac := hmac.New(sha256.New, saltKey)
-	mac.Write(msg)
-	e.Salt = base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
-	clear(nonce[:])
-	clear(msg)
+	e.Salt = salt
 	e.Revision, err = EventRevision(e)
-	return e, err
+	if err != nil {
+		return Event{}, err
+	}
+	return e, nil
+}
+
+// ReviseTextEvent redacts the full value, draws its private event secret, then
+// computes the declared keyed digest before display truncation.
+func ReviseTextEvent(e Event, predecessors []string, raw string, redactor Redactor, maxBytes int) (Event, error) {
+	return reviseTextEvent(e, predecessors, raw, redactor, maxBytes, rand.Reader)
+}
+func reviseTextEvent(e Event, predecessors []string, raw string, redactor Redactor, maxBytes int, entropy io.Reader) (Event, error) {
+	if e.Text != nil || redactor == nil {
+		return Event{}, fmt.Errorf("event: text override forbidden")
+	}
+	e.Text = &Text{}
+	sealed, err := reviseEvent(e, predecessors, entropy)
+	if err != nil {
+		return Event{}, err
+	}
+	full := redactor.Redact(raw)
+	text := boundText(full, maxBytes)
+	text.Digest, err = EventTextCommitment(sealed.Salt, full)
+	if err != nil {
+		return Event{}, err
+	}
+	sealed.Text = &text
+	sealed.Revision, err = EventRevision(sealed)
+	return sealed, err
+}
+
+// ValidateEventText checks a declared digest when the full text is available.
+// A truncated body never proves its hidden preimage and cannot form equality.
+func ValidateEventText(e Event) error {
+	if e.Text == nil {
+		return nil
+	}
+	t := e.Text
+	if !t.Truncated && t.Bytes > 0 && t.Bytes != len(t.Body) {
+		return fmt.Errorf("event: incomplete untruncated text")
+	}
+	if t.Bytes < 0 || t.Bytes > 0 && t.Bytes < len(t.Body) || t.Digest != "" && !IsHex64(t.Digest) {
+		return fmt.Errorf("event: text shape")
+	}
+	if t.Digest != "" && !t.Truncated {
+		digest, err := EventTextCommitment(e.Salt, t.Body)
+		if err != nil || digest != t.Digest {
+			return fmt.Errorf("event: text commitment mismatch")
+		}
+	}
+	return nil
 }
 
 func TaskKey(owner, taskID string) (string, error) {
@@ -113,5 +161,5 @@ func TaskKey(owner, taskID string) (string, error) {
 	return string(b), err
 }
 func NeedsErasureConfirmation(s Selectors, resolved, cumulative int64) bool {
-	return len(s.Tasks)+len(s.Sessions)+len(s.LIDs)+len(s.Sources) > 0 || resolved > 1000 || cumulative > 1000 || resolved > 1000-cumulative
+	return len(s.Events)+len(s.Tasks)+len(s.Sessions)+len(s.LIDs)+len(s.Sources) > 0 || resolved > 1000 || cumulative > 1000 || resolved > 1000-cumulative
 }

@@ -105,7 +105,7 @@ func readPrivate(path string, out any) error {
 func readReceipt(dir string) (Record, error) {
 	var r Record
 	if !absolute(dir) {
-		return r, ErrUnsafe
+		return r, unsafePath("readReceipt", dir, "absolute clean path with no control characters required", nil)
 	}
 	if e := readPrivate(filepath.Join(dir, "install.json"), &r); e != nil {
 		return r, e

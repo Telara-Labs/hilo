@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"sort"
 	"strings"
@@ -13,6 +14,7 @@ import (
 )
 
 type stored struct {
+	membershipComplete      bool
 	persisted, previousLive bool
 	bodySeen                bool
 	orderKnown              bool
@@ -28,6 +30,9 @@ type stored struct {
 	state                   string
 }
 type databaseState struct {
+	tenant                              *tenantState
+	policyTenants                       map[string]string
+	policyLogout                        map[string]bool
 	groups                              *metadataGroups
 	relationsReady                      bool
 	plannedFacts                        map[string]view.EventFacts
@@ -165,6 +170,37 @@ func (s *Store) load(ctx context.Context) (*databaseState, error) {
 	if err = s.loadFences(ctx, d); err != nil {
 		return nil, err
 	}
+	// Reconstruct every signed edge before a call key or copied body can be
+	// used. Missing local indexes never turn declared ancestry into empty [].
+	for _, x := range d.records {
+		m := &stored{rec: x.rec}
+		material(m)
+		for _, id := range m.deps {
+			if !containsID(x.deps, id) {
+				x.deps = append(x.deps, id)
+			}
+		}
+		for _, id := range m.events {
+			if !containsID(x.events, id) {
+				x.events = append(x.events, id)
+			}
+		}
+		if x.rec.Header.Type == record.KindChunk || x.rec.Header.Type == record.KindSession {
+			var count int
+			err := s.conn.QueryRowContext(ctx, "SELECT event_count FROM event_membership WHERE id=?", x.rec.ID).Scan(&count)
+			x.membershipComplete = err == nil && count == len(x.events)
+			if err != nil && err != sql.ErrNoRows {
+				return nil, failure("storage_error")
+			}
+		}
+	}
+	d.tenant, err = s.tenant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.loadPolicyProvenance(ctx, d); err != nil {
+		return nil, err
+	}
 	if err = s.loadFacts(ctx, d); err != nil {
 		return nil, err
 	}
@@ -181,7 +217,7 @@ func (s *Store) load(ctx context.Context) (*databaseState, error) {
 		return nil, err
 	}
 	for _, x := range d.records {
-		x.previousLive = x.state == "live" && x.sigStatus == sig.StatusVerified && x.rec.Body != nil
+		x.previousLive = (x.state == "live" || x.state == "privacy-hold") && x.sigStatus == sig.StatusVerified && x.rec.Body != nil
 	}
 	return d, nil
 }
@@ -215,6 +251,29 @@ func (d *databaseState) rebuild(o Options) error {
 		}
 	}
 	d.model = invalidate.NewModel()
+	for _, x := range d.records {
+		if b, ok := x.rec.Body.(*record.ChunkBody); ok {
+			x.membershipComplete = true
+			_ = b
+		}
+	}
+	for _, x := range d.records {
+		if b, ok := x.rec.Body.(*record.SessionBody); ok {
+			x.membershipComplete = true
+			for _, id := range b.Chunks {
+				child := d.byID[id]
+				if child == nil || child.rec.Header.Type != record.KindChunk || child.owner != x.owner || child.rec.Header.Subj.SessionKey != x.rec.Header.Subj.SessionKey || !child.membershipComplete {
+					x.membershipComplete = false
+					continue
+				}
+				for _, ev := range child.events {
+					if !containsID(x.events, ev) {
+						x.events = append(x.events, ev)
+					}
+				}
+			}
+		}
+	}
 	st := d.kr.State()
 	for _, x := range d.records {
 		h := x.rec.Header
@@ -227,7 +286,7 @@ func (d *databaseState) rebuild(o Options) error {
 		} else {
 			x.sigStatus = sig.VerifyRecord(x.rec, x.sigs, st, sig.Context{Route: record.RouteLocal, AdmittedSeq: x.seq}).Status
 		}
-		it := invalidate.Item{ID: x.rec.ID, LID: h.LID, Kind: h.Type, Prov: h.Prov, Owner: x.owner, TaskID: h.Subj.TaskID, SessionKey: h.Subj.SessionKey, Source: h.Subj.Source, Deps: x.deps, Events: x.events, Recalls: x.recalls, Origin: h.Links.Origin, Route: record.RouteLocal, OriginMachine: h.Author.MachineID, Explicit: h.Prov == record.ProvMCPExplicit, SessionSeq: x.lastSeq}
+		it := invalidate.Item{BodyAvailable: x.rec.Body != nil, EventMembershipComplete: x.membershipComplete, ID: x.rec.ID, LID: h.LID, Kind: h.Type, Prov: h.Prov, Owner: x.owner, TaskID: h.Subj.TaskID, SessionKey: h.Subj.SessionKey, Source: h.Subj.Source, Deps: x.deps, Events: x.events, Recalls: x.recalls, Origin: h.Links.Origin, Route: record.RouteLocal, OriginMachine: h.Author.MachineID, Explicit: h.Prov == record.ProvMCPExplicit, SessionSeq: x.lastSeq}
 		if a, ok := d.attrs[x.rec.ID]; ok {
 			if a.owner != x.owner || a.machine != h.Author.MachineID {
 				return failure("corrupt_database")
@@ -256,6 +315,12 @@ func (d *databaseState) rebuild(o Options) error {
 		return err
 	}
 	d.eval = d.model.Evaluate()
+	if d.eval.OwnerPending[o.PinnedGenesisID] {
+		d.blocked = true
+	}
+	if err := d.enforceCallDependencies(); err != nil {
+		return err
+	}
 	if err := d.enforceFences(); err != nil {
 		return err
 	}
@@ -372,4 +437,13 @@ func (d *databaseState) observed() []view.Observed {
 		out = append(out, view.Observed{Record: x.rec, Owner: x.owner, Live: x.state == string(invalidate.Live) && x.rec.Body != nil, Admissible: admissible, ObservedTaint: taintValues(d.taint[x.rec.ID])})
 	}
 	return out
+}
+
+func containsID(ids []string, id string) bool {
+	for _, v := range ids {
+		if v == id {
+			return true
+		}
+	}
+	return false
 }

@@ -58,6 +58,13 @@ func TestMain(m *testing.M) {
 func options(t *testing.T, c Client) Options {
 	t.Helper()
 	home := t.TempDir()
+	// testing.TempDir leaves use 0777 masked by the invoking process umask.
+	// This fixture represents an owner-private home independently of that mask.
+	if runtime.GOOS != "windows" {
+		if e := os.Chmod(home, 0700); e != nil {
+			t.Fatal(e)
+		}
+	}
 	exe, e := os.Executable()
 	if e != nil {
 		t.Fatal(e)

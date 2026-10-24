@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 
 	"github.com/Telara-Labs/telara-memory/contract/jcs"
@@ -49,7 +50,10 @@ func NewOperation(opID string, records []SignedRecord) (*Operation, error) {
 			return nil, ErrInvalid
 		}
 		r, err := record.Parse(s.Record.HeaderJCS, s.Record.BodyJCS, s.Record.ID)
-		if err != nil || len(r.BodyJCS) == 0 {
+		if err != nil {
+			return nil, admissionError(err)
+		}
+		if len(r.BodyJCS) == 0 {
 			return nil, ErrInvalid
 		}
 		if !allowed(r) || seen[r.ID] || len(s.Sigs) < 1 || len(s.Sigs) > 2 || r.Header.Type != record.KindKeyOp && len(s.Sigs) != 1 {
@@ -94,11 +98,26 @@ func restore(raw []byte, digest string, check bool) (*Operation, error) {
 	if strictJSON(raw, &req) != nil || !validOpID(req.OpID) || len(req.Envelopes) < 1 || len(req.Envelopes) > MaxRecords {
 		return nil, ErrInvalid
 	}
+	// Match hosted import's lossless envelope check. Go's typed decoder accepts
+	// case-insensitive field aliases that the destination rejects. Nulls are
+	// already forbidden by strictJSON. Preserve the original wire bytes and
+	// digest; only the comparison is canonicalized.
+	canonical, err := jcs.Canonicalize(raw)
+	if err != nil {
+		return nil, ErrInvalid
+	}
+	typed, err := jcs.Marshal(req)
+	if err != nil || !bytes.Equal(canonical, typed) {
+		return nil, ErrInvalid
+	}
 	o := &Operation{raw: append([]byte(nil), raw...), digest: actual, id: req.OpID}
 	total := 0
 	seen := map[string]bool{}
 	for _, e := range req.Envelopes {
-		if e.V != record.Version || e.Receipt != nil || e.Grant != nil || e.Body == nil || e.Body.Codec != "zstd" || len(e.Sigs) < 1 || len(e.Sigs) > 2 {
+		if e.V != record.Version {
+			return nil, admissionError(&record.Error{Code: record.CodeUnsupportedVersion, Msg: "push requires " + record.ContractVersion, Quarantine: e.V > record.Version})
+		}
+		if e.Receipt != nil || e.Grant != nil || e.Body == nil || e.Body.Codec != "zstd" || len(e.Sigs) < 1 || len(e.Sigs) > 2 {
 			return nil, ErrInvalid
 		}
 		header, err := decode64(e.Header, record.MaxHeaderBytes)
@@ -118,7 +137,10 @@ func restore(raw []byte, digest string, check bool) (*Operation, error) {
 			return nil, ErrInvalid
 		}
 		r, err := record.Parse(header, body, e.ID)
-		if err != nil || !allowed(r) || seen[e.ID] {
+		if err != nil {
+			return nil, admissionError(err)
+		}
+		if !allowed(r) || seen[e.ID] {
 			return nil, ErrInvalid
 		}
 		if r.Header.Type != record.KindKeyOp && len(e.Sigs) != 1 {
@@ -135,6 +157,16 @@ func restore(raw []byte, digest string, check bool) (*Operation, error) {
 	}
 	return o, nil
 }
+
+// Retain the explicit contract rejection for migration/reporting while keeping
+// the existing invalid-operation sentinel. Never rewrite/reseal a legacy record.
+func admissionError(err error) error {
+	if record.CodeOf(err) == record.CodeUnsupportedVersion {
+		return errors.Join(ErrInvalid, err)
+	}
+	return ErrInvalid
+}
+
 func validOpID(s string) bool {
 	if len(s) < 1 || len(s) > 128 {
 		return false
@@ -150,7 +182,14 @@ func allowed(r *record.Record) bool {
 	h := r.Header
 	switch h.Type {
 	case record.KindSession, record.KindTask:
-		return h.Red.Profile == record.ProfilePushMetadata && h.Prov == record.ProvDerived
+		if h.Red.Profile != record.ProfilePushMetadata || h.Prov != record.ProvDerived {
+			return false
+		}
+		if h.Type == record.KindSession {
+			b, ok := r.Body.(*record.SessionMetaBody)
+			return ok && validSessionMetadata(b)
+		}
+		return true
 	case record.KindRetraction, record.KindErasure, record.KindKeyOp:
 		typed, err := jcs.MarshalRecord(r.Body)
 		if err != nil || !bytes.Equal(typed, r.BodyJCS) {

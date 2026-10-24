@@ -1,7 +1,6 @@
 package capture
 
 import (
-	"bytes"
 	"reflect"
 	"strings"
 	"testing"
@@ -17,7 +16,7 @@ func TestProducerDecisionFrontierAndUnavailableHolds(t *testing.T) {
 	id := "ev1:" + strings.Repeat("a", 64)
 	source := strings.Repeat("b", 64)
 	plain := record.Event{ID: id, Kind: "assistant_text", Prov: "transcript", Ruleset: 3, Text: &record.Text{Body: "synthetic X", Bytes: 11}}
-	old, err := record.ReviseEvent(plain, nil, bytes.Repeat([]byte{54}, 32))
+	old, err := record.ReviseEvent(plain, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

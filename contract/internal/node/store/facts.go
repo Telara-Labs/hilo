@@ -60,7 +60,7 @@ func (s *Store) loadFacts(ctx context.Context, d *databaseState) error {
 	}
 	for _, p := range ps {
 		f := d.facts[p.SessionKey]
-		f.V = 2
+		f.V = record.Version
 		f.Presence = append(f.Presence, *p)
 		d.facts[p.SessionKey] = f
 	}
@@ -79,7 +79,7 @@ func (s *Store) loadFacts(ctx context.Context, d *databaseState) error {
 			return failure("corrupt_database")
 		}
 		f := d.facts[w.SessionKey]
-		f.V = 2
+		f.V = record.Version
 		f.Witnesses = append(f.Witnesses, w)
 		d.facts[w.SessionKey] = f
 	}

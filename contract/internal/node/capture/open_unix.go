@@ -125,6 +125,10 @@ func (h *openedUnitHandle) close() {
 	}
 	h.directories = nil
 }
+
+// stable compares identity, size, mtime, mode and ctime. Linux ctime comes from
+// a coarse clock, so a same-size rewrite with restored mtime inside one tick of
+// the open is not detectable here.
 func (h *openedUnitHandle) stable() bool {
 	if h == nil || h.file == nil {
 		return false

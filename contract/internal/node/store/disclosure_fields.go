@@ -180,8 +180,16 @@ func (d *databaseState) classifyFields() error {
 	if e != nil {
 		return failure("ruleset_unavailable")
 	}
+	overlay, e := localpolicy.TenantOverlay(d.tenant.body())
+	if e != nil {
+		return failure("policy_violation")
+	}
 	totalFields := 0
 	for _, x := range d.records {
+		if !d.policyReadAllowed(x) {
+			d.fields[x.rec.ID] = nil
+			continue
+		}
 		fields := enumerateFields(x.rec)
 		totalFields += len(fields)
 		if totalFields > disclosureProjectionFieldLimit {
@@ -200,7 +208,7 @@ func (d *databaseState) classifyFields() error {
 			if !completeField(d, x, *f) || fact.ruleset != rules.Fingerprint() {
 				continue
 			}
-			p, err := disclosuretext.PrepareField(disclosuretext.FieldInput{Family: f.family, EventKind: f.eventKind, Value: f.value, Ordinal: f.ordinal}, work)
+			p, err := disclosuretext.PrepareField(disclosuretext.FieldInput{Family: f.family, EventKind: f.eventKind, Value: f.value, Ordinal: f.ordinal, Overlay: overlay}, work)
 			if err != nil {
 				f.reason = disclosuretext.Code(err)
 				continue

@@ -99,7 +99,7 @@ func TestOpaqueFallbackIDThroughActualDaemon(t *testing.T) {
 			t.Fatal("same-connection retry duplicated mutation")
 		}
 		call := calls[len(calls)-1]
-		expected, e := record.FallbackOpID(call.Access.ScopeID, hello.ConnectionID, idJSON, call.Tool, call.ArgsHash)
+		expected, e := record.HE("op", call.Access.ScopeID, hello.ConnectionID, string(idJSON), call.Tool, call.ArgsHash)
 		if e != nil || call.Op != expected {
 			t.Fatal("fallback did not use hashed transport correlation")
 		}

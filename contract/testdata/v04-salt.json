@@ -1,7 +1,5 @@
 {
-  "body_without_salt": "{\"text\":\"redacted body\"}",
-  "kind": "conclusion",
-  "lid": "98fbb7ef60124ed0c3bb88f8cdf6cdaafb901fea5d9ae82ac5e000228c31e1e4",
-  "salt": "G6fyPeZH2v7ngrc1KsSClA",
-  "salt_key_hex": "0707070707070707070707070707070707070707070707070707070707070707"
+  "note": "PUBLIC TEST ONLY. Direct injected independent bytes, never production entropy.",
+  "salt": "AwMDAwMDAwMDAwMDAwMDAw",
+  "test_entropy_hex": "03030303030303030303030303030303"
 }

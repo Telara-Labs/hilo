@@ -58,6 +58,8 @@ func rank(k TombKind) int {
 }
 
 type Item struct {
+	EventMembershipComplete           bool     // verified complete membership, including an empty set
+	BodyAvailable                     bool     // full call body/key provenance verified
 	Events                            []string // admitted event identities only, never salt or text
 	ID, LID                           string
 	Kind                              record.Kind
@@ -150,7 +152,14 @@ func (m *Model) Admit(it Item) {
 		m.directGrants[it.ID][grantKey(g)] = g
 	}
 
-	if _, ok := m.items[it.ID]; ok {
+	if old, ok := m.items[it.ID]; ok {
+		if !old.EventMembershipComplete && it.EventMembershipComplete {
+			old.Events = append([]string(nil), it.Events...)
+			old.EventMembershipComplete = true
+		}
+		if it.BodyAvailable {
+			old.BodyAvailable = true
+		}
 		return
 	}
 	c := it
@@ -172,8 +181,13 @@ func (m *Model) Apply(c Control) error {
 	}
 	switch c.Kind {
 	case record.KindErasure:
-		if c.Erasure == nil {
+		if c.Erasure == nil || c.Erasure.EventCoverage != "complete" {
 			return fmt.Errorf("control: absent erasure")
+		}
+		for _, e := range c.Erasure.Selectors.Events {
+			if _, tsk := c.byTenant(); tsk || e.Owner != c.Owner || !record.ValidOwner(e.Owner) || !record.IsSessionKey(e.SessionKey) || !record.IsEventID(e.EventID) {
+				return fmt.Errorf("control: event scope violation")
+			}
 		}
 	case record.KindRetraction:
 		if c.Retraction == nil {
@@ -337,7 +351,7 @@ func (m *Model) seeds(c *Control) []string {
 		switch c.Kind {
 		case record.KindErasure:
 			s := c.Erasure.Selectors
-			match = contains(s.IDs, id) || contains(s.LIDs, it.LID) || taskMatches(s.Tasks, it) || (it.SessionKey != "" && contains(s.Sessions, it.SessionKey)) || (it.Source != "" && contains(s.Sources, it.Source))
+			match = eventSelectorMatches(s.Events, it) || contains(s.IDs, id) || contains(s.LIDs, it.LID) || taskMatches(s.Tasks, it) || (it.SessionKey != "" && contains(s.Sessions, it.SessionKey)) || (it.Source != "" && contains(s.Sources, it.Source))
 		case record.KindRetraction:
 			match = contains(c.Retraction.IDs, id)
 		case record.KindWithdrawal:
@@ -358,11 +372,13 @@ func (m *Model) seeds(c *Control) []string {
 }
 
 type Eval struct {
-	EventBans  map[string]bool
-	Tombs      map[string]Tomb
-	Causes     map[string][]Tomb
-	HoldCauses map[string][]string
-	Status     map[string]Status
+	OwnerPending    map[string]bool
+	ControlComplete map[string]bool
+	EventBans       map[string]bool
+	Tombs           map[string]Tomb
+	Causes          map[string][]Tomb
+	HoldCauses      map[string][]string
+	Status          map[string]Status
 }
 
 func (m *Model) Evaluate() *Eval {
@@ -370,12 +386,23 @@ func (m *Model) Evaluate() *Eval {
 	for id, it := range m.items {
 		deps[id] = m.depsOf(it)
 	}
-	ev := &Eval{Tombs: map[string]Tomb{}, Causes: map[string][]Tomb{}, Status: map[string]Status{}, HoldCauses: map[string][]string{}, EventBans: map[string]bool{}}
+	ev := &Eval{OwnerPending: map[string]bool{}, ControlComplete: map[string]bool{}, Tombs: map[string]Tomb{}, Causes: map[string][]Tomb{}, Status: map[string]Status{}, HoldCauses: map[string][]string{}, EventBans: map[string]bool{}}
 	cids := make([]string, 0, len(m.controls))
 	for id := range m.controls {
 		cids = append(cids, id)
 	}
 	sort.Strings(cids)
+	// Authenticated supplemental coverage can complete earlier controls, without
+	// requiring the receiver to possess a private signing key.
+	signedBans := map[string]bool{}
+	for _, c := range m.controls {
+		if c.Erasure != nil {
+			for _, e := range c.Erasure.Selectors.Events {
+				signedBans[eventBanKey(e.Owner, e.SessionKey, e.EventID)] = true
+				ev.EventBans[eventBanKey(e.Owner, e.SessionKey, e.EventID)] = true
+			}
+		}
+	}
 	for _, cid := range cids {
 		c := m.controls[cid]
 		kind := map[record.Kind]TombKind{record.KindErasure: Erased, record.KindRetraction: Retracted, record.KindWithdrawal: Withdrawn}[c.Kind]
@@ -383,6 +410,10 @@ func (m *Model) Evaluate() *Eval {
 		targets := Closure(deps, m.seeds(c))
 		if c.Kind == record.KindErasure {
 			controlBans := map[string]bool{}
+			for _, e := range c.Erasure.Selectors.Events {
+				controlBans[eventBanKey(e.Owner, e.SessionKey, e.EventID)] = true
+			}
+			ev.ControlComplete[cid] = true
 			changed := true
 			for changed {
 				changed = false
@@ -391,8 +422,18 @@ func (m *Model) Evaluate() *Eval {
 					if it == nil || tsk && !m.hasGrant(id, tenant) {
 						continue
 					}
+					// A signed session ban covers every possible member without
+					// recovering the body. Unknown scope still requires a hold.
+					if (it.Kind == record.KindChunk || it.Kind == record.KindSession) && !it.EventMembershipComplete && !sessionCovered(m.controls, it.Owner, it.SessionKey) {
+						ev.OwnerPending[c.Owner] = true
+						ev.ControlComplete[cid] = false
+					}
 					for _, eventID := range it.Events {
 						key := eventBanKey(it.Owner, it.SessionKey, eventID)
+						if !signedBans[key] && !sessionCovered(m.controls, it.Owner, it.SessionKey) {
+							ev.OwnerPending[c.Owner] = true
+							ev.ControlComplete[cid] = false
+						}
 						if !controlBans[key] {
 							controlBans[key] = true
 							ev.EventBans[key] = true
@@ -432,6 +473,29 @@ func (m *Model) Evaluate() *Eval {
 			}
 		}
 	}
+	// Calls require the COMPLETE recursive signed graph, including every origin.
+	// The ordinary metadata-origin exception cannot make a comparator usable.
+	var strictPending func(string, map[string]bool) bool
+	strictPending = func(id string, path map[string]bool) bool {
+		if path[id] {
+			return true
+		}
+		it := m.items[id]
+		if it == nil {
+			return ev.Tombs[id] == (Tomb{})
+		}
+		if it.Kind == record.KindCall && !it.BodyAvailable {
+			return true
+		}
+		path[id] = true
+		defer delete(path, id)
+		for _, d := range m.depsOf(it) {
+			if strictPending(d, path) {
+				return true
+			}
+		}
+		return false
+	}
 	// A dependency cycle is unresolved, not a proof of complete ancestry.
 	pending := map[string]bool{}
 	var visit func(string, map[string]bool) bool
@@ -448,9 +512,9 @@ func (m *Model) Evaluate() *Eval {
 		}
 		path[id] = true
 		defer delete(path, id)
-		res := it.Route == record.RouteHostedPull && len(m.directGrants[id]) == 0
+		res := it.Route == record.RouteHostedPull && len(m.directGrants[id]) == 0 || it.Kind == record.KindCall && !it.BodyAvailable
 		pendingDeps := append([]string(nil), it.Deps...)
-		if it.Origin != "" && m.items[it.Origin] != nil {
+		if it.Origin != "" && (m.items[it.Origin] != nil || it.Kind == record.KindCall) {
 			pendingDeps = append(pendingDeps, it.Origin)
 		}
 		for _, d := range pendingDeps {
@@ -462,6 +526,9 @@ func (m *Model) Evaluate() *Eval {
 			if m.downstream(it, e) && ev.Tombs[e.ID] == (Tomb{}) && visit(e.ID, path) {
 				res = true
 			}
+		}
+		if it.Kind == record.KindCall && strictPending(id, map[string]bool{}) {
+			res = true
 		}
 		pending[id] = res
 		return res
@@ -510,6 +577,8 @@ func (m *Model) Evaluate() *Eval {
 		switch {
 		case ev.Tombs[id] != (Tomb{}):
 			ev.Status[id] = Invalidated
+		case ev.OwnerPending[it.Owner]:
+			ev.Status[id] = LineageHold
 		case m.hasUnreleasedExposure(it, ev):
 			ev.Status[id] = LineageHold
 		case visit(id, map[string]bool{}):
@@ -560,5 +629,30 @@ func eventBanKey(owner, session, eventID string) string {
 
 // EventErased must be checked before capture sealing; it retains only source identity.
 func (m *Model) EventErased(owner, session, eventID string) bool {
+	for _, c := range m.controls {
+		if c.Erasure != nil && c.Owner == owner && contains(c.Erasure.Selectors.Sessions, session) {
+			return true
+		}
+	}
 	return m.Evaluate().EventBans[eventBanKey(owner, session, eventID)]
+}
+
+func eventSelectorMatches(xs []record.EventSelector, it *Item) bool {
+	for _, e := range xs {
+		if e.Owner == it.Owner && e.SessionKey == it.SessionKey && contains(it.Events, e.EventID) {
+			return true
+		}
+	}
+	return false
+}
+func sessionCovered(controls map[string]*Control, owner, session string) bool {
+	if session == "" {
+		return false
+	}
+	for _, c := range controls {
+		if c.Erasure != nil && c.Owner == owner && contains(c.Erasure.Selectors.Sessions, session) {
+			return true
+		}
+	}
+	return false
 }

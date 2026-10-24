@@ -6,10 +6,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/Telara-Labs/telara-memory/contract/policy"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"modernc.org/sqlite"
@@ -41,6 +43,7 @@ type SignedRecord struct {
 }
 type AdmissionResult struct {
 	ID                   string
+	Physical             string
 	Sequence, Generation int64
 	State                string
 	Duplicate            bool
@@ -82,6 +85,8 @@ type ScrubResult struct {
 }
 
 type Store struct {
+	policyClock    *policy.Clock
+	policyStart    time.Time
 	reductions     *reductionContext
 	instanceID     string
 	poisoned       bool
@@ -131,7 +136,7 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 		db.Close()
 		return nil, failure("storage_error")
 	}
-	s := &Store{db: db, conn: conn, opts: o, path: path}
+	s := &Store{db: db, conn: conn, opts: o, path: path, policyStart: time.Now()}
 	fail := func(err error) (*Store, error) { conn.Close(); db.Close(); return nil, err }
 	if err = s.configure(ctx); err != nil {
 		return fail(err)
@@ -139,7 +144,16 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 	if err = s.write(ctx, func() error { return s.initialize(ctx) }); err != nil {
 		return fail(err)
 	}
-	if err = s.writeMode(ctx, true, func() error { _, err := s.load(ctx); return err }); err != nil {
+	if err = s.writeMode(ctx, true, func() error {
+		d, err := s.load(ctx)
+		if err != nil {
+			return err
+		}
+		if d.projectionBlocked {
+			return nil
+		}
+		return s.recoverV3(ctx, d)
+	}); err != nil {
 		var blocked *Error
 		if !errors.As(err, &blocked) || !blocked.OwnerBlocked {
 			return fail(err)
@@ -177,6 +191,12 @@ func (s *Store) Close() error {
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil
+	}
+	if s.policyClock != nil {
+		s.policyClock.Now(time.Now().UnixMilli(), time.Since(s.policyStart).Milliseconds())
+		if _, err := s.conn.ExecContext(context.Background(), "UPDATE trusted_time SET floor=max(floor,?),rollback=max(rollback,?) WHERE singleton=1", s.policyClock.Floor(), boolInt(s.policyClock.Rollback())); err != nil {
+			return failure("storage_error")
+		}
 	}
 	s.closed = true
 	err := s.conn.Close()
@@ -232,6 +252,14 @@ func (s *Store) writeMode(ctx context.Context, capture bool, f func() error) (re
 			if _, err := s.conn.ExecContext(context.Background(), "ROLLBACK"); err != nil && capture {
 				s.poisoned = true
 				result = failure("outcome_unknown")
+			}
+		}
+		if s.policyClock != nil && !s.poisoned {
+			if _, err := s.conn.ExecContext(context.Background(), "UPDATE trusted_time SET floor=max(floor,?),rollback=max(rollback,?) WHERE singleton=1", s.policyClock.Floor(), boolInt(s.policyClock.Rollback())); err != nil {
+				s.poisoned = true
+				if result == nil {
+					result = failure("outcome_unknown")
+				}
 			}
 		}
 	}()

@@ -285,7 +285,7 @@ func (f *fixture) signed(t *testing.T, i int) SignedRecord {
 	t.Helper()
 	task := fmt.Sprintf("22222222-2222-4222-8222-%012d", i)
 	h := record.Header{Type: record.KindTask, LID: record.TaskLID(record.Owner(record.RoleDevice, f.scope.Genesis, ""), task), Author: record.Author{MachineID: device, KeyID: sig.KeyID(f.recordKey.Public().(ed25519.PublicKey))}, At: 1761150000456, Prov: record.ProvDerived, Subj: record.Subject{TaskID: task, RepoID: repo}, Red: record.Redact{Profile: record.ProfilePushMetadata, Epoch: 7, Fingerprint: strings.Repeat("a", 64)}, Links: record.Links{Origin: strings.Repeat("b", 64)}}
-	r, err := record.Build(h, &record.TaskMetaBody{Status: "active"}, bytes.Repeat([]byte{7}, 32))
+	r, err := record.Build(h, &record.TaskMetaBody{Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -549,7 +549,7 @@ func fixtureDecodeRequest(raw []byte) (request, []*record.Record, error) {
 	total := 0
 	seen := map[string]bool{}
 	for _, e := range req.Envelopes {
-		if e.V != 2 || e.Receipt != nil || e.Grant != nil || e.Body == nil || e.Body.Codec != "zstd" || len(e.Sigs) < 1 || len(e.Sigs) > 2 {
+		if e.V != 3 || e.Receipt != nil || e.Grant != nil || e.Body == nil || e.Body.Codec != "zstd" || len(e.Sigs) < 1 || len(e.Sigs) > 2 {
 			return req, nil, ErrInvalid
 		}
 		h, err := base64.RawURLEncoding.Strict().DecodeString(e.Header)

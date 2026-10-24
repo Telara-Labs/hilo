@@ -47,7 +47,10 @@ func (w *world) signed(h record.Header, b any) SignedRecord {
 	h.Author = record.Author{MachineID: testMachine, KeyID: sig.KeyID(w.key.Public().(ed25519.PublicKey))}
 	h.At = w.at
 	h.Red = record.Redact{Profile: record.ProfileLocal}
-	r, e := record.Build(h, b, bytes.Repeat([]byte{7}, 32))
+	if erase, ok := b.(*record.ErasureBody); ok {
+		w.completeErasure(erase)
+	}
+	r, e := record.Build(h, freshFixtureBody(b))
 	if e != nil {
 		w.t.Fatal(e)
 	}
@@ -65,7 +68,7 @@ func (w *world) control(n int, k record.Kind, ids ...string) SignedRecord {
 	h := record.Header{Type: k, Prov: record.ProvUser}
 	h.LID, _ = record.ControlLID(k, sig.KeyID(w.key.Public().(ed25519.PublicKey)), record.H("nonce", fmt.Sprint(n))[:32])
 	if k == record.KindErasure {
-		return w.signed(h, &record.ErasureBody{Selectors: record.Selectors{IDs: ids}, Reason: "user_request"})
+		return w.signed(h, &record.ErasureBody{EventCoverage: "complete", Selectors: record.Selectors{IDs: ids}, Reason: "user_request"})
 	}
 	return w.signed(h, &record.RetractionBody{IDs: ids, Reason: "redaction_repair"})
 }
@@ -81,6 +84,13 @@ func (w *world) snapshot() Snapshot {
 	w.t.Helper()
 	v, e := w.s.Snapshot(context.Background(), ReadRequest{})
 	if e != nil {
+		var pending int
+		if w.s.conn.QueryRowContext(context.Background(), "SELECT count(*) FROM erasure_pending").Scan(&pending) == nil && pending > 0 {
+			if Code(e) != "bulk_confirmation_required" {
+				w.t.Fatal("pending erasure did not block public read", e)
+			}
+			return fixturePendingMetadata(w.t, w.s)
+		}
 		w.t.Fatal(e)
 	}
 	return v

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"testing"
@@ -19,7 +18,7 @@ func TestKernelBindingCorrectionRetainsActualObservedWitnesses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ev, err := record.ReviseEvent(record.Event{ID: eid, Seq: 0, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "observed boundary"}}, nil, bytes.Repeat([]byte{3}, 32))
+		ev, err := record.ReviseEvent(record.Event{ID: eid, Seq: 0, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "observed boundary"}}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

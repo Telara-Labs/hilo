@@ -20,7 +20,7 @@ func historicalSessionFixture(t *testing.T, k *kernelWorld, native, tag string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	ev, err := record.ReviseEvent(record.Event{ID: eid, Seq: 0, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "review boundary"}}, nil, bytes.Repeat([]byte{3}, 32))
+	ev, err := record.ReviseEvent(record.Event{ID: eid, Seq: 0, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "review boundary"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestDisclosureHistoricalEventTaintBeforeBindingSurvivesCorrection(t *testin
 	k.key = historicalKey
 	a, oldChunk, oldPage, oldEvent := historicalSessionFixture(t, k, "77777777-7777-4777-8777-777777777777", "web")
 	k.key = rootKey
-	cleanEvent, err := record.ReviseEvent(record.Event{ID: oldEvent.ID, Seq: 0, Kind: oldEvent.Kind, Prov: oldEvent.Prov, Text: &record.Text{Body: "clean corrected boundary"}}, []string{oldEvent.Revision}, bytes.Repeat([]byte{4}, 32))
+	cleanEvent, err := record.ReviseEvent(record.Event{ID: oldEvent.ID, Seq: 0, Kind: oldEvent.Kind, Prov: oldEvent.Prov, Text: &record.Text{Body: "clean corrected boundary"}}, []string{oldEvent.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestDisclosureHistoricalTaintRespectsBoundaryAndInitialInvalidSignature(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	ev, err := record.ReviseEvent(record.Event{ID: eid, Seq: 1, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "future tainted event"}}, nil, bytes.Repeat([]byte{6}, 32))
+	ev, err := record.ReviseEvent(record.Event{ID: eid, Seq: 1, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "future tainted event"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestDisclosureHistoricalTaintRespectsBoundaryAndInitialInvalidSignature(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	badEvent, err := record.ReviseEvent(record.Event{ID: badEventID, Seq: 0, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "unverified taint canary"}}, nil, bytes.Repeat([]byte{7}, 32))
+	badEvent, err := record.ReviseEvent(record.Event{ID: badEventID, Seq: 0, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "unverified taint canary"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

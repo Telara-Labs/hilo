@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosuretext"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/replay"
@@ -28,6 +29,7 @@ type disclosureExternalFixture struct {
 	scope   disclosure.RequestScope
 	proof   disclosure.CredentialProof
 	epoch   int64
+	ops     map[string]string
 }
 
 func newDisclosureExternalFixture(t *testing.T, native string, write bool) *disclosureExternalFixture {
@@ -138,13 +140,38 @@ func externalDisclosureCommand(t *testing.T, tool string, args any) disclosure.C
 	return command
 }
 
-func externalDisclosureCall(op string) disclosure.CallIdentity {
-	return disclosure.CallIdentity{SuppliedOpID: op, JSONRPCID: json.RawMessage(`1`)}
+func (d *disclosureExternalFixture) call(t *testing.T, op string) disclosure.CallIdentity {
+	t.Helper()
+	if disclosuretext.ValidateIdentity(disclosuretext.ExternalOpID, op) != nil {
+		return disclosure.CallIdentity{SuppliedOpID: op, JSONRPCID: json.RawMessage(`1`)}
+	}
+	if d.ops == nil {
+		d.ops = map[string]string{}
+	}
+	if token := d.ops[op]; token != "" {
+		return disclosure.CallIdentity{SuppliedOpID: token}
+	}
+	pool, err := d.client.IssueOperationTokens(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	used := map[string]bool{}
+	for _, token := range d.ops {
+		used[token] = true
+	}
+	for _, token := range pool {
+		if !used[token] {
+			d.ops[op] = token
+			return disclosure.CallIdentity{SuppliedOpID: token}
+		}
+	}
+	t.Fatal("test token pool exhausted")
+	return disclosure.CallIdentity{}
 }
 
 func (d *disclosureExternalFixture) execute(t *testing.T, op string, command disclosure.Command) *disclosure.Reply {
 	t.Helper()
-	r, err := d.client.Execute(context.Background(), d.scope, externalDisclosureCall(op), command, disclosure.ByteBudget{MaxBytes: 4096})
+	r, err := d.client.Execute(context.Background(), d.scope, d.call(t, op), command, disclosure.ByteBudget{MaxBytes: 4096})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +285,7 @@ func TestDisclosurePublicReplayReopenKeepsSignedMutation(t *testing.T) {
 	externalDisclosureSameRecords(t, before, d.records(t))
 	args["goal"] = strings.Replace(goal, "originalmiddle", "differentmiddle", 1)
 	changed := externalDisclosureCommand(t, "local.create_task", args)
-	_, err = d.client.Execute(context.Background(), d.scope, externalDisclosureCall("stable-create-operation"), changed, disclosure.ByteBudget{MaxBytes: 4096})
+	_, err = d.client.Execute(context.Background(), d.scope, d.call(t, "stable-create-operation"), changed, disclosure.ByteBudget{MaxBytes: 4096})
 	if err == nil || !strings.Contains(err.Error(), "op_conflict") {
 		t.Fatal("changed full arguments did not conflict with the original operation")
 	}
@@ -324,7 +351,7 @@ func TestDisclosurePublicIdentityRejectionLeavesNoManagedTrace(t *testing.T) {
 	before := d.records(t)
 	bad := []string{"ghp_" + strings.Repeat("A", 32), "glpat-" + strings.Repeat("B", 24), "sk-" + strings.Repeat("C", 24)}
 	for _, value := range bad {
-		call := externalDisclosureCall(value)
+		call := d.call(t, value)
 		_, err := d.client.Execute(context.Background(), d.scope, call, command, disclosure.ByteBudget{MaxBytes: 4096})
 		if err == nil || err.Error() != "unsafe_identity" {
 			t.Fatal("unsafe operation identity was accepted or echoed")
@@ -374,7 +401,7 @@ func TestDisclosurePublicIdentityRejectionLeavesNoManagedTrace(t *testing.T) {
 func TestDisclosurePublicReadGrantDoesNotPermitTaskMutation(t *testing.T) {
 	d := newDisclosureExternalFixture(t, "native fixture", false)
 	command := externalDisclosureCommand(t, "local.create_task", map[string]any{"goal": "Read permission cannot create this task"})
-	reply, err := d.client.Execute(context.Background(), d.scope, externalDisclosureCall("read-only-create-refusal"), command, disclosure.ByteBudget{MaxBytes: 4096})
+	reply, err := d.client.Execute(context.Background(), d.scope, d.call(t, "read-only-create-refusal"), command, disclosure.ByteBudget{MaxBytes: 4096})
 	if err == nil {
 		result, releaseErr := reply.Release(context.Background())
 		if releaseErr == nil && !result.IsError {
@@ -501,7 +528,7 @@ func TestDisclosurePublicVisibleACKAndPageReplayAcrossReopen(t *testing.T) {
 	if err != nil || receipt.Status != "already_confirmed" {
 		t.Fatal("visible exact ACK was not idempotent", err)
 	}
-	call := externalDisclosureCall("public-page-two")
+	call := d.call(t, "public-page-two")
 	prepared, err := d.client.Next(ctx, d.scope, call, cursor[1], disclosure.ByteBudget{MaxBytes: 4096})
 	if err != nil {
 		t.Fatal("own Release or ACK prematurely expired the continuation", err)
@@ -512,7 +539,7 @@ func TestDisclosurePublicVisibleACKAndPageReplayAcrossReopen(t *testing.T) {
 		t.Fatal("next page did not advance the frozen selection")
 	}
 	before := d.records(t)
-	if _, err = d.client.Next(ctx, d.scope, externalDisclosureCall("other-page-two"), cursor[1], disclosure.ByteBudget{MaxBytes: 4096}); err == nil || err.Error() != "cursor_consumed" {
+	if _, err = d.client.Next(ctx, d.scope, d.call(t, "other-page-two"), cursor[1], disclosure.ByteBudget{MaxBytes: 4096}); err == nil || err.Error() != "cursor_consumed" {
 		t.Fatal("a second operation consumed the same cursor")
 	}
 	d.reopen(t)
@@ -555,7 +582,7 @@ func TestDisclosurePublicAuthenticationScopeBindingAndRotation(t *testing.T) {
 	}
 	command := externalDisclosureCommand(t, "local.create_task", map[string]any{"goal": "Rotation fixture"})
 	before := d.records(t)
-	if _, err = d.client.Execute(ctx, scope, externalDisclosureCall("foreign-service-scope"), command, disclosure.ByteBudget{MaxBytes: 4096}); err == nil {
+	if _, err = d.client.Execute(ctx, scope, d.call(t, "foreign-service-scope"), command, disclosure.ByteBudget{MaxBytes: 4096}); err == nil {
 		t.Fatal("scope from another service crossed the opaque capability boundary")
 	}
 	externalDisclosureSameRecords(t, before, d.records(t))
@@ -642,7 +669,7 @@ func TestDisclosurePublicAdministrativeReplayAndWriteActionCAS(t *testing.T) {
 	before := d.records(t)
 	checkpoint := externalDisclosureCommand(t, "local.checkpoint_task", map[string]any{"task_id": task, "milestone": "Forbidden action"})
 	for i, command := range []disclosure.Command{create, checkpoint} {
-		if _, err = d.client.Execute(ctx, d.scope, externalDisclosureCall(fmt.Sprintf("denied-action-%d", i)), command, disclosure.ByteBudget{MaxBytes: 4096}); err == nil || err.Error() != "write_not_permitted" {
+		if _, err = d.client.Execute(ctx, d.scope, d.call(t, fmt.Sprintf("denied-action-%d", i)), command, disclosure.ByteBudget{MaxBytes: 4096}); err == nil || err.Error() != "write_not_permitted" {
 			t.Fatal("ungranted task action was accepted")
 		}
 	}
@@ -658,7 +685,7 @@ func TestDisclosurePublicLegacyAttributionAndTypedMutationReplay(t *testing.T) {
 		Type: record.KindTask, LID: record.TaskLID(d.base.opts.PinnedGenesisID, legacyTask),
 		Author: record.Author{KeyID: d.base.opts.PinnedGenesisID, MachineID: d.base.opts.LocalMachineID},
 		At:     1761150000100, Prov: record.ProvMCPExplicit, Subj: record.Subject{TaskID: legacyTask}, Red: record.Redact{Profile: record.ProfileLocal}, Op: record.H("external-legacy-fixture", legacyTask),
-	}, &record.TaskBody{Name: "Legacy fixture", Goal: "Signed legacy task", Status: "active"}, bytes.Repeat([]byte{0x73}, record.SaltKeySize))
+	}, &record.TaskBody{Name: "Legacy fixture", Goal: "Signed legacy task", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +694,7 @@ func TestDisclosurePublicLegacyAttributionAndTypedMutationReplay(t *testing.T) {
 	}
 	before := d.records(t)
 	pause := externalDisclosureCommand(t, "local.pause_task", map[string]any{"task_id": legacyTask, "resume_context": "Claimed legacy write", "token_estimate": 0})
-	if _, err = d.client.Execute(context.Background(), d.scope, externalDisclosureCall("deny-legacy-write"), pause, disclosure.ByteBudget{MaxBytes: 4096}); err == nil || err.Error() != "write_not_permitted" {
+	if _, err = d.client.Execute(context.Background(), d.scope, d.call(t, "deny-legacy-write"), pause, disclosure.ByteBudget{MaxBytes: 4096}); err == nil || err.Error() != "write_not_permitted" {
 		t.Fatal("signed legacy identity fabricated trusted task-write attribution")
 	}
 	externalDisclosureSameRecords(t, before, d.records(t))
@@ -689,7 +716,7 @@ func TestDisclosurePublicLegacyAttributionAndTypedMutationReplay(t *testing.T) {
 	externalDisclosureSameRecords(t, before, d.records(t))
 	args["final_summary"] = ""
 	changed := externalDisclosureCommand(t, "local.complete_task", args)
-	if _, err = d.client.Execute(context.Background(), d.scope, externalDisclosureCall("typed-complete"), changed, disclosure.ByteBudget{MaxBytes: 4096}); err == nil || err.Error() != "op_conflict" {
+	if _, err = d.client.Execute(context.Background(), d.scope, d.call(t, "typed-complete"), changed, disclosure.ByteBudget{MaxBytes: 4096}); err == nil || err.Error() != "op_conflict" {
 		t.Fatal("absent and explicitly empty conclusion arguments lost their distinction")
 	}
 	externalDisclosureSameRecords(t, before, d.records(t))

@@ -2,9 +2,9 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,11 +13,17 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/replay"
 )
 
-func (e *DisclosureEngine) Execute(ctx context.Context, h ClientHandle, sh ScopeHandle, call CallIdentity, command TypedCommand, budget ByteBudget) (CommittedReplyHandle, error) {
-	var out CommittedReplyHandle
+func (e *DisclosureEngine) Execute(ctx context.Context, h ClientHandle, sh ScopeHandle, call CallIdentity, command TypedCommand, budget ByteBudget) (out CommittedReplyHandle, retErr error) {
 	if e == nil || e.store == nil {
 		return out, failure("unauthorized")
 	}
+	// Validation and entropy failures precede the writer too. An unidentified
+	// invocation must retire its scope on every refusal, not only SQL failures.
+	defer func() {
+		if retErr != nil {
+			e.retireEphemeral(h)
+		}
+	}()
 	if call.SuppliedOpID != "" && disclosuretext.ValidateIdentity(disclosuretext.ExternalOpID, call.SuppliedOpID) != nil {
 		return out, failure("unsafe_identity")
 	}
@@ -58,39 +64,26 @@ func (e *DisclosureEngine) Execute(ctx context.Context, h ClientHandle, sh Scope
 			return err
 		}
 		op := ""
-		schema := disclosuretext.CurrentSchema(command.Tool())
-		fingerprint := e.ruleset.Fingerprint()
 		if call.SuppliedOpID != "" {
-			op, err = record.SuppliedOpID(h.credential, call.SuppliedOpID)
-			if err != nil {
-				return failure("unsafe_identity")
-			}
-			var oldTool string
-			err = e.store.conn.QueryRowContext(ctx, "SELECT tool,arg_schema,ruleset FROM operation WHERE owner=? AND credential=? AND op=?", e.config.OwnerGenesis, h.credential, op).Scan(&oldTool, &schema, &fingerprint)
-			if err != nil && err != sql.ErrNoRows {
-				return failure("storage_error")
-			}
-			if err == nil && oldTool != command.Tool() {
-				return failure("op_conflict")
-			}
+			op, err = e.suppliedOperation(ctx, h, call.SuppliedOpID)
+		} else {
+			op, err = e.fallbackOperation(h, sc, rpc, command.Tool())
 		}
-		n, err := disclosuretext.NormalizeCommand(command, budget, schema, fingerprint)
 		if err != nil {
-			return failure(disclosuretext.Code(err))
-		}
-		defer clear(n.Canonical)
-		if op == "" {
-			op, err = record.FallbackOpID(sc.id, h.connection, rpc, n.Tool, n.ArgsHash)
-			if err != nil {
-				return failure("unsafe_identity")
-			}
+			return err
 		}
 		prior, err := e.store.loadOutcome(ctx, h.credential, op)
 		if err != nil {
 			return err
 		}
-		if prior != nil && (prior.tool != n.Tool || prior.argsHash != n.ArgsHash) {
-			return failure("op_conflict")
+		if prior == nil && call.SuppliedOpID != "" {
+			var consumed bool
+			if e.store.conn.QueryRowContext(ctx, "SELECT consumed FROM operation_token WHERE token=? AND credential=?", call.SuppliedOpID, h.credential).Scan(&consumed) != nil {
+				return failure("storage_error")
+			}
+			if consumed {
+				return failure("unavailable")
+			}
 		}
 		d, err := e.store.load(ctx)
 		if err != nil {
@@ -98,6 +91,35 @@ func (e *DisclosureEngine) Execute(ctx context.Context, h ClientHandle, sh Scope
 		}
 		if d.blocked {
 			return failure("owner_blocked")
+		}
+		// Missing or ineligible original keys return one uniform result before
+		// normalizing, hashing or comparing matching/different retry arguments.
+		if prior != nil && !e.comparatorPermitted(d, c, sc, prior) {
+			out = CommittedReplyHandle{e, h.credential, op, sc.id}
+			return nil
+		}
+		schema := disclosuretext.CurrentSchema(command.Tool())
+		fingerprint := e.ruleset.Fingerprint()
+		if prior != nil {
+			if prior.tool != command.Tool() {
+				return failure("op_conflict")
+			}
+			schema, fingerprint = prior.schema, prior.ruleset
+		}
+		n, err := disclosuretext.NormalizeTenantCommand(command, budget, schema, fingerprint, d.tenant.body())
+		if err != nil {
+			return failure(disclosuretext.Code(err))
+		}
+		defer clear(n.Canonical)
+		if prior != nil {
+			body := d.byID[prior.callID].rec.Body.(*record.CallBody)
+			hash, err := record.CallCommitment(body.Salt, "args", body.Tool, n.Canonical)
+			if err != nil {
+				return failure("unavailable")
+			}
+			if hash != body.ArgsHash {
+				return failure("op_conflict")
+			}
 		}
 		before := d.generation
 		if before == math.MaxInt64 {
@@ -112,7 +134,7 @@ func (e *DisclosureEngine) Execute(ctx context.Context, h ClientHandle, sh Scope
 			if sh.generation != sc.generation || sh.evidence != sc.evidence {
 				return failure("stale_scope")
 			}
-			o = &operationOutcome{budget: budget.MaxBytes, owner: e.config.OwnerGenesis, credential: h.credential, op: op, tool: n.Tool, argsHash: n.ArgsHash, schema: n.SchemaID, ruleset: n.RulesetFingerprint, builder: disclosureBuilderVersion, scope: sc.id, grantEpoch: c.epoch, scopeGeneration: sc.generation, evidence: sc.evidence, dbGeneration: before + 1}
+			o = &operationOutcome{budget: budget.MaxBytes, owner: e.config.OwnerGenesis, credential: h.credential, op: op, tool: n.Tool, schema: n.SchemaID, ruleset: n.RulesetFingerprint, builder: disclosureBuilderVersion, scope: sc.id, grantEpoch: c.epoch, scopeGeneration: sc.generation, evidence: sc.evidence, dbGeneration: before + 1}
 			o.callRef, err = e.uniqueCallRef(ctx, pool)
 			if err != nil {
 				return err
@@ -142,21 +164,34 @@ func (e *DisclosureEngine) Execute(ctx context.Context, h ClientHandle, sh Scope
 				}
 				o.members[i].deps = deps
 			}
-			resultHash, err := logicalOutcomeHash(o)
+			result, err := logicalOutcomeBytes(o)
 			if err != nil {
 				return err
 			}
-			outcome := "ok"
-			errorCode := ""
+			defer clear(result)
+			outcome, errorCode := "ok", ""
 			if o.isError {
 				outcome = "error"
 				errorCode = o.result
 			}
-			body := &record.CallBody{CallRef: o.callRef, ScopeID: sc.id, Tool: n.Tool, ArgsHash: n.ArgsHash, ResultHash: resultHash, TaskID: o.task, Outcome: outcome, Err: errorCode}
-			x, err := e.buildRecord(d, sc, o, record.KindCall, record.CallLID(o.callRef), body, record.Links{}, now.UnixMilli())
+			deps := map[string]bool{}
+			for _, m := range o.members {
+				deps[m.id] = true
+				for _, id := range m.deps {
+					deps[id] = true
+				}
+			}
+			roots := make([]string, 0, len(deps))
+			for id := range deps {
+				roots = append(roots, id)
+			}
+			sort.Strings(roots)
+			body := record.CallBody{CallRef: o.callRef, ScopeID: sc.id, Tool: receiptTool(n.Tool), TaskID: o.task, Outcome: outcome, Err: errorCode, CommitmentDeps: roots}
+			x, err := e.buildCall(d, sc, o, body, n.Canonical, result, now.UnixMilli())
 			if err != nil {
 				return e.refuseTrusted(ctx, d, err)
 			}
+			o.argsHash = x.rec.Body.(*record.CallBody).ArgsHash
 			added = append(added, x)
 			o.callID = x.rec.ID
 			o.createdSeq = x.seq
@@ -175,6 +210,16 @@ func (e *DisclosureEngine) Execute(ctx context.Context, h ClientHandle, sh Scope
 			return err
 		}
 		if prior == nil {
+			if call.SuppliedOpID != "" {
+				res, err := e.store.conn.ExecContext(ctx, "UPDATE operation_token SET consumed=1 WHERE token=? AND credential=? AND consumed=0", call.SuppliedOpID, h.credential)
+				if err != nil {
+					return failure("storage_error")
+				}
+				n, _ := res.RowsAffected()
+				if n != 1 {
+					return failure("outcome_unknown")
+				}
+			}
 			if err = e.persistBuilderFacts(ctx, d, added, o, sc); err != nil {
 				return err
 			}
@@ -252,7 +297,12 @@ func (e *DisclosureEngine) persistOutcomeAndSelection(ctx context.Context, d *da
 	}
 	return e.store.persistOutcome(ctx, o)
 }
-func (e *DisclosureEngine) Next(ctx context.Context, h ClientHandle, sc ScopeHandle, call CallIdentity, cursor string, budget ByteBudget) (CommittedReplyHandle, error) {
+func (e *DisclosureEngine) Next(ctx context.Context, h ClientHandle, sc ScopeHandle, call CallIdentity, cursor string, budget ByteBudget) (out CommittedReplyHandle, retErr error) {
+	defer func() {
+		if retErr != nil && e != nil && e.store != nil {
+			e.retireEphemeral(h)
+		}
+	}()
 	raw, err := json.Marshal(struct {
 		Cursor string `json:"cursor_id"`
 	}{cursor})
@@ -266,6 +316,9 @@ func (e *DisclosureEngine) Next(ctx context.Context, h ClientHandle, sc ScopeHan
 	return e.Execute(ctx, h, sc, call, cmd, budget)
 }
 func (e *DisclosureEngine) Release(ctx context.Context, h ClientHandle, reply CommittedReplyHandle) (ReleasedText, error) {
+	if e != nil && e.store != nil {
+		defer e.retireEphemeral(h)
+	}
 	var out ReleasedText
 	if e == nil || e.store == nil || reply.engine != e || reply.credential != h.credential {
 		return out, failure("unauthorized")
@@ -304,6 +357,10 @@ func (e *DisclosureEngine) Release(ctx context.Context, h ClientHandle, reply Co
 		}
 		if d.blocked {
 			return failure("owner_blocked")
+		}
+		if !e.comparatorPermitted(d, c, sc, o) {
+			out = ReleasedText{text: replay.Unavailable}
+			return nil
 		}
 		before := d.generation
 		if before == math.MaxInt64 {

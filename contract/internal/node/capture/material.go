@@ -13,7 +13,6 @@ import (
 // network, keystore IO or UI inside the writer. Installed key bootstrap is not
 // implemented here. Callers remain responsible for their original key buffers.
 type PreloadedKeyMaterial struct {
-	salt    [32]byte
 	private [64]byte
 	keyID   string
 	valid   bool
@@ -29,7 +28,6 @@ func PreloadKeys(deviceSaltKey []byte, privateKey ed25519.PrivateKey) (Preloaded
 	if !bytes.Equal(expected, privateKey) {
 		return out, hold("key_material")
 	}
-	copy(out.salt[:], deviceSaltKey)
 	copy(out.private[:], privateKey)
 	out.keyID = sig.KeyID(privateKey.Public().(ed25519.PublicKey))
 	out.valid = true
@@ -42,7 +40,6 @@ func (k *PreloadedKeyMaterial) Clear() {
 	if k == nil {
 		return
 	}
-	clear(k.salt[:])
 	clear(k.private[:])
 	k.keyID = ""
 	k.valid = false

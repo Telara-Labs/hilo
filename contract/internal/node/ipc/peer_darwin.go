@@ -44,7 +44,7 @@ func checkACL(fd int, private bool) error {
 	var buf [4096]byte
 	_, _, errno := unix.Syscall6(unix.SYS_FGETATTRLIST, uintptr(fd), uintptr(unsafe.Pointer(&attrs)), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), 0, 0)
 	if errno != 0 {
-		return ErrUnsafe
+		return unsafePath("fgetattrlist", fmt.Sprintf("fd=%d", fd), "ACL metadata query required", errno)
 	}
 	return checkDarwinACL(buf[:], private)
 }

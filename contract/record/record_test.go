@@ -3,6 +3,7 @@ package record
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -132,8 +133,8 @@ func fixtures() map[string]func() (Header, any) {
 			h := baseHeader(KindCall, ProvMCPExplicit)
 			h.Op = op
 			h.LID = CallLID("m1.k7qz3c7xw2")
-			return h, &CallBody{CallRef: "m1.k7qz3c7xw2", ScopeID: "stdio:claude-code", Tool: "task_checkpoint",
-				ArgsHash: hx("args"), ResultHash: hx("result"), TaskID: tTask, Outcome: "ok"}
+			return h, &CallBody{CallRef: "m1.k7qz3c7xw2", ScopeID: "sc1:" + tMachine + ":00112233445566778899aabbccddeeff", Tool: "telara_task_checkpoint", CommitmentDeps: []string{},
+				TaskID: tTask, Outcome: "ok"}
 		},
 		"binding": func() (Header, any) {
 			h := baseHeader(KindBinding, ProvDerived)
@@ -163,7 +164,7 @@ func fixtures() map[string]func() (Header, any) {
 			h := baseHeader(KindErasure, ProvUser)
 			lid, _ := ControlLID(KindErasure, tKeyID, "00112233445566778899aabbccddeeff")
 			h.LID = lid
-			return h, &ErasureBody{Selectors: Selectors{Sessions: []string{sk}, Sources: []string{hx("src")}}, Reason: "user_request", Resolved: 212}
+			return h, &ErasureBody{EventCoverage: "complete", Selectors: Selectors{Sessions: []string{sk}, Sources: []string{hx("src")}}, Reason: "user_request", Resolved: 212}
 		},
 		"withdrawal": func() (Header, any) {
 			h := baseHeader(KindWithdrawal, ProvUser)
@@ -174,8 +175,11 @@ func fixtures() map[string]func() (Header, any) {
 		},
 		"key_op": func() (Header, any) {
 			h := baseHeader(KindKeyOp, ProvUser)
-			h.LID = KeyLID(tKeyID)
-			return h, &KeyOpBody{Op: OpGenesis, Subject: KeyRef{KeyID: tKeyID, Alg: "ed25519", Pub: "AAAA", Role: RoleDevice, MachineID: tMachine}, Genesis: tKeyID}
+			pub := bytes.Repeat([]byte{9}, 32)
+			kid := ContentID(pub)[:32]
+			h.Author.KeyID = kid
+			h.LID = KeyLID(kid)
+			return h, &KeyOpBody{Op: OpGenesis, Subject: KeyRef{KeyID: kid, Alg: "ed25519", Pub: base64.RawURLEncoding.EncodeToString(pub), Role: RoleDevice, MachineID: tMachine}, Genesis: kid}
 		},
 		"policy": func() (Header, any) {
 			h := baseHeader(KindPolicy, ProvUser)
@@ -190,7 +194,7 @@ func fixtures() map[string]func() (Header, any) {
 func mustBuild(t *testing.T, name string) *Record {
 	t.Helper()
 	h, b := fixtures()[name]()
-	r, err := Build(h, b, tSaltKey)
+	r, err := Build(h, b)
 	if err != nil {
 		t.Fatalf("%s: %v", name, err)
 	}
@@ -309,37 +313,26 @@ func TestHAndKeys(t *testing.T) {
 	if a != "ev1:"+H("ev1", tSessionKey(), "tool_call", `{"inner":0,"native_item_id":"call_1","part":0}`) {
 		t.Fatal("event id formula")
 	}
-	cr, err := NewCallRef(bytes.NewReader([]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}))
+	cr, err := newCallRef(bytes.NewReader([]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}))
 	if err != nil || !IsCallRef(cr) || cr != "m1.7777777777" {
 		t.Fatalf("call ref %q %v", cr, err)
 	}
-	ri, _ := RequestIdentityRPC("conn-1", []byte(` 7 `))
-	ri2, _ := RequestIdentityRPC("conn-1", []byte(`7`))
-	if ri != ri2 || ri != `["rpc","conn-1","7"]` {
-		t.Fatalf("rpc identity %q", ri)
+	if _, err := RequestIdentityRPC("conn", []byte(`"candidate"`)); err == nil {
+		t.Fatal("raw RPC retained")
 	}
-	if ValidCallerOpID(strings.Repeat("a", 129)) || !ValidCallerOpID("a.b:c-1_2") {
-		t.Fatal("caller op id")
+	if ValidCallerOpID(strings.Repeat("a", 129)) || !ValidCallerOpID("op1:00112233445566778899aabbccddeeff") {
+		t.Fatal("caller token syntax")
 	}
+
 }
 
 func TestSalt(t *testing.T) {
-	body := []byte(`{"text":"hello"}`)
-	s1, _ := Salt(tSaltKey, KindConclusion, hx("l"), body)
-	s2, _ := Salt(tSaltKey, KindConclusion, hx("l"), body)
-	s3, _ := Salt(tSaltKey, KindConclusion, hx("l"), []byte(`{"text":"hellp"}`))
-	s4, _ := Salt(bytes.Repeat([]byte{8}, 32), KindConclusion, hx("l"), body)
-	s5, _ := Salt(tSaltKey, KindCheckpoint, hx("l"), body)
-	if s1 != s2 || s1 == s3 || s1 == s4 || s1 == s5 || len(s1) != 22 {
-		t.Fatal("salt properties")
+	if _, err := Salt(tSaltKey, KindConclusion, hx("l"), []byte(`{"text":"guess"}`)); err == nil {
+		t.Fatal("retired deterministic salt API")
 	}
-	if _, err := Salt([]byte("short"), KindConclusion, hx("l"), body); err == nil {
-		t.Fatal("short key accepted")
-	}
-	// Identical content builds the identical record.
 	a, b := mustBuild(t, "conclusion-explicit"), mustBuild(t, "conclusion-explicit")
-	if a.ID != b.ID {
-		t.Fatal("identical content must give the same id")
+	if a.ID == b.ID || a.Header.Body.Digest == b.Header.Body.Digest {
+		t.Fatal("fresh same-LID seal reproduced erased candidate verifier")
 	}
 }
 
@@ -395,13 +388,13 @@ func TestParseRejections(t *testing.T) {
 			hj, bj := raw(t, h, b)
 			return bytes.Replace(hj, []byte(`"op":`), []byte(`"nul":null,"op":`), 1), bj, ""
 		}},
-		{"version 3 quarantined", "task", CodeUnsupportedVersion, true, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
+		{"version 4 quarantined", "task", CodeUnsupportedVersion, true, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
 			hj, bj := raw(t, h, b)
-			return bytes.Replace(hj, []byte(`"v":2`), []byte(`"v":3`), 1), bj, ""
+			return bytes.Replace(hj, []byte(`"v":3`), []byte(`"v":4`), 1), bj, ""
 		}},
-		{"version 0", "task", CodeInvalidHeader, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
+		{"version 0", "task", CodeUnsupportedVersion, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
 			hj, bj := raw(t, h, b)
-			return bytes.Replace(hj, []byte(`"v":2`), []byte(`"v":0`), 1), bj, ""
+			return bytes.Replace(hj, []byte(`"v":3`), []byte(`"v":0`), 1), bj, ""
 		}},
 		{"unknown header field", "task", CodeUnknownField, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
 			hj, bj := raw(t, h, b)
@@ -479,7 +472,7 @@ func TestParseRejections(t *testing.T) {
 			hj, bj := raw(t, h, b)
 			return hj, bj, ""
 		}},
-		{"export body extra field", "task-meta", CodeUnknownField, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
+		{"export body extra field", "task-meta", CodeInvalidBody, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
 			bj := []byte(`{"name":"secret","salt":"AAAAAAAAAAAAAAAAAAAAAA","status":"active"}`)
 			h.Body = &BodyRef{Digest: BodyDigest(bj), Size: int64(len(bj))}
 			hj, _ := raw(t, h, b)
@@ -539,7 +532,7 @@ func TestParseRejections(t *testing.T) {
 			hj, bj := raw(t, h, b)
 			return hj, bj, ""
 		}},
-		{"too many snapshot chunks", "session", CodeListTooLong, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
+		{"too many snapshot chunks", "session", CodeInvalidBody, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
 			s := b.(*SessionBody)
 			s.Salt = "AAAAAAAAAAAAAAAAAAAAAA"
 			s.Chunks = nil
@@ -640,7 +633,7 @@ func TestParseRejections(t *testing.T) {
 			hj, bj := raw(t, h, b)
 			return hj, bj, ""
 		}},
-		{"policy unknown field", "policy", CodeUnknownField, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
+		{"policy unknown field", "policy", CodeInvalidBody, false, func(t *testing.T, h Header, b any) ([]byte, []byte, string) {
 			p := b.(*PolicyBody)
 			bj, _ := jcs.MarshalRecord(p)
 			bj = bytes.Replace(bj, []byte(`{"applies"`), []byte(`{"allow_everything":true,"applies"`), 1)
@@ -664,17 +657,14 @@ func TestParseRejections(t *testing.T) {
 	}
 }
 
-func TestUnknownBodyFieldKept(t *testing.T) {
-	r := mustBuild(t, "rollup")
-	bj := bytes.Replace(r.BodyJCS, []byte(`{"covers"`), []byte(`{"added_later":5,"covers"`), 1)
-	h := r.Header
+func TestUnknownBodyFieldRejected(t *testing.T) {
+	h, b := fixtures()["rollup"]()
+	b.(*RollupBody).Salt = "AAAAAAAAAAAAAAAAAAAAAA"
+	hj, bj := raw(t, h, b)
+	bj = bytes.Replace(bj, []byte(`"text":`), []byte(`"unknown":"private","text":`), 1)
 	h.Body = &BodyRef{Digest: BodyDigest(bj), Size: int64(len(bj))}
-	hj, _ := jcs.MarshalRecord(&h)
-	got, err := Parse(hj, bj, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got.BodyJCS, bj) {
-		t.Fatal("body bytes must be kept as received")
+	hj, _ = jcs.MarshalRecord(h)
+	if _, err := Parse(hj, bj, ""); err == nil {
+		t.Fatal("unknown body field silently discarded")
 	}
 }

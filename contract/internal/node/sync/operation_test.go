@@ -118,7 +118,7 @@ func TestMetadataOnlyAndNoUnsignedEnvelope(t *testing.T) {
 				h.Links = record.Links{}
 				h.Op = strings.Repeat("a", 64)
 				var err error
-				r.Record, err = record.Build(h, &record.TaskBody{Status: "active", Name: "private", Goal: "secret goal"}, bytes.Repeat([]byte{7}, 32))
+				r.Record, err = record.Build(h, &record.TaskBody{Status: "active", Name: "private", Goal: "secret goal"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -159,7 +159,7 @@ func TestRestoreStrictEnvelopeShape(t *testing.T) {
 			case "codec":
 				env["body"].(map[string]any)["codec"] = "gzip"
 			case "version":
-				env["v"] = 3
+				env["v"] = 4
 			case "duplicate":
 				req["envelopes"] = []any{env, env}
 			case "bad-header":
@@ -226,7 +226,7 @@ func TestSignedControlPermittedMetadataIsNotTextException(t *testing.T) {
 	h := record.Header{Type: record.KindRetraction, LID: strings.Repeat("b", 64), Author: record.Author{MachineID: device, KeyID: sig.KeyID(f.recordKey.Public().(ed25519.PublicKey))}, At: 1761150000456, Prov: record.ProvUser, Red: record.Redact{Profile: record.ProfileLocal, Epoch: 7, Fingerprint: strings.Repeat("a", 64)}, Op: ""}
 	// LID for a control is its operation-derived identity.
 	h.LID, _ = record.ControlLID(record.KindRetraction, h.Author.KeyID, strings.Repeat("c", 32))
-	r, err := record.Build(h, &record.RetractionBody{IDs: []string{strings.Repeat("e", 64)}, Reason: "rule_removed"}, nil)
+	r, err := record.Build(h, &record.RetractionBody{IDs: []string{strings.Repeat("e", 64)}, Reason: "rule_removed"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestControlIgnoredExtensionCannotLeaveNode(t *testing.T) {
 	f := newFixture(t, 0)
 	h := record.Header{Type: record.KindRetraction, Author: record.Author{MachineID: device, KeyID: sig.KeyID(f.recordKey.Public().(ed25519.PublicKey))}, At: 1761150000456, Prov: record.ProvUser, Red: record.Redact{Profile: record.ProfileLocal, Epoch: 7, Fingerprint: strings.Repeat("a", 64)}}
 	h.LID, _ = record.ControlLID(record.KindRetraction, h.Author.KeyID, strings.Repeat("c", 32))
-	r, err := record.Build(h, &record.RetractionBody{IDs: []string{strings.Repeat("e", 64)}, Reason: "rule_removed"}, nil)
+	r, err := record.Build(h, &record.RetractionBody{IDs: []string{strings.Repeat("e", 64)}, Reason: "rule_removed"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,10 +276,12 @@ func TestControlIgnoredExtensionCannotLeaveNode(t *testing.T) {
 	h = r.Header
 	h.Body = &record.BodyRef{Digest: record.BodyDigest(b), Size: int64(len(b))}
 	header, _ := jcs.MarshalRecord(h)
-	r, err = record.Parse(header, b, "")
-	if err != nil {
-		t.Fatal("test must cross pure permissive control parser", err)
+	if _, err = record.Parse(header, b, ""); record.CodeOf(err) != record.CodeNonMinimalControl {
+		t.Fatal("major3 must reject control extensions before typed decode", err)
 	}
+	// Also prove sync reparses caller-owned bytes rather than trusting the
+	// already populated typed record after a caller mutates its sealed bytes.
+	r.HeaderJCS, r.BodyJCS, r.ID = header, b, record.ContentID(header)
 	signature, _ := sig.SignRecord(f.recordKey, r.ID)
 	if _, err = NewOperation("no-text", []SignedRecord{{r, []record.Signature{signature}}}); !errors.Is(err, ErrInvalid) {
 		t.Fatal("control smuggled extension text", err)

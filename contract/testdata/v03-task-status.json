@@ -1,0 +1,8 @@
+[
+  {"Name":"omitted status","Body":{"salt":"AwMDAwMDAwMDAwMDAwMDAw"},"Error":"invalid_body"},
+  {"Name":"empty status","Body":{"salt":"AwMDAwMDAwMDAwMDAwMDAw","status":""},"Error":"invalid_body"},
+  {"Name":"unknown status","Body":{"salt":"AwMDAwMDAwMDAwMDAwMDAw","status":"paused"},"Error":"invalid_body"},
+  {"Name":"active","Body":{"salt":"AwMDAwMDAwMDAwMDAwMDAw","status":"active"}},
+  {"Name":"completed","Body":{"salt":"AwMDAwMDAwMDAwMDAwMDAw","status":"completed"}},
+  {"Name":"abandoned","Body":{"salt":"AwMDAwMDAwMDAwMDAwMDAw","status":"abandoned"}}
+]

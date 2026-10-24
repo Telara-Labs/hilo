@@ -35,7 +35,7 @@ func TestDisclosureCurrentDependencyRenderWorkRefusalDoesNotHoldOwner(t *testing
 	inputs = append(inputs, left, right, root)
 	k.seedPending(inputs)
 	before := disclosureGuardState(t, k)
-	r, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "costly-current-render"}, commandFor(t, "local.lookup_record", map[string]any{"record_id": root.AdvisoryID}), ByteBudget{MaxBytes: 4096})
+	r, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("costly-current-render")}, commandFor(t, "local.lookup_record", map[string]any{"record_id": root.AdvisoryID}), ByteBudget{MaxBytes: 4096})
 	if Code(err) != "render_limit" || r.engine != nil {
 		t.Fatal("request-local work bound did not refuse without identity", err)
 	}
@@ -60,7 +60,7 @@ func currentDependencySession(t *testing.T, k *kernelWorld, native string, deps 
 	if err != nil {
 		t.Fatal(err)
 	}
-	ev, err := record.ReviseEvent(record.Event{ID: eid, Seq: 0, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "repo B boundary"}}, nil, bytes.Repeat([]byte{3}, 32))
+	ev, err := record.ReviseEvent(record.Event{ID: eid, Seq: 0, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: "repo B boundary"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

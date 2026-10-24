@@ -1,17 +1,9 @@
 package record
 
-// Bodies of the kind union. JSON names are snake_case and every
-// optional field is omitted when empty. Unknown body fields are kept in the
-// bytes and ignored on decode, except in the v1 export bodies, which
-// must match their allowlist exactly.
-//
-// Nested types the specification names without defining are taken from the
-// portion designs and marked provisional; adding fields to them is a MINOR
-// change.
-
+// Bodies and nested objects are closed within this contract major.
 // SessionBody is one page of one machine's snapshot of a session.
 type SessionBody struct {
-	Salt           string        `json:"salt,omitempty"`
+	Salt           string        `json:"salt"`
 	NativeID       string        `json:"native_id,omitempty"`
 	NativeIDKind   string        `json:"native_id_kind,omitempty"` // global | local
 	MachineOS      string        `json:"machine_os,omitempty"`
@@ -30,7 +22,7 @@ type SessionBody struct {
 	Reader         *SourceRef    `json:"reader,omitempty"`
 }
 
-// RepoRef (provisional shape).
+// RepoRef.
 type RepoRef struct {
 	ID          string `json:"id,omitempty"`
 	Remote      string `json:"remote,omitempty"`
@@ -41,7 +33,7 @@ type RepoRef struct {
 	Dirty       *bool  `json:"dirty,omitempty"`
 }
 
-// Counts (provisional shape).
+// Counts.
 type Counts struct {
 	Requests        int `json:"requests,omitempty"`
 	ToolCalls       int `json:"tool_calls,omitempty"`
@@ -50,7 +42,7 @@ type Counts struct {
 	SkippedRecords  int `json:"skipped_records,omitempty"`
 }
 
-// SessionLink relates two sessions (provisional shape).
+// SessionLink relates two sessions.
 type SessionLink struct {
 	Relation        string `json:"relation"` // fork | resume | subagent | compaction
 	OtherSessionKey string `json:"other_session_key"`
@@ -66,7 +58,7 @@ type SourceRef struct {
 
 // ChunkBody holds ≤256 events and ≤1 MiB canonical.
 type ChunkBody struct {
-	Salt   string  `json:"salt,omitempty"`
+	Salt   string  `json:"salt"`
 	Events []Event `json:"events"`
 }
 
@@ -92,7 +84,7 @@ type Event struct {
 	Src         *SourcePos        `json:"src,omitempty"`
 }
 
-// Text (provisional shape).
+// Text.
 type Text struct {
 	Body      string `json:"body,omitempty"`
 	Bytes     int    `json:"bytes,omitempty"`
@@ -100,7 +92,7 @@ type Text struct {
 	Digest    string `json:"digest,omitempty"` // of the redacted body
 }
 
-// ToolCall (provisional shape).
+// ToolCall.
 type ToolCall struct {
 	Tool      string            `json:"tool,omitempty"`
 	MCPServer string            `json:"mcp_server,omitempty"`
@@ -110,7 +102,7 @@ type ToolCall struct {
 	RawArgs   map[string]bool   `json:"raw_args,omitempty"`
 }
 
-// ToolResult (provisional shape).
+// ToolResult.
 type ToolResult struct {
 	CallEventID string   `json:"call_event_id,omitempty"`
 	Outcome     string   `json:"outcome,omitempty"` // ok | error | unknown
@@ -122,7 +114,7 @@ type ToolResult struct {
 	OutTokens   []string `json:"out_tokens,omitempty"`
 }
 
-// SourcePos (provisional shape).
+// SourcePos.
 type SourcePos struct {
 	Path   string `json:"path,omitempty"`
 	Line   int64  `json:"line,omitempty"`
@@ -132,7 +124,7 @@ type SourcePos struct {
 // ConclusionBody is an explicit, final-answer or hook-final conclusion.
 type ConclusionBody struct {
 	RequestKey    string   `json:"request_key,omitempty"` // bounded native identity, distinct from Request prompt text
-	Salt          string   `json:"salt,omitempty"`
+	Salt          string   `json:"salt"`
 	Source        string   `json:"source"` // explicit | final-answer | hook-final
 	State         string   `json:"state,omitempty"`
 	Request       string   `json:"request,omitempty"` // ≤1000 B
@@ -144,14 +136,14 @@ type ConclusionBody struct {
 
 // TaskBody opens or edits a task.
 type TaskBody struct {
-	Salt    string   `json:"salt,omitempty"`
+	Salt    string   `json:"salt"`
 	Name    string   `json:"name,omitempty"`
 	Goal    string   `json:"goal,omitempty"`
 	Anchors *Anchors `json:"anchors,omitempty"`
 	Status  string   `json:"status"` // active | completed | abandoned
 }
 
-// Anchors (provisional shape).
+// Anchors.
 type Anchors struct {
 	Files   []string `json:"files,omitempty"`
 	Commits []string `json:"commits,omitempty"`
@@ -160,7 +152,7 @@ type Anchors struct {
 
 // CheckpointBody is one task checkpoint.
 type CheckpointBody struct {
-	Salt          string   `json:"salt,omitempty"`
+	Salt          string   `json:"salt"`
 	Milestone     string   `json:"milestone,omitempty"`
 	NextSteps     string   `json:"next_steps,omitempty"`
 	KnowledgeRefs []string `json:"knowledge_refs,omitempty"`
@@ -168,7 +160,7 @@ type CheckpointBody struct {
 	TaskTree      []Step   `json:"task_tree,omitempty"`
 }
 
-// Step (provisional shape).
+// Step.
 type Step struct {
 	Title  string `json:"title,omitempty"`
 	Status string `json:"status,omitempty"`
@@ -176,7 +168,7 @@ type Step struct {
 
 // PauseBody records a task pause.
 type PauseBody struct {
-	Salt          string `json:"salt,omitempty"`
+	Salt          string `json:"salt"`
 	ResumeContext string `json:"resume_context,omitempty"`
 	ProgressNotes string `json:"progress_notes,omitempty"`
 	HandoffHint   string `json:"handoff_hint,omitempty"`
@@ -185,18 +177,21 @@ type PauseBody struct {
 
 // CallBody is the receipt of one MCP call. Hashes are over redacted JCS.
 type CallBody struct {
-	CallRef    string `json:"call_ref"`
-	ScopeID    string `json:"scope_id"`
-	Tool       string `json:"tool"`
-	ArgsHash   string `json:"args_hash,omitempty"`
-	ResultHash string `json:"result_hash,omitempty"`
-	TaskID     string `json:"task_id,omitempty"`
-	Outcome    string `json:"outcome,omitempty"`
-	Err        string `json:"err,omitempty"`
+	Salt           string   `json:"salt"`
+	CommitmentDeps []string `json:"commitment_deps"`
+	CallRef        string   `json:"call_ref"`
+	ScopeID        string   `json:"scope_id"`
+	Tool           string   `json:"tool"`
+	ArgsHash       string   `json:"args_hash,omitempty"`
+	ResultHash     string   `json:"result_hash,omitempty"`
+	TaskID         string   `json:"task_id,omitempty"`
+	Outcome        string   `json:"outcome,omitempty"`
+	Err            string   `json:"err,omitempty"`
 }
 
 // BindingBody attributes one call to one session.
 type BindingBody struct {
+	Salt       string        `json:"salt"`
 	CallRef    string        `json:"call_ref"`
 	Target     *BindTarget   `json:"target,omitempty"` // nil unless bound
 	Confidence string        `json:"confidence"`
@@ -220,7 +215,7 @@ type BindEvidence struct {
 
 // DigestBody is a node-derived session digest.
 type DigestBody struct {
-	Salt       string            `json:"salt,omitempty"`
+	Salt       string            `json:"salt"`
 	HasOutcome bool              `json:"has_outcome,omitempty"`
 	Requests   []string          `json:"requests,omitempty"`
 	Outcome    string            `json:"outcome,omitempty"`
@@ -229,7 +224,7 @@ type DigestBody struct {
 	Evidence   []EvidencePointer `json:"evidence,omitempty"`
 }
 
-// EvidencePointer (provisional shape).
+// EvidencePointer.
 type EvidencePointer struct {
 	Source   string `json:"source,omitempty"`
 	Kind     string `json:"kind,omitempty"`
@@ -240,7 +235,7 @@ type EvidencePointer struct {
 
 // RollupBody merges checkpoints.
 type RollupBody struct {
-	Salt   string   `json:"salt,omitempty"`
+	Salt   string   `json:"salt"`
 	Covers []string `json:"covers,omitempty"` // checkpoint ids it merges
 	Text   string   `json:"text,omitempty"`
 }
@@ -248,7 +243,7 @@ type RollupBody struct {
 // SessionMetaBody is the v1 export variant of a session (push-metadata).
 // Exactly these fields; nothing else is allowed.
 type SessionMetaBody struct {
-	Salt         string        `json:"salt,omitempty"`
+	Salt         string        `json:"salt"`
 	NativeIDKind string        `json:"native_id_kind,omitempty"`
 	MachineOS    string        `json:"machine_os,omitempty"`
 	Repo         *MetaRepo     `json:"repo,omitempty"`
@@ -287,8 +282,8 @@ type MetaPointer struct {
 
 // TaskMetaBody is the v1 export variant of a task (push-metadata).
 type TaskMetaBody struct {
-	Salt   string `json:"salt,omitempty"`
-	Status string `json:"status,omitempty"`
+	Salt   string `json:"salt"`
+	Status string `json:"status"`
 }
 
 // RetractionBody invalidates exact ids and their closure; it never bans a LID.
@@ -304,24 +299,32 @@ type TaskSelector struct {
 }
 
 // Selectors of an erasure.
+type EventSelector struct {
+	Owner      string `json:"owner"`
+	SessionKey string `json:"session_key"`
+	EventID    string `json:"event_id"`
+}
+
 type Selectors struct {
-	IDs      []string       `json:"ids,omitempty"`
-	LIDs     []string       `json:"lids,omitempty"`
-	Tasks    []TaskSelector `json:"tasks,omitempty"`
-	Sessions []string       `json:"sessions,omitempty"`
-	Sources  []string       `json:"sources,omitempty"`
+	Events   []EventSelector `json:"events,omitempty"`
+	IDs      []string        `json:"ids,omitempty"`
+	LIDs     []string        `json:"lids,omitempty"`
+	Tasks    []TaskSelector  `json:"tasks,omitempty"`
+	Sessions []string        `json:"sessions,omitempty"`
+	Sources  []string        `json:"sources,omitempty"`
 }
 
 // Count is the number of selector entries.
 func (s Selectors) Count() int {
-	return len(s.IDs) + len(s.LIDs) + len(s.Tasks) + len(s.Sessions) + len(s.Sources)
+	return len(s.IDs) + len(s.LIDs) + len(s.Tasks) + len(s.Sessions) + len(s.Sources) + len(s.Events)
 }
 
 // ErasureBody is a permanent erasure.
 type ErasureBody struct {
-	Selectors Selectors `json:"selectors"`
-	Reason    string    `json:"reason"`             // user_request | redaction_miss | device_compromise | retention_policy
-	Resolved  int64     `json:"resolved,omitempty"` // records resolved at issue time (bulk guard)
+	EventCoverage string    `json:"event_coverage"`
+	Selectors     Selectors `json:"selectors"`
+	Reason        string    `json:"reason"`             // user_request | redaction_miss | device_compromise | retention_policy
+	Resolved      int64     `json:"resolved,omitempty"` // records resolved at issue time (bulk guard)
 }
 
 // WithdrawalBody records that a tenant grant was removed.
@@ -354,6 +357,7 @@ type KeyOpBody struct {
 
 // PolicyBody is a signed tenant policy.
 type PolicyBody struct {
+	Salt         string         `json:"salt"`
 	Tenant       string         `json:"tenant"`
 	Seq          int64          `json:"seq"`
 	IssuedAt     int64          `json:"issued_at"`
@@ -463,6 +467,12 @@ func newBody(name string) any {
 // saltOf and setSalt reach the Salt field of salted bodies.
 func saltOf(b any) (string, bool) {
 	switch v := b.(type) {
+	case *CallBody:
+		return v.Salt, true
+	case *BindingBody:
+		return v.Salt, true
+	case *PolicyBody:
+		return v.Salt, true
 	case *SessionBody:
 		return v.Salt, true
 	case *SessionMetaBody:
@@ -489,6 +499,12 @@ func saltOf(b any) (string, bool) {
 
 func setSalt(b any, s string) bool {
 	switch v := b.(type) {
+	case *CallBody:
+		v.Salt = s
+	case *BindingBody:
+		v.Salt = s
+	case *PolicyBody:
+		v.Salt = s
 	case *SessionBody:
 		v.Salt = s
 	case *SessionMetaBody:

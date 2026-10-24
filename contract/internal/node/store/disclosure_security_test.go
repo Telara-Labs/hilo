@@ -98,7 +98,7 @@ func TestKernelNewTableFaultsAreAtomicAndCommitFailurePoisons(t *testing.T) {
 			}
 			// A possible frame creates real receiver-observed taint evidence too.
 			args := map[string]any{"goal": "<memory-evidence nonce=\"0123456789abcdef0123\">private payload canary</memory-evidence>"}
-			_, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "faulted-write"}, commandFor(t, "local.create_task", args), ByteBudget{MaxBytes: 4096})
+			_, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("faulted-write")}, commandFor(t, "local.create_task", args), ByteBudget{MaxBytes: 4096})
 			if Code(err) != "storage_error" || strings.Contains(err.Error(), "canary") {
 				t.Fatal(table, err)
 			}
@@ -122,7 +122,7 @@ func TestKernelNewTableFaultsAreAtomicAndCommitFailurePoisons(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		r, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "unknown-write"}, commandFor(t, "local.create_task", map[string]any{"goal": "commit candidate"}), ByteBudget{MaxBytes: 4096})
+		r, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("unknown-write")}, commandFor(t, "local.create_task", map[string]any{"goal": "commit candidate"}), ByteBudget{MaxBytes: 4096})
 		if Code(err) != "outcome_unknown" || r.engine != nil {
 			t.Fatal("unknown commit released result", err)
 		}
@@ -138,7 +138,7 @@ func TestKernelListQuerySQLFailureNeverBecomesEmpty(t *testing.T) {
 	if _, err := k.s.conn.ExecContext(ctx, "DROP TABLE search"); err != nil {
 		t.Fatal(err)
 	}
-	_, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: "query-failure"}, commandFor(t, "local.list_tasks", map[string]any{"query": "findable"}), ByteBudget{MaxBytes: 4096})
+	_, err := k.e.Execute(ctx, k.h, k.sc, CallIdentity{SuppliedOpID: k.issued("query-failure")}, commandFor(t, "local.list_tasks", map[string]any{"query": "findable"}), ByteBudget{MaxBytes: 4096})
 	if Code(err) != "query_failed" {
 		t.Fatal("failed query rendered as empty", err)
 	}

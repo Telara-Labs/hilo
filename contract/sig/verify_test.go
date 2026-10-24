@@ -19,7 +19,7 @@ func taskRecord(t *testing.T, owner string, signer ed25519.PublicKey, machine st
 	if prov == record.ProvMCPExplicit {
 		h.Op = hx("op")
 	}
-	r, err := record.Build(h, &record.TaskBody{Name: "n", Status: "active"}, saltKey)
+	r, err := record.Build(h, &record.TaskBody{Name: "n", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestGitImportIgnoresControl(t *testing.T) {
 	lid, _ := record.ControlLID(record.KindRetraction, w.gid(), "00112233445566778899aabbccddeeff")
 	h := record.Header{Type: record.KindRetraction, LID: lid, Author: record.Author{MachineID: mA, KeyID: w.gid()},
 		At: 1761150002000, Prov: record.ProvUser, Red: record.Redact{Profile: record.ProfileLocal}}
-	r, err := record.Build(h, &record.RetractionBody{IDs: []string{hx("a")}, Reason: "rule_removed"}, nil)
+	r, err := record.Build(h, &record.RetractionBody{IDs: []string{hx("a")}, Reason: "rule_removed"})
 	if err != nil {
 		t.Fatal(err)
 	}

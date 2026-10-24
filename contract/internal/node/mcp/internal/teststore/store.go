@@ -14,7 +14,7 @@ import (
 	"sync"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcp"
+	mcp "github.com/Telara-Labs/telara-memory/contract/internal/node/mcp/internal/fixture"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/replay"
 )

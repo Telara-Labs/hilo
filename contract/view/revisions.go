@@ -154,7 +154,10 @@ func EventHeads(copies []EventVersion, index []EventPair, history ...EventFacts)
 			if v.Event.ID != eventID {
 				continue
 			}
-			body[v.Event.Revision] = v
+			v.Admissible = currentStatus[v.RecordID]
+			if prior, ok := body[v.Event.Revision]; !ok || !(prior.Live && prior.Admissible) {
+				body[v.Event.Revision] = v
+			}
 			live[v.Event.Revision] = live[v.Event.Revision] || v.Live && v.Admissible
 			if v.Live && v.Admissible {
 				current = append(current, v)
@@ -171,7 +174,7 @@ func EventHeads(copies []EventVersion, index []EventPair, history ...EventFacts)
 		for i, a := range current {
 			ap, err := record.EventPayload(a.Event)
 			if err != nil {
-				return nil, err
+				continue
 			}
 			for _, b := range current[i+1:] {
 				if a.Event.Revision == b.Event.Revision {
@@ -179,7 +182,7 @@ func EventHeads(copies []EventVersion, index []EventPair, history ...EventFacts)
 				}
 				bp, err := record.EventPayload(b.Event)
 				if err != nil {
-					return nil, err
+					continue
 				}
 				if bytes.Equal(ap, bp) {
 					w := EqualityWitness{EventID: eventID, A: a.Event.Revision, B: b.Event.Revision, RecordA: a.RecordID, RecordB: b.RecordID, Owner: owner, SessionKey: session, Admissible: true}
@@ -340,10 +343,10 @@ func EventHeads(copies []EventVersion, index []EventPair, history ...EventFacts)
 			choice.Pending = true
 		}
 		if len(choice.Heads) > 1 {
-			first, _ := record.EventPayload(choice.Heads[0])
+			first, firstErr := record.EventPayload(choice.Heads[0])
 			for _, e := range choice.Heads[1:] {
-				payload, _ := record.EventPayload(e)
-				if !bytes.Equal(first, payload) {
+				payload, payloadErr := record.EventPayload(e)
+				if firstErr != nil || payloadErr != nil || !bytes.Equal(first, payload) {
 					choice.Conflict = true
 				}
 				clear(payload)

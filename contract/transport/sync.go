@@ -29,10 +29,11 @@ type Ack struct {
 	DataAppliedThrough int64 `json:"data_applied_through"`
 }
 type LogItem struct {
-	HSeq     int64           `json:"hseq"`
-	Class    string          `json:"class"`
-	Envelope record.Envelope `json:"envelope"`
-	Own      bool            `json:"-"`
+	DecodedBody []byte          `json:"-"` // bounded adapter-decompressed exact body bytes
+	HSeq        int64           `json:"hseq"`
+	Class       string          `json:"class"`
+	Envelope    record.Envelope `json:"envelope"`
+	Own         bool            `json:"-"`
 }
 type Page struct {
 	Items          []LogItem `json:"items"`

@@ -5,6 +5,8 @@ package disclosure
 import (
 	"context"
 	"crypto/ed25519"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"sync"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosuretext"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
@@ -55,14 +57,19 @@ func (facadeError) Error() string { return "disclosure_unavailable" }
 
 type Service struct{ engine *store.DisclosureEngine }
 type Connection struct {
+	mu      sync.Mutex
+	closed  bool
+	unhook  func()
 	service *Service
 	handle  store.ClientHandle
 }
 type RequestScope struct {
-	service *Service
-	handle  store.ScopeHandle
+	ephemeral bool
+	service   *Service
+	handle    store.ScopeHandle
 }
 type Reply struct {
+	ephemeral  bool
 	connection *Connection
 	handle     store.CommittedReplyHandle
 }
@@ -115,10 +122,36 @@ func (s *Service) Authenticate(ctx context.Context, proof CredentialProof) (*Con
 	if e != nil {
 		return nil, e
 	}
-	return &Connection{s, h}, nil
+	c := &Connection{service: s, handle: h}
+	if daemon.ConnectionID(ctx) != "" {
+		remove, ok := daemon.RegisterConnectionClose(ctx, func() { _ = c.Close() })
+		if !ok {
+			_ = c.Close()
+			return nil, facadeError{}
+		}
+		c.mu.Lock()
+		closed := c.closed
+		if !closed {
+			c.unhook = remove
+		}
+		c.mu.Unlock()
+		if closed {
+			remove()
+			return nil, facadeError{}
+		}
+	}
+	return c, nil
 }
 func (c *Connection) Close() error {
 	if c != nil && c.service != nil && c.service.engine != nil {
+		c.mu.Lock()
+		c.closed = true
+		remove := c.unhook
+		c.unhook = nil
+		c.mu.Unlock()
+		if remove != nil {
+			remove()
+		}
 		c.service.engine.CloseClient(c.handle)
 	}
 	return nil
@@ -129,9 +162,10 @@ func (c *Connection) Resolve(ctx context.Context, input IdentityInput) (RequestS
 	}
 	h, e := c.service.engine.Resolve(ctx, c.handle, input)
 	if e != nil {
+		_ = c.Close()
 		return RequestScope{}, e
 	}
-	return RequestScope{c.service, h}, nil
+	return RequestScope{ephemeral: input.ConversationHandle == "", service: c.service, handle: h}, nil
 }
 func (c *Connection) Execute(ctx context.Context, scope RequestScope, call CallIdentity, command Command, budget ByteBudget) (*Reply, error) {
 	if c == nil || c.service == nil || scope.service != c.service {
@@ -139,9 +173,12 @@ func (c *Connection) Execute(ctx context.Context, scope RequestScope, call CallI
 	}
 	h, e := c.service.engine.Execute(ctx, c.handle, scope.handle, call, command, budget)
 	if e != nil {
+		if scope.ephemeral {
+			_ = c.Close()
+		}
 		return nil, e
 	}
-	return &Reply{c, h}, nil
+	return &Reply{ephemeral: scope.ephemeral, connection: c, handle: h}, nil
 }
 func (c *Connection) Next(ctx context.Context, scope RequestScope, call CallIdentity, cursor string, budget ByteBudget) (*Reply, error) {
 	if c == nil || c.service == nil || scope.service != c.service {
@@ -149,9 +186,12 @@ func (c *Connection) Next(ctx context.Context, scope RequestScope, call CallIden
 	}
 	h, e := c.service.engine.Next(ctx, c.handle, scope.handle, call, cursor, budget)
 	if e != nil {
+		if scope.ephemeral {
+			_ = c.Close()
+		}
 		return nil, e
 	}
-	return &Reply{c, h}, nil
+	return &Reply{ephemeral: scope.ephemeral, connection: c, handle: h}, nil
 }
 func (c *Connection) Acknowledge(ctx context.Context, ack ACK) (ACKReceipt, error) {
 	if c == nil || c.service == nil || c.service.engine == nil {
@@ -164,6 +204,9 @@ func (r *Reply) Release(ctx context.Context) (Result, error) {
 		return Result{}, facadeError{}
 	}
 	c := r.connection
+	if r.ephemeral {
+		defer c.Close()
+	}
 	text, e := c.service.engine.Release(ctx, c.handle, r.handle)
 	if e != nil {
 		return Result{}, e
@@ -199,4 +242,12 @@ func (a *Administration) RevokeCredential(ctx context.Context, op, id string, ep
 		return GrantReceipt{}, facadeError{}
 	}
 	return a.handle.RevokeCredential(ctx, op, id, epoch)
+}
+
+// IssueOperationTokens returns a bounded durable receiver-issued pool for initialize.
+func (c *Connection) IssueOperationTokens(ctx context.Context) ([]string, error) {
+	if c == nil || c.service == nil || c.service.engine == nil {
+		return nil, facadeError{}
+	}
+	return c.service.engine.IssueOperationTokens(ctx, c.handle)
 }

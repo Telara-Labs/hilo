@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	contractdata "github.com/Telara-Labs/telara-memory/contract"
 	"sort"
 	"strconv"
 	"strings"
@@ -97,6 +98,23 @@ func ParseCorpus(raw []byte) (*Corpus, error) {
 // sorted order and every entry, [entry id, "profile:<name>", output]
 // (OPEN-QUESTIONS Q17).
 func Behavior(c *Corpus, r Redactor) (string, error) {
+	pinned, err := ParseCorpus(contractdata.RedactionCorpusV1())
+	if err != nil {
+		return "", err
+	}
+	actual, err := jcs.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	defer clear(actual)
+	expected, err := jcs.Marshal(pinned)
+	if err != nil {
+		return "", err
+	}
+	if !bytes.Equal(actual, expected) {
+		return "", fmt.Errorf("only the public pinned corpus may be fingerprinted")
+	}
+
 	var out [][]string
 	for _, e := range c.Entries {
 		if e.Kind == "argument" {

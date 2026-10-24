@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
 )
@@ -200,6 +201,13 @@ func (s *Store) Capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 		if k == nil || k.Status != sig.KeyActive || k.Genesis != s.opts.PinnedGenesisID || k.MachineID != s.opts.LocalMachineID {
 			return failure("unauthorized_capture")
 		}
+		rs, err := localpolicy.Ruleset()
+		if err != nil {
+			return failure("policy_unavailable")
+		}
+		if d.tenant != nil && (!d.tenant.sealAllowed("", rs.Epoch) || q.PolicyID != d.tenant.chain.HighestID) || d.tenant == nil && q.PolicyID != "" {
+			return failure("policy_violation")
+		}
 		t, e := s.makeCaptureTxn(ctx, d, q, p)
 		if e != nil {
 			// Complete producer history has its own broader copy set. A
@@ -212,6 +220,9 @@ func (s *Store) Capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 				return failure("outcome_unknown")
 			}
 			return e
+		}
+		if d.tenant != nil {
+			t.context.PolicyID = d.tenant.chain.HighestID
 		}
 		var plan CommitPlan
 		func() { defer t.valid.Store(false); plan, e = producer(t) }()

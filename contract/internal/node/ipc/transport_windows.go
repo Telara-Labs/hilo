@@ -42,7 +42,7 @@ func platformPaths(data, run string) (Paths, error) {
 func checkSecurity(h windows.Handle) error {
 	sd, e := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if e != nil {
-		return ErrUnsafe
+		return unsafePath("GetSecurityInfo", fmt.Sprintf("handle=%d", h), "owner/ACL metadata required", e)
 	}
 	sid, e := currentSID()
 	if e != nil {
@@ -50,15 +50,15 @@ func checkSecurity(h windows.Handle) error {
 	}
 	owner, _, e := sd.Owner()
 	if e != nil || owner == nil || !windows.EqualSid(owner, sid) {
-		return ErrUnsafe
+		return unsafePath("checkSecurity", fmt.Sprintf("handle=%d", h), "owner must be current user", e)
 	}
 	acl, _, e := sd.DACL()
 	if e != nil || acl == nil || acl.AceCount != 1 {
-		return ErrUnsafe
+		return unsafePath("checkSecurity", fmt.Sprintf("handle=%d", h), "DACL must have exactly one entry", e)
 	}
 	var ace *windows.ACCESS_ALLOWED_ACE
 	if windows.GetAce(acl, 0, &ace) != nil || ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 || !windows.EqualSid((*windows.SID)(unsafe.Pointer(&ace.SidStart)), sid) {
-		return ErrUnsafe
+		return unsafePath("checkSecurity", fmt.Sprintf("handle=%d", h), "ACL must permit current user without inherit-only flag", nil)
 	}
 	return nil
 }
@@ -71,7 +71,7 @@ func trustedSID(sid, current *windows.SID) bool {
 func checkAncestor(h windows.Handle, volumeRoot bool) error {
 	sd, e := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if e != nil {
-		return ErrUnsafe
+		return unsafePath("GetSecurityInfo", fmt.Sprintf("handle=%d", h), "ancestor owner/ACL metadata required", e)
 	}
 	current, e := currentSID()
 	if e != nil {
@@ -82,11 +82,11 @@ func checkAncestor(h windows.Handle, volumeRoot bool) error {
 func checkAncestorSecurity(sd *windows.SECURITY_DESCRIPTOR, current *windows.SID, volumeRoot bool) error {
 	owner, _, e := sd.Owner()
 	if e != nil || owner == nil || !trustedSID(owner, current) {
-		return ErrUnsafe
+		return unsafePath("checkAncestorSecurity", "security descriptor", "owner must be trusted", e)
 	}
 	acl, _, e := sd.DACL()
 	if e != nil || acl == nil {
-		return ErrUnsafe
+		return unsafePath("checkAncestorSecurity", "security descriptor", "non-null DACL required", e)
 	}
 	const mutation = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES | 0x40 /* FILE_DELETE_CHILD */ | windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER | windows.GENERIC_ALL | windows.GENERIC_WRITE | windows.MAXIMUM_ALLOWED
 	forbidden := uint32(mutation)
@@ -100,7 +100,7 @@ func checkAncestorSecurity(sd *windows.SECURITY_DESCRIPTOR, current *windows.SID
 	for i := uint32(0); i < uint32(acl.AceCount); i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if windows.GetAce(acl, i, &ace) != nil {
-			return ErrUnsafe
+			return unsafePath("GetAce", "security descriptor", "ACL entry must be readable", nil)
 		}
 		if ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 {
 			continue
@@ -109,10 +109,10 @@ func checkAncestorSecurity(sd *windows.SECURITY_DESCRIPTOR, current *windows.SID
 		case windows.ACCESS_DENIED_ACE_TYPE:
 		case windows.ACCESS_ALLOWED_ACE_TYPE:
 			if uint32(ace.Mask)&forbidden != 0 && !trustedSID((*windows.SID)(unsafe.Pointer(&ace.SidStart)), current) {
-				return ErrUnsafe
+				return unsafePath("checkAncestorSecurity", "security descriptor", "ACL forbids untrusted mutation grants", nil)
 			}
 		default:
-			return ErrUnsafe // unsupported conditional/object grants fail closed
+			return unsafePath("checkAncestorSecurity", "security descriptor", "ACL conditional/object grants unsupported", nil) // unsupported conditional/object grants fail closed
 		}
 	}
 	return nil
@@ -125,7 +125,7 @@ func closeDirs(hs []windows.Handle) {
 func relativeOpen(parent windows.Handle, name string, directory, create bool, sd *windows.SECURITY_DESCRIPTOR) (windows.Handle, error) {
 	u, e := windows.NewNTUnicodeString(name)
 	if e != nil {
-		return 0, ErrUnsafe
+		return 0, unsafePath("NTUnicodeString", name, "valid Windows string required", e)
 	}
 	oa := windows.OBJECT_ATTRIBUTES{Length: uint32(unsafe.Sizeof(windows.OBJECT_ATTRIBUTES{})), RootDirectory: parent, ObjectName: u, Attributes: windows.OBJ_CASE_INSENSITIVE | windows.OBJ_DONT_REPARSE, SecurityDescriptor: sd}
 	access := uint32(windows.READ_CONTROL | windows.SYNCHRONIZE)
@@ -145,29 +145,37 @@ func relativeOpen(parent windows.Handle, name string, directory, create bool, sd
 	var ios windows.IO_STATUS_BLOCK
 	e = windows.NtCreateFile(&h, access, &oa, &ios, nil, windows.FILE_ATTRIBUTE_NORMAL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, disposition, options, 0, 0)
 	if e != nil {
-		return 0, ErrUnsafe
+		return 0, unsafePath("NtCreateFile", name, "no symlink/reparse; relative open required", e)
 	}
 	var info windows.ByHandleFileInformation
-	if windows.GetFileInformationByHandle(h, &info) != nil || info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || (info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0) != directory {
-		windows.CloseHandle(h)
-		return 0, ErrUnsafe
+	e = windows.GetFileInformationByHandle(h, &info)
+	rule := "metadata query required"
+	if e == nil {
+		if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+			rule = "symlink/reparse forbidden"
+		} else if (info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0) != directory {
+			rule = "file/directory type mismatch"
+		} else {
+			return h, nil
+		}
 	}
-	return h, nil
+	windows.CloseHandle(h)
+	return 0, unsafePath("relativeOpen", name, rule, e)
 }
 
 // Walk relative to retained no-delete-sharing handles, including the volume root.
 func openDirs(path string, create bool) (hs []windows.Handle, err error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.HasPrefix(path, `\\`) || strings.Contains(strings.TrimPrefix(path, filepath.VolumeName(path)), ":") {
-		return nil, ErrUnsafe
+		return nil, unsafePath("openDirs", path, "absolute clean local path without alternate streams required", nil)
 	}
 	root := filepath.VolumeName(path) + string(filepath.Separator)
 	u, e := windows.UTF16PtrFromString(root)
 	if e != nil {
-		return nil, ErrUnsafe
+		return nil, unsafePath("UTF16 root", root, "valid Windows string required", e)
 	}
 	h, e := windows.CreateFile(u, windows.READ_CONTROL|windows.FILE_LIST_DIRECTORY, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if e != nil {
-		return nil, ErrUnsafe
+		return nil, unsafePath("CreateFile root", root, "root directory open required", e)
 	}
 	hs = append(hs, h)
 	defer func() {
@@ -177,21 +185,32 @@ func openDirs(path string, create bool) (hs []windows.Handle, err error) {
 		}
 	}()
 	var info windows.ByHandleFileInformation
-	if windows.GetFileInformationByHandle(h, &info) != nil || info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || checkAncestor(h, true) != nil {
-		return hs, ErrUnsafe
+	if e = windows.GetFileInformationByHandle(h, &info); e != nil {
+		return hs, unsafePath("openDirs", root, "metadata query required", e)
 	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return hs, unsafePath("openDirs", root, "symlink/reparse forbidden", nil)
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+		return hs, unsafePath("openDirs", root, "type must be directory", nil)
+	}
+	if e = checkAncestor(h, true); e != nil {
+		return hs, unsafePath("openDirs", root, "trusted ancestor ACL required", e)
+	}
+	current := root
 	parts := strings.Split(strings.TrimPrefix(path, root), string(filepath.Separator))
 	for i, part := range parts {
 		if part == "" || strings.ContainsAny(part, `:/\`) {
-			return hs, ErrUnsafe
+			return hs, unsafePath("openDirs", part, "non-empty single component required", nil)
 		}
 		sd, e := ownerSecurity()
 		if e != nil {
 			return hs, e
 		}
+		current = filepath.Join(current, part)
 		h, e = relativeOpen(h, part, true, create, sd)
 		if e != nil {
-			return hs, e
+			return hs, unsafePath("openDirs", current, "relative directory open required", e)
 		}
 		hs = append(hs, h)
 		if i == len(parts)-1 {
@@ -200,7 +219,7 @@ func openDirs(path string, create bool) (hs []windows.Handle, err error) {
 			e = checkAncestor(h, false)
 		}
 		if e != nil {
-			return hs, e
+			return hs, unsafePath("openDirs", current, "directory security validation required", e)
 		}
 	}
 	return hs, nil
@@ -238,10 +257,17 @@ func Lock(path string) (*lockedFile, error) {
 		return nil, e
 	}
 	var info windows.ByHandleFileInformation
-	if windows.GetFileInformationByHandle(h, &info) != nil || info.NumberOfLinks != 1 || checkSecurity(h) != nil {
+	e = windows.GetFileInformationByHandle(h, &info)
+	if e == nil && info.NumberOfLinks != 1 {
+		e = unsafePath("Lock", path, "link count must be one", nil)
+	}
+	if e == nil {
+		e = checkSecurity(h)
+	}
+	if e != nil {
 		windows.CloseHandle(h)
 		closeDirs(hs)
-		return nil, ErrUnsafe
+		return nil, unsafePath("Lock", path, "file metadata/private ACL required", e)
 	}
 	if e = windows.LockFileEx(h, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &windows.Overlapped{}); e != nil {
 		windows.CloseHandle(h)

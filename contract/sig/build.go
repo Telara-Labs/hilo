@@ -26,7 +26,7 @@ func BuildKeyOp(b record.KeyOpBody, author ed25519.PublicKey, machineID string, 
 		Red:    record.Redact{Profile: record.ProfileLocal},
 	}
 	body := b
-	r, err := record.Build(h, &body, nil)
+	r, err := record.Build(h, &body)
 	if err != nil {
 		return nil, fmt.Errorf("key op: %w", err)
 	}

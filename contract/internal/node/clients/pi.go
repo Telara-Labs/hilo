@@ -70,16 +70,16 @@ func readReceipt(d *directory) (*piReceipt, error) {
 		return nil, e
 	}
 	if !validObject(b) {
-		return nil, ErrUnsafe
+		return nil, unsafePath("readReceipt", receiptName, "receipt must be a strict JSON object", nil)
 	}
 	var r piReceipt
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	if dec.Decode(&r) != nil || r.Version != 1 || len(r.Digest) != 64 {
-		return nil, ErrUnsafe
+		return nil, unsafePath("readReceipt", receiptName, "receipt schema/version/digest length invalid", nil)
 	}
 	if _, e = hex.DecodeString(r.Digest); e != nil {
-		return nil, ErrUnsafe
+		return nil, unsafePath("readReceipt", receiptName, "digest must be hexadecimal", e)
 	}
 	return &r, nil
 }

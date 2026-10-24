@@ -212,7 +212,7 @@ func TestDisclosureCountAcceptanceNativeEventUnitsAndInjectedPrecedence(t *testi
 			ev.Text = &record.Text{Body: "nativeunitcanary", Bytes: 16}
 			ev.Call = &record.ToolCall{Tool: "native-tool", Command: "native-command", Args: map[string]string{"a": "one", "b": "two"}}
 		}
-		ev, e = record.ReviseEvent(ev, nil, bytes.Repeat([]byte{5}, 32))
+		ev, e = record.ReviseEvent(ev, nil)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -245,7 +245,7 @@ func TestDisclosureCountAcceptanceNativeCurrentEmptyUnitsIgnoreHistoricalFields(
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, err := record.ReviseEvent(record.Event{ID: id, Seq: 0, Kind: "user_prompt", Prov: "transcript", Text: &record.Text{Body: "historicalonlycountcanary", Bytes: 25}}, nil, bytes.Repeat([]byte{6}, 32))
+	old, err := record.ReviseEvent(record.Event{ID: id, Seq: 0, Kind: "user_prompt", Prov: "transcript", Text: &record.Text{Body: "historicalonlycountcanary", Bytes: 25}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestDisclosureCountAcceptanceNativeCurrentEmptyUnitsIgnoreHistoricalFields(
 	if err != nil {
 		t.Fatal(err)
 	}
-	empty, err := record.ReviseEvent(record.Event{ID: emptyID, Seq: 1, Kind: "assistant_final", Prov: "transcript"}, nil, bytes.Repeat([]byte{6}, 32))
+	empty, err := record.ReviseEvent(record.Event{ID: emptyID, Seq: 1, Kind: "assistant_final", Prov: "transcript"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestDisclosureCountAcceptanceNativeCurrentEmptyUnitsIgnoreHistoricalFields(
 	}
 	prior := chunk([]record.Event{old, empty})
 	k.append(prior)
-	current, err := record.ReviseEvent(record.Event{ID: id, Seq: 0, Kind: "user_prompt", Prov: "transcript"}, []string{old.Revision}, bytes.Repeat([]byte{6}, 32))
+	current, err := record.ReviseEvent(record.Event{ID: id, Seq: 0, Kind: "user_prompt", Prov: "transcript"}, []string{old.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestDisclosureCountAcceptanceTrustedRepoPredicateAndCurrentEvidence(t *test
 	taskA := k.taskID(create)
 	k.execute("repo-a-checkpoint", "local.checkpoint_task", map[string]any{"task_id": taskA, "milestone": "repoapositivecanary"})
 	countAcceptanceTrustedRepoFixture(t, k, repoB)
-	_, err := k.e.Execute(ctx, k.h, stale, CallIdentity{SuppliedOpID: "stale-trusted-evidence"}, commandFor(t, "local.lexical_search", map[string]any{"query": "repoapositivecanary"}), ByteBudget{MaxBytes: 4096})
+	_, err := k.e.Execute(ctx, k.h, stale, CallIdentity{SuppliedOpID: k.issued("stale-trusted-evidence")}, commandFor(t, "local.lexical_search", map[string]any{"query": "repoapositivecanary"}), ByteBudget{MaxBytes: 4096})
 	if Code(err) != "stale_scope" {
 		t.Fatal("old evidence handle bypassed current resolution", err)
 	}
@@ -482,7 +482,9 @@ func TestDisclosureCountAcceptanceOriginalImmutableCurrentNarrowEraseReopen(t *t
 				// operation's erasable selection payload became unavailable.
 				fresh := countAcceptanceSearch(k, fmt.Sprint("current-universe-", countAcceptanceGeneration(t, k)), "no-count-query-match", "checkpoint")
 				countAcceptanceKnown(t, countAcceptanceOriginal(t, k, fresh), [6]int64{})
-				countAcceptanceNeutral(t, k.release(fresh))
+				if text := k.release(fresh); text != replay.Unavailable {
+					countAcceptanceNeutral(t, text)
+				}
 				if got := countAcceptanceOriginal(t, k, r); !reflect.DeepEqual(got, original) {
 					t.Fatal("original SQL count snapshot mutated", got, original)
 				}

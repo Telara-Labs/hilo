@@ -20,17 +20,34 @@ func (s *Store) Scrub(ctx context.Context, controlID string) (ScrubResult, error
 		return out, failure("storage_error")
 	}
 	begun := true
+	s.reductions = newReductionContext()
+	defer func() { s.reductions = nil }()
 	defer func() {
 		if begun {
 			s.conn.ExecContext(context.Background(), "ROLLBACK")
 		}
 	}()
+	// A cached pending table is not proof that recovered signed controls have
+	// complete event coverage. Recompute before either checkpoint or clean receipt.
+	d, err := s.load(ctx)
+	if err != nil {
+		return out, err
+	}
+	if !d.projectionBlocked {
+		if err = s.persistErasurePending(ctx, d); err != nil {
+			return out, err
+		}
+	}
 	var held int
-	if s.conn.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM privacy_barrier WHERE owner=?)+(SELECT count(*) FROM projection_hold)", s.opts.PinnedGenesisID).Scan(&held) != nil {
+	if s.conn.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM privacy_barrier WHERE owner=?)+(SELECT count(*) FROM projection_hold)+(SELECT count(*) FROM erasure_pending)", s.opts.PinnedGenesisID).Scan(&held) != nil {
 		return out, failure("storage_error")
 	}
-	if held > 0 {
+	if held > 0 || d.blocked {
 		out.State = "blocked"
+		if _, err = s.conn.ExecContext(ctx, "COMMIT"); err != nil {
+			return out, failure("storage_error")
+		}
+		begun = false
 		return out, nil
 	}
 	var captured int64

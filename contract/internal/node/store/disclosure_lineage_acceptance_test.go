@@ -45,7 +45,7 @@ func TestDisclosureAdmissionFencePreservesAncestorsAndPreexistingHeader(t *testi
 		}
 		h := r.Header
 		h.At = 1
-		rr, err := record.Build(h, r.Body, bytes.Repeat([]byte{18}, 32))
+		rr, err := record.Build(h, freshFixtureBody(r.Body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,7 +115,7 @@ func TestDisclosureSemanticErasureBudgetExactUnionAndNoRefund(t *testing.T) {
 			r := k.execute("budget-lookup", "local.lookup_record", map[string]any{"record_id": root.AdvisoryID})
 			k.release(r)
 			var inputs []SignedRecord
-			for i := 0; i < total-1; i++ {
+			for i := 0; i < total-2; i++ {
 				var deps []string
 				if i == 0 {
 					deps = []string{root.AdvisoryID}

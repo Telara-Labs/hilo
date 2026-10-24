@@ -3,8 +3,6 @@ package contract_test
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -106,25 +104,16 @@ func TestV3JSON(t *testing.T) {
 }
 func TestV4JSON(t *testing.T) {
 	var f struct {
-		SaltKeyHex string      `json:"salt_key_hex"`
-		Kind       record.Kind `json:"kind"`
-		LID        string      `json:"lid"`
-		Body       string      `json:"body_without_salt"`
-		Salt       string      `json:"salt"`
+		Raw  string `json:"test_entropy_hex"`
+		Salt string `json:"salt"`
 	}
 	fixture(t, "v04-salt.json", &f)
-	key, _ := hex.DecodeString(f.SaltKeyHex)
-	got, _ := record.Salt(key, f.Kind, f.LID, []byte(f.Body))
-	if got != f.Salt {
-		t.Fatal("salt mismatch")
+	raw, _ := hex.DecodeString(f.Raw)
+	if len(raw) != 16 || base64.RawURLEncoding.EncodeToString(raw) != f.Salt {
+		t.Fatal("test-only direct salt encoding")
 	}
-	other, _ := record.Salt(bytes.Repeat([]byte{8}, 32), f.Kind, f.LID, []byte(f.Body))
-	sibling, _ := record.Salt(key, f.Kind, f.LID, []byte(`{"text":"sibling"}`))
-	if got == other || got == sibling {
-		t.Fatal("salt did not isolate keys or versions")
-	}
-	if _, err := record.Salt(nil, f.Kind, f.LID, []byte(f.Body)); err == nil {
-		t.Fatal("key outage allowed unsalted seal")
+	if _, err := record.Salt(nil, record.KindConclusion, "", nil); err == nil {
+		t.Fatal("legacy oracle enabled")
 	}
 }
 func TestV5JSON(t *testing.T) {
@@ -141,13 +130,13 @@ func TestV5JSON(t *testing.T) {
 	fixture(t, "v05-signature.json", &f)
 	pub, _ := hex.DecodeString(f.PubHex)
 	r, err := record.Parse([]byte(f.HeaderJCS), []byte(f.BodyJCS), f.RecordID)
-	if err != nil || r.Header.V != 2 || r.Header.Author.KeyID != f.Signature.KeyID {
-		t.Fatal("signed v2 header fixture", err)
+	if err != nil || r.Header.V != 3 || r.Header.Author.KeyID != f.Signature.KeyID {
+		t.Fatal("signed v3 header fixture", err)
 	}
-	key, _ := hex.DecodeString(f.SaltKeyHex)
-	built, err := record.Build(r.Header, r.Body, key)
-	if err != nil || !bytes.Equal(built.HeaderJCS, r.HeaderJCS) || built.ID != f.RecordID {
-		t.Fatal("production header build fixture", err)
+	// Committed import/retry copies exact canonical seals, never re-authors them.
+	built, err := record.Parse(r.HeaderJCS, r.BodyJCS, r.ID)
+	if err != nil || !bytes.Equal(built.HeaderJCS, r.HeaderJCS) {
+		t.Fatal("exact seal reuse", err)
 	}
 	seed, _ := hex.DecodeString(f.TestSeedHex)
 	actual, err := sig.SignRecord(ed25519.NewKeyFromSeed(seed), built.ID)
@@ -198,28 +187,55 @@ func TestV4EventJSON(t *testing.T) {
 		Event record.Event `json:"event"`
 	}
 	fixture(t, "v04-events.json", &f)
-	raw, _ := json.Marshal(f.Event)
-	var fields map[string]json.RawMessage
-	json.Unmarshal(raw, &fields)
-	delete(fields, "revision")
-	delete(fields, "salt")
-	payload, err := jcs.MarshalRecord(fields)
-	if err != nil {
-		t.Fatal(err)
-	}
 	nonce, _ := hex.DecodeString(f.Nonce)
-	key, _ := hex.DecodeString(f.Key)
-	msg, err := jcs.StringArray("mnc2-event-salt", f.Event.ID, base64.RawURLEncoding.EncodeToString(nonce), string(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	mac := hmac.New(sha256.New, key)
-	mac.Write(msg)
-	if base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16]) != f.Event.Salt {
-		t.Fatal("event salt vector")
+	if len(nonce) != 16 || base64.RawURLEncoding.EncodeToString(nonce) != f.Event.Salt {
+		t.Fatal("independent direct event salt")
 	}
 	rev, err := record.EventRevision(f.Event)
 	if err != nil || rev != f.Event.Revision {
 		t.Fatal("protected revision fixture", err)
+	}
+}
+
+func TestV3WorkedAndHistoricalFixtures(t *testing.T) {
+	var f struct {
+		Header string `json:"header_jcs"`
+		Body   string `json:"body_jcs"`
+		ID     string `json:"id"`
+		Digest string `json:"digest"`
+		Size   int    `json:"size"`
+	}
+	fixture(t, "v03-worked-example.json", &f)
+	r, err := record.Parse([]byte(f.Header), []byte(f.Body), f.ID)
+	if err != nil || r.Header.V != 3 || r.Header.Body.Digest != f.Digest || len(r.BodyJCS) != f.Size || f.Size != 86 {
+		t.Fatal("accepted worked fixture", err)
+	}
+	var historical []struct{ HeaderJCS, BodyJCS, ID, Digest string }
+	fixture(t, "historical-mnc2/v03-records.json", &historical)
+	for _, old := range historical {
+		if record.ContentID([]byte(old.HeaderJCS)) != old.ID || record.BodyDigest([]byte(old.BodyJCS)) != old.Digest {
+			t.Fatal("historical bytes/hash changed")
+		}
+		if _, err := record.Parse([]byte(old.HeaderJCS), []byte(old.BodyJCS), old.ID); record.CodeOf(err) != record.CodeUnsupportedVersion {
+			t.Fatal("legacy major entered protected v3 path", err)
+		}
+	}
+}
+
+func TestV4KeyedTextJSON(t *testing.T) {
+	var f struct {
+		Entropy string       `json:"test_entropy_hex"`
+		Event   record.Event `json:"event"`
+		Full    string       `json:"full_redacted_text"`
+	}
+	fixture(t, "v04-keyed-text.json", &f)
+	key, _ := hex.DecodeString(f.Entropy)
+	if base64.RawURLEncoding.EncodeToString(key) != f.Event.Salt {
+		t.Fatal("test entropy encoding")
+	}
+	digest, err := record.EventTextCommitment(f.Event.Salt, f.Full)
+	rev, revErr := record.EventRevision(f.Event)
+	if err != nil || revErr != nil || digest != f.Event.Text.Digest || rev != f.Event.Revision || record.ValidateEventText(f.Event) != nil {
+		t.Fatal("keyed fixture", err, revErr)
 	}
 }

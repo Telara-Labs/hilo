@@ -3,6 +3,8 @@ package store
 import "context"
 
 const disclosureSchema = `
+CREATE TABLE IF NOT EXISTS operation_token(token TEXT PRIMARY KEY,credential TEXT NOT NULL REFERENCES client_credential(id),consumed INTEGER NOT NULL CHECK(consumed IN(0,1)));
+CREATE TABLE IF NOT EXISTS outcome_lookup(owner TEXT NOT NULL,credential TEXT NOT NULL,op TEXT NOT NULL,record_kind TEXT NOT NULL,include_content INTEGER NOT NULL CHECK(include_content IN(0,1)),PRIMARY KEY(owner,credential,op));
 CREATE TABLE IF NOT EXISTS disclosure_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),version INTEGER NOT NULL CHECK(version=2));
 CREATE TABLE IF NOT EXISTS projection_hold(owner TEXT PRIMARY KEY,machine TEXT NOT NULL,reason TEXT NOT NULL CHECK(reason='lineage_evaluation_required'),generation INTEGER NOT NULL CHECK(generation>=0));
 CREATE TABLE IF NOT EXISTS client_credential(id TEXT PRIMARY KEY CHECK(length(id)=36),owner TEXT NOT NULL,machine TEXT NOT NULL,name TEXT NOT NULL,verifier BLOB,epoch INTEGER NOT NULL CHECK(epoch>0),revoked INTEGER NOT NULL CHECK(revoked IN(0,1)),read_repo_kind TEXT NOT NULL CHECK(read_repo_kind IN('deny','all-local','concrete')),write_repo_kind TEXT NOT NULL CHECK(write_repo_kind IN('deny','all-local','concrete')),allow_unscoped INTEGER NOT NULL CHECK(allow_unscoped IN(0,1)),CHECK(allow_unscoped=0 OR write_repo_kind='all-local'));
@@ -60,6 +62,13 @@ func (s *Store) initializeDisclosure(ctx context.Context) error {
 	var version int
 	if s.conn.QueryRowContext(ctx, "SELECT version FROM disclosure_meta WHERE singleton=1").Scan(&version) != nil || version != 2 {
 		return failure("incompatible_database")
+	}
+	// A new store incarnation has no live old transport. Ephemeral scopes are
+	// never retry identity across that boundary; retain historical op/exposure IDs.
+	for _, q := range []string{"DELETE FROM synthetic_compaction_signal WHERE scope IN(SELECT id FROM local_scope WHERE identity_kind='connection')", "DELETE FROM local_scope WHERE identity_kind='connection'"} {
+		if _, err := s.conn.ExecContext(ctx, q); err != nil {
+			return failure("storage_error")
+		}
 	}
 	return nil
 }

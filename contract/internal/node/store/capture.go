@@ -36,6 +36,7 @@ type CaptureProgress struct {
 	Range                   CaptureRange
 }
 type CaptureRequest struct {
+	PolicyID           string // supplied only by the trusted producer from CaptureContext
 	Occurrence         SourceOccurrence
 	AuthorKeyID        string
 	ExpectedVersion    int64
@@ -65,6 +66,7 @@ type CaptureReceipt struct {
 	TransitionID        string
 }
 type CaptureContext struct {
+	PolicyID                                                string
 	OwnerGenesis, MachineID, CheckedAuthorKeyID             string
 	AuthorityGeneration, ErasureGeneration, ProgressVersion int64
 }

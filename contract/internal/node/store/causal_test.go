@@ -33,7 +33,7 @@ func (w *world) event(text string, parents ...string) record.Event {
 	if e != nil {
 		w.t.Fatal(e)
 	}
-	ev, e := record.ReviseEvent(record.Event{ID: id, Seq: 0, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: text}}, parents, bytes.Repeat([]byte{7}, 32))
+	ev, e := record.ReviseEvent(record.Event{ID: id, Seq: 0, Kind: "assistant_final", Prov: "transcript", Text: &record.Text{Body: text}}, parents)
 	if e != nil {
 		w.t.Fatal(e)
 	}
