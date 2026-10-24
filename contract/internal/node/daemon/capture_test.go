@@ -21,6 +21,12 @@ func TestCaptureDrainContextCapability(t *testing.T) {
 	if wired, err := DrainCapture(ctx, "credential"); !wired || err == nil || called != 1 {
 		t.Fatal(wired, err, called)
 	}
+	// The collector may have applied identity while retaining an unsettled
+	// transcript. Its successful result, rather than spool emptiness, governs.
+	pending := WithCaptureDrain(context.Background(), func(context.Context, string) error { return nil })
+	if wired, err := DrainCapture(pending, "credential"); !wired || err != nil {
+		t.Fatal("processed pending identity refused", wired, err)
+	}
 	if _, err := DrainCapture(nil, "credential"); err == nil {
 		t.Fatal("nil context")
 	}

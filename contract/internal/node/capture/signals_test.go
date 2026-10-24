@@ -62,7 +62,7 @@ func TestCollectorDropsMalformedAndAbandonsOnlyOldTmp(t *testing.T) {
 	if err := os.Chtimes(old, earlier, earlier); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Drain(context.Background(), "credential"); err != nil {
+	if err := c.Drain(context.Background(), "credential"); Code(err) != "invalid_signal" {
 		t.Fatal(err)
 	}
 	stats := c.Stats()
@@ -187,10 +187,19 @@ func TestSignalDirectoryBindingRejectsReplacement(t *testing.T) {
 // Capture itself still runs the real SQLite producer. This fake is deliberately
 // NOT used by any integration test and proves no same-transaction durability.
 type unitSignalStore struct {
-	st    *store.Store
-	done  map[string]bool
-	order []string
-	fail  bool
+	st       *store.Store
+	done     map[string]bool
+	order    []string
+	observed []string
+	fail     bool
+}
+
+func (s *unitSignalStore) ObserveSignal(_ context.Context, _ transport.HookSignal, ulid string) error {
+	if s.fail {
+		return hold("unit_admission_failure")
+	}
+	s.observed = append(s.observed, ulid)
+	return nil
 }
 
 func (s *unitSignalStore) SignalDone(_ context.Context, client, ulid string) (bool, error) {

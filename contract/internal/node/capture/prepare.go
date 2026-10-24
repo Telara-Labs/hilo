@@ -218,6 +218,15 @@ func prepareHeld(ctx context.Context, c preparationConfig, u unitLocator, gate p
 	if err != nil {
 		return empty, nil, err
 	}
+	// A hook can arrive before its client finishes even the current JSON line.
+	// Do not decode a live tail and turn an ordinary partial write into refusal.
+	// Ordinary preparation callers retain their existing complete-line behavior.
+	if _, signal := ctx.Value(signalAdmissionKey{}).(signalAdmission); signal {
+		if err := sourceSettlement(h); err != nil {
+			h.close()
+			return empty, nil, err
+		}
+	}
 	batch := preparedBatch{occurrence: occ, client: u.client, reader: readerVersion, ruleset: localPolicyID, provenance: "untrusted_local_file"}
 	batch.nativeSession = native
 	batch.homeRelativeUnit, _ = filepath.Rel(c.home, filepath.Join(c.root, u.relative))

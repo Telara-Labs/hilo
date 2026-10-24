@@ -174,7 +174,11 @@ func TestHeldDescriptorNeverFollowsReplacementAndRejectsChanges(t *testing.T) {
 				}
 				return nil
 			})
-			if err == nil || err.Error() != "capture held: source_changed" {
+			want := "source_changed"
+			if change == "truncate" || change == "append" || change == "same_size_rewrite" {
+				want = "source_unsettled"
+			}
+			if Code(err) != want {
 				t.Fatalf("changed source not held: %v", err)
 			}
 		})

@@ -130,6 +130,16 @@ func (p *Pipeline) Capture(ctx context.Context, unit Unit) (Result, error) {
 	return p.capture(ctx, unit, prepareHeld)
 }
 
+func sourceSettlement(h *openedUnitHandle) error {
+	if !h.quiet(time.Now()) {
+		if !h.bound() {
+			return hold("source_changed")
+		}
+		return hold("source_unsettled")
+	}
+	return nil
+}
+
 type preparationStep func(context.Context, preparationConfig, unitLocator, preOpenGate) (preparedBatch, *openedUnitHandle, error)
 
 // Private seam keeps the production opener fixed while allowing deterministic
@@ -209,8 +219,8 @@ func (p *Pipeline) capture(ctx context.Context, unit Unit, prepare preparationSt
 		return refused(err)
 	}
 	defer h.close()
-	if !h.quiet(time.Now()) {
-		return empty, hold("source_unsettled")
+	if err := sourceSettlement(h); err != nil {
+		return empty, err
 	}
 	events, err := normalize(batch, p.ruleset)
 	if err != nil {
@@ -230,16 +240,26 @@ func (p *Pipeline) capture(ctx context.Context, unit Unit, prepare preparationSt
 			return admission.store.CaptureSignal(ctx, admission.signal, admission.ulid, q, produce)
 		}
 	}
+	var producerErr error
 	receipt, err := commit(ctx, request, func(tx *store.CaptureTxn) (store.CommitPlan, error) {
 		if ctx.Err() != nil {
 			return store.CommitPlan{}, hold("cancelled")
 		}
-		if !h.quiet(time.Now()) {
-			return store.CommitPlan{}, hold("source_changed")
+		if producerErr = sourceSettlement(h); producerErr != nil {
+			return store.CommitPlan{}, producerErr
 		}
-		return p.produce(tx, request, batch, events, h)
+		plan, e := p.produce(tx, request, batch, events, h)
+		if e != nil && Code(e) == "source_changed" {
+			producerErr = sourceSettlement(h)
+		}
+		return plan, e
 	})
 	if err != nil {
+		// Only a confirmed callback refusal (rolled back by Store) may carry
+		// our local settling classification. Never mask storage/outcome errors.
+		if store.Code(err) == "producer_refused" && Code(producerErr) == "source_unsettled" {
+			return empty, producerErr
+		}
 		if Code(err) != "capture_failure" {
 			return empty, err
 		}

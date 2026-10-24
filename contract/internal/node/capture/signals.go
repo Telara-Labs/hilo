@@ -26,6 +26,13 @@ type SignalStore interface {
 	AdmitSignal(context.Context, transport.HookSignal, string) error
 }
 
+// PendingSignalStore applies a validated announcement without acknowledging its
+// transcript. It retains identity/path metadata only. A later CaptureSignal for
+// the exact same immutable hint must atomically complete its output and receipt.
+type PendingSignalStore interface {
+	ObserveSignal(context.Context, transport.HookSignal, string) error
+}
+
 type signalAdmission struct {
 	signal transport.HookSignal
 	ulid   string
@@ -115,8 +122,8 @@ func (c *Collector) Close() error {
 
 // Drain is synchronous. Snapshot each new directory before processing, then
 // merge-sort globally by ULID. New renames after that snapshot are observed on
-// the next request. Pending valid signals never become a successful empty drain
-// if source sealing/admission is unavailable or its outcome is unknown.
+// the next request. A safely processed identity may remain pending until its
+// transcript settles. Store/identity failures never become successful drains.
 func (c *Collector) Drain(ctx context.Context, credential string) error {
 	if c == nil || ctx == nil || ctx.Err() != nil || credential == "" {
 		return hold("invalid_signal")
@@ -187,6 +194,7 @@ func (c *Collector) Drain(ctx context.Context, credential string) error {
 		return items[i].client < items[j].client
 	})
 	backend := c.pipeline.signals
+	invalid := false
 	for _, item := range items {
 		if ctx.Err() != nil {
 			return hold("cancelled")
@@ -222,6 +230,7 @@ func (c *Collector) Drain(ctx context.Context, credential string) error {
 				return err
 			}
 			c.dropped.Add(1)
+			invalid = true
 			continue
 		}
 		if backend == nil {
@@ -243,7 +252,20 @@ func (c *Collector) Drain(ctx context.Context, credential string) error {
 				return hold("signal_session_mismatch")
 			}
 			if _, err = c.pipeline.CaptureSignal(ctx, Unit{rootID, relative}, *signal, ulid); err != nil {
-				return err
+				switch Code(err) {
+				case "source_absent", "source_unsettled", "partial_line", "no_observations":
+					observer, ok := backend.(PendingSignalStore)
+					if !ok {
+						return hold("spool_observation_unavailable")
+					}
+					if err = observer.ObserveSignal(ctx, *signal, ulid); err != nil {
+						return hold("spool_admission_failed")
+					}
+					// No spool_done and no unlink until transcript admission.
+					continue
+				default:
+					return err
+				}
 			}
 		}
 		// The backend only returns success after its FULL transaction is durable.
@@ -252,6 +274,9 @@ func (c *Collector) Drain(ctx context.Context, credential string) error {
 			return err
 		}
 		c.done.Add(1)
+	}
+	if invalid {
+		return hold("invalid_signal")
 	}
 	return nil
 }

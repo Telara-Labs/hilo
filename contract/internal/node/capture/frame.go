@@ -41,13 +41,25 @@ func (m *frameMemory) append(piece []byte, limit int) {
 
 func frameUnit(ctx context.Context, h *openedUnitHandle, yield func(int, []byte) error) error {
 	if !h.stable() {
+		if h.bound() {
+			return hold("source_unsettled")
+		}
 		return hold("source_changed")
 	}
 	err := frameReader(ctx, h.file, yield, maxUnit, maxFrame, &frameMemory{})
 	if err != nil {
+		if !h.bound() {
+			return hold("source_changed")
+		}
+		if !h.stable() && h.bound() && (Code(err) == "invalid_json" || Code(err) == "native_shape" || Code(err) == "partial_line") {
+			return hold("source_unsettled")
+		}
 		return err
 	}
 	if !h.stable() {
+		if h.bound() {
+			return hold("source_unsettled")
+		}
 		return hold("source_changed")
 	}
 	return nil

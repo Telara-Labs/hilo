@@ -22,7 +22,8 @@ var ErrAuthority = errors.New("peer_authority_unavailable")
 type Authority struct {
 	InstallDir string
 	DataDir    string
-	// Drain must synchronously apply all available capture signals before return.
+	// Drain must synchronously apply all identity announcements before return;
+	// safely observed unsettled transcripts may remain pending in the spool.
 	// The opener may bind its live collector through the daemon context seam.
 	// Without either collector, a nonempty spool explicitly denies access.
 	Drain func(context.Context, string) error

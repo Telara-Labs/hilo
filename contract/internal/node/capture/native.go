@@ -324,6 +324,12 @@ func decodeCodex(b []byte, line int, nativeSession string) ([]preparedObservatio
 	if err != nil {
 		return nil, err
 	}
+	// Rollouts also contain versioned client bookkeeping (world_state, token
+	// usage, etc.). The bounded framer/strict JSON gate still validates bytes,
+	// but unknown record bodies supply no observations or identity authority.
+	if outer != "session_meta" && outer != "turn_context" && outer != "response_item" && outer != "event_msg" {
+		return nil, nil
+	}
 	p, err := obj(m["payload"])
 	if err != nil {
 		return nil, err
@@ -362,12 +368,19 @@ func decodeCodex(b []byte, line int, nativeSession string) ([]preparedObservatio
 		}
 		return out, nil
 	}
-	if outer != "response_item" && outer != "event_msg" {
-		return nil, hold("unsupported_native_record")
-	}
 	t, err := str(p, "type", true)
 	if err != nil {
 		return nil, err
+	}
+	// Event notifications duplicate native messages and include task/token
+	// telemetry. Only the supported MCP result notification is an observation.
+	if outer == "event_msg" && t != "mcp_tool_call_end" {
+		return nil, nil
+	}
+	switch t {
+	case "message", "function_call", "local_shell_call", "function_call_output", "mcp_tool_call_end":
+	default:
+		return nil, nil
 	}
 	base.nativeID, err = token(p, "id", false)
 	if err != nil {
@@ -383,8 +396,11 @@ func decodeCodex(b []byte, line int, nativeSession string) ([]preparedObservatio
 			return nil, err
 		}
 		allowed := "input_text"
+		observation := role + "_text"
 		if role == "assistant" {
 			allowed = "output_text"
+		} else if role == "developer" || role == "system" {
+			observation = "native_meta_text"
 		} else if role != "user" {
 			return nil, hold("unsupported_role")
 		}
@@ -406,7 +422,7 @@ func decodeCodex(b []byte, line int, nativeSession string) ([]preparedObservatio
 				return nil, err
 			}
 			o := base
-			o.kind = role + "_text"
+			o.kind = observation
 			o.position.block = i
 			o.fields = []field{{name: "text", text: text}}
 			out = append(out, o)

@@ -66,6 +66,9 @@ func openUnit(root, relative string) (*openedUnitHandle, error) {
 	openDir := func(part string, requirePrivate bool) error {
 		next, e := unix.Openat(d, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 		if e != nil {
+			if e == unix.ENOENT {
+				return hold("source_absent")
+			}
 			return hold("unsafe_path")
 		}
 		var st unix.Stat_t
@@ -91,6 +94,9 @@ func openUnit(root, relative string) (*openedUnitHandle, error) {
 	name := children[len(children)-1]
 	fd, e := unix.Openat(d, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if e != nil {
+		if e == unix.ENOENT {
+			return nil, hold("source_absent")
+		}
 		return nil, hold("unsafe_file")
 	}
 	file := os.NewFile(uintptr(fd), "capture-unit")
@@ -126,10 +132,9 @@ func (h *openedUnitHandle) close() {
 	h.directories = nil
 }
 
-// stable compares identity, size, mtime, mode and ctime. Linux ctime comes from
-// a coarse clock, so a same-size rewrite with restored mtime inside one tick of
-// the open is not detectable here.
-func (h *openedUnitHandle) stable() bool {
+// bound keeps filesystem identity/permissions separate from content settling.
+// Content may change on a live bound source; a replaced path never qualifies.
+func (h *openedUnitHandle) bound() bool {
 	if h == nil || h.file == nil {
 		return false
 	}
@@ -148,14 +153,25 @@ func (h *openedUnitHandle) stable() bool {
 	}
 
 	info, err := h.file.Stat()
-	if err != nil || !os.SameFile(info, h.initial) || info.Size() != h.initial.Size() || !info.ModTime().Equal(h.initial.ModTime()) || info.Mode() != h.initial.Mode() {
+	if err != nil || !os.SameFile(info, h.initial) || info.Mode() != h.initial.Mode() {
 		return false
 	}
 	var fd, path unix.Stat_t
-	if unix.Fstat(int(h.file.Fd()), &fd) != nil || !private(&fd, false) || changeTime(&fd) != h.initialChange || unix.Fstatat(h.parent, h.name, &path, unix.AT_SYMLINK_NOFOLLOW) != nil {
+	if unix.Fstat(int(h.file.Fd()), &fd) != nil || !private(&fd, false) || unix.Fstatat(h.parent, h.name, &path, unix.AT_SYMLINK_NOFOLLOW) != nil {
 		return false
 	}
-	return private(&path, false) && path.Dev == fd.Dev && path.Ino == fd.Ino && path.Size == fd.Size && path.Nlink == fd.Nlink
+	return private(&path, false) && path.Dev == fd.Dev && path.Ino == fd.Ino && path.Nlink == fd.Nlink && path.Mode == fd.Mode && path.Uid == fd.Uid && path.Gid == fd.Gid
+}
+
+// stable compares size, mtime and ctime after checking the filesystem binding.
+// Linux ctime is coarse; same-tick rewrites with restored mtime can escape it.
+func (h *openedUnitHandle) stable() bool {
+	if !h.bound() {
+		return false
+	}
+	info, err := h.file.Stat()
+	var st unix.Stat_t
+	return err == nil && info.Size() == h.initial.Size() && info.ModTime().Equal(h.initial.ModTime()) && unix.Fstat(int(h.file.Fd()), &st) == nil && changeTime(&st) == h.initialChange
 }
 
 func (h *openedUnitHandle) quiet(now time.Time) bool {

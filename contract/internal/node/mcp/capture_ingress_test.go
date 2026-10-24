@@ -270,3 +270,121 @@ func assertIngressSessions(t *testing.T, w *adapterWorld, provider ingressRuntim
 		}
 	}
 }
+
+func publishCodexLifecycleHook(t *testing.T, w *adapterWorld, provider ingressRuntime, path, event string) {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"session_id": "01990000-0000-4000-8000-000000000001", "transcript_path": path, "hook_event_name": event})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := clients.RunHook(context.Background(), clients.Options{Client: clients.Codex, Home: provider.config.Home, StateDir: w.paths.Data}, bytes.NewReader(raw))
+	if !result.Published || !result.TranscriptHintVerified {
+		t.Fatalf("hook %s not published with verified path: %+v", event, result)
+	}
+}
+
+func codexLiveIngress(t *testing.T, w *adapterWorld, provider ingressRuntime) (string, []byte) {
+	t.Helper()
+	root := provider.config.Roots["codex"].AbsPath
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "capture", "testdata", "codex-0.161.0.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "rollout-2026-10-24-01990000-0000-4000-8000-000000000001.jsonl")
+	// A real client's stream can end halfway through the next record, even
+	// though its immutable SessionStart/UserPromptSubmit signals are complete.
+	prefix := append(append([]byte(nil), raw[:bytes.IndexByte(raw, '\n')+1]...), []byte(`{"type":`)...)
+	if err = os.WriteFile(path, prefix, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path, raw
+}
+
+func TestCaptureIngressCodexLiveHookOrderRealDaemonShim(t *testing.T) {
+	w, provider := ingressWorld(t, clients.Codex)
+	startIngress(t, w, provider)
+	path, full := codexLiveIngress(t, w, provider)
+	publishCodexLifecycleHook(t, w, provider, path, "SessionStart")
+	publishCodexLifecycleHook(t, w, provider, path, "UserPromptSubmit")
+	a := w.session()
+	goodText(t, a.call("telara_task_list", map[string]any{}, "", "codex-session-a"))
+	if w.count("SELECT count(*) FROM spool_announcement") != 2 || w.count("SELECT count(*) FROM spool_done") != 0 || w.count("SELECT count(*) FROM capture_progress") != 0 {
+		t.Fatal("live hints not observed or falsely ACKed/captured")
+	}
+	files, err := os.ReadDir(filepath.Join(w.paths.Data, "spool", "codex", "new"))
+	if err != nil || len(files) != 2 {
+		t.Fatal("pending signals lost", err)
+	}
+	// Repeated MCP calls reapply pending announcements idempotently.
+	goodText(t, a.call("telara_task_list", map[string]any{}, "", "codex-session-a"))
+	if w.count("SELECT count(*) FROM spool_announcement") != 2 || w.count("SELECT count(*) FROM spool_done") != 0 {
+		t.Fatal("pending replay not idempotent")
+	}
+	if err = os.WriteFile(path, full, 0600); err != nil {
+		t.Fatal(err)
+	}
+	publishCodexLifecycleHook(t, w, provider, path, "Stop")
+	goodText(t, a.call("telara_task_list", map[string]any{}, "", "codex-session-a"))
+	// Canonical quiet-period settling remains in force for the trailing line.
+	time.Sleep(2100 * time.Millisecond)
+	publishCodexLifecycleHook(t, w, provider, path, "SessionEnd")
+	b := w.session()
+	goodText(t, b.call("telara_task_list", map[string]any{}, "", "codex-session-b"))
+	assertIngressSessions(t, w, provider)
+	if w.count("SELECT count(*) FROM spool_done") != 4 {
+		t.Fatal("terminal/later drain did not complete every pending hint")
+	}
+	id := w.scalar("SELECT id FROM record WHERE json_extract(CAST(header AS TEXT),'$.type')='session'")
+	text := goodText(t, b.call("telara_get_context", map[string]any{"entity_id": id, "entity_type": "session", "include_content": false}, "", "codex-session-b"))
+	if !strings.Contains(text, id) {
+		t.Fatal("fresh session did not read A's captured session")
+	}
+}
+
+func TestCaptureIngressPendingIdentityRefusalsRealDaemonShim(t *testing.T) {
+	for _, scenario := range []string{"malformed", "hostile-path", "store-failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			w, provider := ingressWorld(t, clients.Codex)
+			startIngress(t, w, provider)
+			path, _ := codexLiveIngress(t, w, provider)
+			publishCodexLifecycleHook(t, w, provider, path, "SessionStart")
+			dir := filepath.Join(w.paths.Data, "spool", "codex", "new")
+			switch scenario {
+			case "malformed":
+				files, err := os.ReadDir(dir)
+				if err != nil || len(files) != 1 {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(filepath.Join(dir, files[0].Name()), []byte(`{"v":3,"unknown":"synthetic"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "hostile-path":
+				if err := os.Rename(path, path+".old"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(path+".old", path); err != nil {
+					t.Fatal(err)
+				}
+			case "store-failure":
+				db, err := sql.Open("sqlite", "file:"+filepath.Join(w.paths.Data, "memory.sqlite")+"?mode=rw")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer db.Close()
+				if _, err = db.Exec(`CREATE TRIGGER refuse_pending BEFORE INSERT ON spool_announcement BEGIN SELECT RAISE(ABORT,'synthetic observation refusal'); END`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result := w.session().call("telara_task_list", map[string]any{}, "", "pending-negative")
+			if !result.IsError || textOf(t, result) != "identity_unavailable" {
+				t.Fatal("unsafe identity processing allowed MCP", result)
+			}
+			if w.count("SELECT count(*) FROM spool_done") != 0 || w.count("SELECT count(*) FROM spool_announcement") != 0 || w.count("SELECT count(*) FROM capture_progress") != 0 {
+				t.Fatal("unsafe pending hint committed")
+			}
+		})
+	}
+}

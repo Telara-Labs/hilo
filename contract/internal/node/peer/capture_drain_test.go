@@ -43,6 +43,13 @@ func TestCaptureDrainUsesLiveCollectorAndPropagatesFailure(t *testing.T) {
 	if _, err := os.Lstat(path); err != nil {
 		t.Fatal("failed drain lost signal")
 	}
+	ctx = daemon.WithCaptureDrain(context.Background(), func(context.Context, string) error { return nil })
+	if err := a.drain(ctx, "credential"); err != nil {
+		t.Fatal("processed pending identity refused", err)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatal("pending transcript prematurely removed", err)
+	}
 	ctx = daemon.WithCaptureDrain(context.Background(), func(context.Context, string) error { return os.Remove(path) })
 	if err := a.drain(ctx, "credential"); err != nil {
 		t.Fatal("drained spool refused", err)
