@@ -107,7 +107,7 @@ func identifier(s string) bool {
 }
 
 func resolve(c preparationConfig, u unitLocator) (string, error) {
-	if u.client != "claude-code" && u.client != "codex" {
+	if !supportedClient(u.client) {
 		return "", hold("unsupported_client")
 	}
 	if !record.IsKeyID(c.owner) || !record.IsUUIDv4(c.machine) || !record.IsHex64(u.source) || !record.IsSessionKey(u.session) {
@@ -126,7 +126,7 @@ func resolve(c preparationConfig, u unitLocator) (string, error) {
 	}
 	stem := strings.TrimSuffix(filepath.Base(u.relative), ".jsonl")
 	native := stem
-	if u.client == "codex" && len(stem) >= 36 {
+	if (u.client == "codex" || u.client == "pi") && len(stem) >= 36 {
 		native = stem[len(stem)-36:]
 	}
 	if !record.IsUUID(native) {
@@ -222,16 +222,24 @@ func prepareHeld(ctx context.Context, c preparationConfig, u unitLocator, gate p
 	batch.nativeSession = native
 	batch.homeRelativeUnit, _ = filepath.Rel(c.home, filepath.Join(c.root, u.relative))
 	batch.homeRelativeUnit = filepath.ToSlash(batch.homeRelativeUnit)
+	tree := piTree{}
 	err = frameUnit(ctx, h, func(line int, b []byte) error {
 		if err := strictJSON(b); err != nil {
 			return err
 		}
 		var observations []preparedObservation
 		var err error
-		if u.client == "claude-code" {
+		switch u.client {
+		case "claude-code":
 			observations, err = decodeClaude(b, line, native)
-		} else {
+		case "codex":
 			observations, err = decodeCodex(b, line, native)
+		case "cursor-agent":
+			observations, err = decodeCursor(b, line)
+		case "pi":
+			if err = tree.add(b, line); err == nil {
+				observations, err = decodePi(b, line, native)
+			}
 		}
 		if err != nil {
 			return err
@@ -248,6 +256,9 @@ func prepareHeld(ctx context.Context, c preparationConfig, u unitLocator, gate p
 		}
 		return nil
 	})
+	if err == nil && u.client == "pi" {
+		err = tree.finish(&batch)
+	}
 	if err != nil {
 		h.close()
 		return empty, nil, err

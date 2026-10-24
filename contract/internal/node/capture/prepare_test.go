@@ -175,7 +175,7 @@ func TestPreOpenFenceAndIdentityFailuresDoNotOpen(t *testing.T) {
 	u.relative = "unit.jsonl.zst"
 	b, err = prepare(context.Background(), c, u, allow)
 	requireHeld(t, b, err, "unsupported_format")
-	u.client = "pi"
+	u.client = "unsupported-client"
 	b, err = prepare(context.Background(), c, u, allow)
 	requireHeld(t, b, err, "unsupported_client")
 }

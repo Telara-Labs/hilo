@@ -23,7 +23,8 @@ type Authority struct {
 	InstallDir string
 	DataDir    string
 	// Drain must synchronously apply all available capture signals before return.
-	// Until capture ingress is wired, a nonempty spool explicitly denies access.
+	// The opener may bind its live collector through the daemon context seam.
+	// Without either collector, a nonempty spool explicitly denies access.
 	Drain func(context.Context, string) error
 }
 
@@ -38,13 +39,10 @@ func (a Authority) VerifyAndDrain(ctx context.Context, h ipc.Hello, credential s
 	if err := a.verify(h.PID); err != nil {
 		return err
 	}
-	if a.Drain != nil {
-		if err := a.Drain(ctx, credential); err != nil {
-			return ErrAuthority
-		}
-	} else if err := emptySpool(a.DataDir); err != nil {
-		return err
+	if err := a.drain(ctx, credential); err != nil {
+		return ErrAuthority
 	}
+
 	// Capture draining cannot turn a dead/reused peer into authority.
 	if ctx.Err() != nil {
 		return ErrAuthority

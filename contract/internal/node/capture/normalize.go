@@ -7,7 +7,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
 
-const runtimeReaderVersion = "native-jsonl-runtime.1"
+const runtimeReaderVersion = "native-jsonl-runtime.2"
 
 func observationKind(s string) (string, error) {
 	switch s {
@@ -41,7 +41,10 @@ func sourceAnchor(o preparedObservation, path string) (record.Anchor, string, er
 		return empty, "", hold("source_position")
 	}
 	native := o.nativeID
-	if (o.kind == "tool_call" || o.kind == "tool_result") && o.callID != "" {
+	// A call ID correlates results with their invocation. It does not identify
+	// a result item: Codex can emit both response output and an MCP end record
+	// for the same call. Preserve each result's native item or source position.
+	if o.kind == "tool_call" && o.callID != "" {
 		native = o.callID
 	}
 	if native != "" {
@@ -105,13 +108,15 @@ func normalize(batch preparedBatch, rs record.Ruleset) ([]record.Event, error) {
 				e.Meta[f.name] = f.text
 			}
 		case "tool_call":
-			if o.callID == "" {
+			if o.callID == "" && batch.client != "cursor-agent" {
 				return nil, hold("observation_shape")
 			}
-			if _, ok := calls[o.callID]; ok {
+			if _, ok := calls[o.callID]; ok && o.callID != "" {
 				return nil, hold("ambiguous_tool_call")
 			}
-			calls[o.callID] = id
+			if o.callID != "" {
+				calls[o.callID] = id
+			}
 			e.Call = &record.ToolCall{Args: map[string]string{}}
 			types := [][2]string{}
 			for _, f := range o.fields {

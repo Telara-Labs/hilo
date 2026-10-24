@@ -1,0 +1,4 @@
+{"role":"user","message":{"content":[{"type":"text","text":"Synthetic Cursor request"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Synthetic Cursor response"},{"type":"tool_use","name":"read_file","input":{"path":"/synthetic/example","password":"cursor-synthetic-secret"}},{"type":"tool_use","name":"list_dir","input":{"path":"/synthetic"}}]}}
+{"role":"tool","message":{"content":[{"type":"text","text":"Synthetic unassociated tool prose"}]}}
+{"type":"turn_ended","status":"error","error":"Authorization: Bearer cursor-synthetic-token"}

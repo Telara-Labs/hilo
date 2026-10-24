@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/capture"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
 )
@@ -12,9 +13,11 @@ import (
 // Open nor the transport bootstraps keys, registers clients or expands grants.
 // Material contains a copy; callers remain responsible for their own buffers.
 type Runtime struct {
-	Config      disclosure.Config
-	Material    disclosure.RuntimeMaterial
-	Credentials ProofSource
+	Config        disclosure.Config
+	Material      disclosure.RuntimeMaterial
+	Credentials   ProofSource
+	CaptureConfig *capture.Config
+	CaptureKeys   capture.PreloadedKeyMaterial
 }
 
 type RuntimeProvider interface {
@@ -24,14 +27,15 @@ type RuntimeProvider interface {
 // InstalledRuntimeProvider adapts the installed authority boundary without
 // copying authority into transport hints or bootstrapping a fresh identity.
 // The trusted installer must supply its OS vault and verified peer authority.
-type InstalledRuntimeProvider struct{ Provider disclosure.InstalledProvider }
+type InstalledRuntimeProvider struct {
+	Provider disclosure.InstalledProvider
+	// CaptureHome optionally selects a disposable or explicitly configured home.
+	// It never comes from a client's hello or MCP request metadata.
+	CaptureHome string
+}
 
 func (p InstalledRuntimeProvider) Load(ctx context.Context) (Runtime, error) {
-	r, err := p.Provider.Load(ctx)
-	if err != nil {
-		return Runtime{}, err
-	}
-	return Runtime{Config: r.Config, Material: r.Material, Credentials: r.Credentials}, nil
+	return p.loadCaptureRuntime(ctx)
 }
 
 // Open opens the actual store only with explicitly provisioned runtime authority.
@@ -45,6 +49,7 @@ func Open(ctx context.Context, dir string, provider RuntimeProvider) (*Backend, 
 	}
 	runtime, err := provider.Load(ctx)
 	defer runtime.Material.Clear()
+	defer runtime.CaptureKeys.Clear()
 	if err != nil {
 		return nil, errors.New("runtime_authority_unavailable")
 	}
@@ -60,5 +65,11 @@ func Open(ctx context.Context, dir string, provider RuntimeProvider) (*Backend, 
 		st.Close()
 		return nil, err
 	}
-	return NewDisclosure(service, runtime.Credentials, st.Close), nil
+	source, closeStore, err := openCapture(ctx, dir, st, runtime)
+	if err != nil {
+		_ = service.Close()
+		_ = st.Close()
+		return nil, err
+	}
+	return NewDisclosure(service, source, closeStore), nil
 }

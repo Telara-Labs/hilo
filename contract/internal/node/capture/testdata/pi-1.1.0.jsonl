@@ -1,0 +1,8 @@
+{"type":"session","version":3,"id":"01990000-0000-4000-8000-000000000001","timestamp":"2026-10-24T12:00:00.000Z","cwd":"/synthetic/project"}
+{"type":"model_change","id":"00000001","parentId":null,"timestamp":"2026-10-24T12:00:01.000Z","provider":"synthetic","modelId":"synthetic-model"}
+{"type":"message","id":"00000002","parentId":"00000001","timestamp":"2026-10-24T12:00:02.000Z","message":{"role":"system","content":"Synthetic system prompt","sections":{"preamble":"Authorization: Bearer pi-synthetic-token"},"timestamp":1792843202000}}
+{"type":"message","id":"00000003","parentId":"00000002","timestamp":"2026-10-24T12:00:03.000Z","message":{"role":"user","content":"Synthetic Pi request","timestamp":1792843203000}}
+{"type":"message","id":"00000004","parentId":"00000003","timestamp":"2026-10-24T12:00:04.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Synthetic reasoning"},{"type":"text","text":"Synthetic Pi response"},{"type":"toolCall","id":"call_synthetic","name":"read","arguments":{"path":"/synthetic/example","password":"pi-synthetic-secret"}}],"timestamp":1792843204000}}
+{"type":"message","id":"00000005","parentId":"00000004","timestamp":"2026-10-24T12:00:05.000Z","message":{"role":"toolResult","toolCallId":"call_synthetic","toolName":"read","content":[{"type":"text","text":"Synthetic result"}],"isError":true,"timestamp":1792843205000}}
+{"type":"branch_summary","id":"00000006","parentId":"00000003","timestamp":"2026-10-24T12:00:06.000Z","fromId":"00000005","summary":"Synthetic alternate branch summary"}
+{"type":"compaction","id":"00000007","parentId":"00000006","timestamp":"2026-10-24T12:00:07.000Z","firstKeptEntryId":"00000006","summary":"Synthetic compaction summary"}

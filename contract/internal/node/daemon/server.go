@@ -575,6 +575,9 @@ func serveBound(parent context.Context, c net.Conn, backend Backend, life *lifec
 			var out Response
 			if req.Method == "status" {
 				out = Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"state": "running", "pid": os.Getpid(), "store_wired": storeWired(backend), "autostart": "reported_by_install_status"}}
+				if source, ok := backend.(interface{ CaptureStats() map[string]uint64 }); ok {
+					out.Result.(map[string]any)["capture"] = source.CaptureStats()
+				}
 			} else if h.Kind != "mcp" {
 				out = Error(req.ID, "unsupported_control")
 			} else if backend == nil {

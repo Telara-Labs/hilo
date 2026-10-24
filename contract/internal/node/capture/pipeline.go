@@ -33,6 +33,7 @@ type Result struct {
 type Pipeline struct {
 	mu       sync.Mutex
 	store    *store.Store
+	signals  SignalStore
 	config   Config
 	keys     PreloadedKeyMaterial
 	ruleset  record.Ruleset
@@ -55,7 +56,7 @@ func NewPipeline(ctx context.Context, st *store.Store, cfg Config, keys Preloade
 	}
 	roots := map[string]Root{}
 	for id, root := range cfg.Roots {
-		if !identifier(id) || (root.Client != "claude-code" && root.Client != "codex") || !filepath.IsAbs(root.AbsPath) || filepath.Clean(root.AbsPath) != root.AbsPath {
+		if !identifier(id) || !supportedClient(root.Client) || !filepath.IsAbs(root.AbsPath) || filepath.Clean(root.AbsPath) != root.AbsPath {
 			return nil, hold("invalid_config")
 		}
 		rel, err := filepath.Rel(cfg.Home, root.AbsPath)
@@ -76,7 +77,8 @@ func NewPipeline(ctx context.Context, st *store.Store, cfg Config, keys Preloade
 	if identity.OwnerGenesis != cfg.OwnerGenesis || identity.MachineID != cfg.MachineID || identity.StoreInstanceID == "" {
 		return nil, hold("store_identity")
 	}
-	return &Pipeline{store: st, config: cfg, keys: keys, ruleset: rs, instance: identity.StoreInstanceID}, nil
+	signals, _ := any(st).(SignalStore)
+	return &Pipeline{store: st, signals: signals, config: cfg, keys: keys, ruleset: rs, instance: identity.StoreInstanceID}, nil
 }
 
 func storeFailure(err error) error {
@@ -222,7 +224,13 @@ func (p *Pipeline) capture(ctx context.Context, unit Unit, prepare preparationSt
 	if ctx.Err() != nil {
 		return empty, hold("cancelled")
 	}
-	receipt, err := p.store.Capture(ctx, request, func(tx *store.CaptureTxn) (store.CommitPlan, error) {
+	commit := p.store.Capture
+	if admission, ok := ctx.Value(signalAdmissionKey{}).(signalAdmission); ok {
+		commit = func(ctx context.Context, q store.CaptureRequest, produce func(*store.CaptureTxn) (store.CommitPlan, error)) (store.CaptureReceipt, error) {
+			return admission.store.CaptureSignal(ctx, admission.signal, admission.ulid, q, produce)
+		}
+	}
+	receipt, err := commit(ctx, request, func(tx *store.CaptureTxn) (store.CommitPlan, error) {
 		if ctx.Err() != nil {
 			return store.CommitPlan{}, hold("cancelled")
 		}
