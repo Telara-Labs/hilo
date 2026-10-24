@@ -286,6 +286,37 @@ func (d *databaseState) classifyFields() error {
 				fields[i].projection = ""
 			}
 		}
+		// Individual fields can be safe while their normalized join matches a
+		// tenant shape. Apply the same assembled-text gate as the renderer, and
+		// retain its source mapping when excluding the contributing fields.
+		values := make([]string, len(fields))
+		for i, f := range fields {
+			if f.class == disclosuretext.NoDetectedMarker {
+				values[i] = f.projection
+			}
+		}
+		assembly, err := disclosuretext.CheckAssembly(values, overlay, work)
+		if err != nil || assembly.Restricted {
+			exclude := func(i int) {
+				fields[i].class = disclosuretext.ClassificationUnavailable
+				fields[i].reason = "assembled_policy_restricted"
+				if err != nil {
+					fields[i].reason = disclosuretext.Code(err)
+				}
+				fields[i].projection = ""
+			}
+			if err != nil {
+				for i, value := range values {
+					if value != "" {
+						exclude(i)
+					}
+				}
+			} else {
+				for _, span := range assembly.Spans {
+					exclude(span.Field)
+				}
+			}
+		}
 		d.fields[x.rec.ID] = fields
 	}
 	return nil

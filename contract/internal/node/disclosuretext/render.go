@@ -184,6 +184,7 @@ func Render(in RenderInput) (RenderResult, error) {
 		type sourceSpan struct{ start, end, field int }
 		var spans []sourceSpan
 		keys := map[string]bool{}
+		values := make([]string, len(item.Fields))
 		for fi, f := range item.Fields {
 			if !fieldFamilies[f.Family] || f.Ordinal < 0 || f.Ordinal > 4095 {
 				return out, fail("unsupported_field")
@@ -207,6 +208,22 @@ func Render(in RenderInput) (RenderResult, error) {
 			// At most six ASCII bytes are produced per input byte.
 			if len(s) > MaxViewValue {
 				return out, fail("render_limit")
+			}
+			values[fi] = s
+		}
+		assembly, e := CheckAssembly(values, in.Overlay, &work)
+		if e != nil {
+			return out, e
+		}
+		if assembly.Restricted {
+			for _, span := range assembly.Spans {
+				values[span.Field] = ""
+			}
+			body.WriteString("    | Content withheld by current policy.\n")
+		}
+		for fi, s := range values {
+			if assembly.Restricted || s == "" {
+				continue
 			}
 			lines := strings.Split(s, "\n")
 			for li, line := range lines {
