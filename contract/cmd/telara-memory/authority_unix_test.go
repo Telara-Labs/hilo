@@ -47,7 +47,7 @@ func TestInstallationBindingRefusesChangedCreatorAndPreservesPending(t *testing.
 		t.Fatal(e)
 	}
 	bound, e := v.bound(ctx)
-	if e != nil || bound.Record != r {
+	if e != nil || bound != r {
 		t.Fatal("installed target not selected", e)
 	}
 	creator := r
@@ -86,5 +86,70 @@ func TestReadinessRejectsActualDiagnosticDaemon(t *testing.T) {
 	var out bytes.Buffer
 	if e := waitReadiness(ctx, p, &out); e == nil || out.Len() != 0 {
 		t.Fatal("diagnostic process accepted as installed readiness", e, out.String())
+	}
+}
+
+func TestInstallationVaultRecoversTruncatedManifestThroughProductionWrappers(t *testing.T) {
+	for _, action := range []string{"retry", "uninstall"} {
+		t.Run(action, func(t *testing.T) {
+			r, p := installedFixture(t)
+			canonical, e := filepath.EvalSymlinks(p.Data)
+			if e != nil {
+				t.Fatal(e)
+			}
+			p.Data, r.DataDir = canonical, canonical
+			writeJSONFixture(t, filepath.Join(r.Dir, "install.json"), r)
+			writeJSONFixture(t, filepath.Join(r.Dir, "intent.json"), map[string]string{"mode": "stop", "sha256": r.SHA256, "version": r.Version, "session": ""})
+			native := &deletionTestCustody{}
+			v := installationVault{native, r.Dir, p.Data}
+			if e := writePending(p.Data, pendingProfile{Version: 1}); e != nil {
+				t.Fatal(e)
+			}
+			h := strings.Repeat("e", 32)
+			if e := (provisioningVault{SecretVault: v, data: p.Data}).Put(context.Background(), h, bytes.Repeat([]byte{5}, 96)); e != nil {
+				t.Fatal(e)
+			}
+			if e := os.WriteFile(filepath.Join(p.Data, "installed-authority.json"), []byte("{"), 0600); e != nil {
+				t.Fatal(e)
+			}
+			if action == "retry" {
+				e = recoverPending(context.Background(), p.Data, v)
+			} else {
+				e = deleteNeverAdmittedAuthority(context.Background(), p.Data, installedDeletionVault{native, r})
+			}
+			if e != nil {
+				t.Fatal(e)
+			}
+			if native.created != 1 || native.installed != 0 || len(native.values) != 0 {
+				t.Fatal("production wrapper stranded custody")
+			}
+			if _, e = readPending(p.Data); !os.IsNotExist(e) {
+				t.Fatal("pending retained", e)
+			}
+		})
+	}
+}
+
+func TestInstallationCustodySelectionFailureDoesNotPublishHandle(t *testing.T) {
+	r, p := installedFixture(t)
+	writeJSONFixture(t, filepath.Join(r.Dir, "intent.json"), map[string]string{"mode": "stop", "sha256": r.SHA256, "version": r.Version, "session": ""})
+	if e := writePending(p.Data, pendingProfile{Version: 1}); e != nil {
+		t.Fatal(e)
+	}
+	native := &deletionTestCustody{refusePreparation: true}
+	v := installationVault{native, r.Dir, p.Data}
+	if e := (provisioningVault{SecretVault: v, data: p.Data}).Put(context.Background(), strings.Repeat("a", 32), []byte("probe")); !errors.Is(e, vault.ErrUnavailable) {
+		t.Fatal(e)
+	}
+	pending, e := readPending(p.Data)
+	if e != nil || pending.Handle != "" || len(native.values) != 0 {
+		t.Fatal("selection failure left unknown custody", e)
+	}
+	// No Put was attempted, so ordinary provisioning recovery needs no deletion.
+	if e = recoverPending(context.Background(), p.Data, v); e != nil {
+		t.Fatal(e)
+	}
+	if native.created != 0 || native.installed != 0 {
+		t.Fatal("failed selection attempted native deletion")
 	}
 }

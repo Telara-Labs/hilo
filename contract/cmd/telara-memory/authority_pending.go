@@ -16,6 +16,7 @@ import (
 )
 
 const pendingAuthority = "authority-bootstrap.json"
+const maxAuthorityRecord = 32768
 
 var errAuthorityReady = errors.New("authority_bootstrap_already_complete")
 
@@ -50,6 +51,9 @@ func writePending(data string, p pendingProfile) error {
 	b, err := json.Marshal(p)
 	if err != nil {
 		return err
+	}
+	if len(b) > maxAuthorityRecord {
+		return errors.New("runtime_authority_unavailable")
 	}
 	return writeAuthorityRecord(data, b)
 }
@@ -165,6 +169,13 @@ func (v provisioningVault) Put(ctx context.Context, handle string, secret []byte
 		}
 		p.Creator = &creator
 	}
+	// Resolve and persist custody before publishing a handle. If selection
+	// fails, no native Put was attempted and retry needs no unknown-store deletion.
+	if prepare, ok := v.SecretVault.(interface{ PrepareCustody(context.Context) error }); ok {
+		if err = prepare.PrepareCustody(ctx); err != nil {
+			return err
+		}
+	}
 	p.Handle = handle
 	// Persist the opaque recovery handle before the key can enter native custody.
 	if err = writePending(v.data, p); err != nil {
@@ -178,5 +189,5 @@ func (v provisioningVault) Put(ctx context.Context, handle string, secret []byte
 func validAuthorityCreator(r install.Record, data string) bool {
 	return r.DataDir == data && filepath.IsAbs(r.Dir) && filepath.Clean(r.Dir) == r.Dir &&
 		len(r.SHA256) == 64 && record.IsKeyID(r.SHA256[:32]) && record.IsKeyID(r.SHA256[32:]) &&
-		r.Executable == filepath.Join(r.Dir, "bin", r.SHA256, "telara-memory")
+		install.ValidExecutablePath(r)
 }

@@ -47,7 +47,7 @@ func installedOpener(data, dir string, provider mcp.RuntimeProvider) daemon.Open
 		}
 		installed := provider
 		if installed == nil {
-			installed = mcp.InstalledRuntimeProvider{Provider: disclosure.InstalledProvider{Dir: data, Vault: peer.GuardVault(vault.New()), Peers: peer.Authority{InstallDir: dir, DataDir: data}}}
+			installed = mcp.InstalledRuntimeProvider{Provider: disclosure.InstalledProvider{Dir: data, Vault: peer.GuardVault(vault.ForProfile(data)), Peers: peer.Authority{InstallDir: dir, DataDir: data}}}
 		}
 		backend, err := mcp.Open(ctx, data, installed)
 		if err != nil && err.Error() == "runtime_authority_unavailable" {
@@ -105,6 +105,9 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 	if args[0] == "managed-daemon" {
 		if !filepath.IsAbs(*installDir) || filepath.Clean(*installDir) != *installDir {
 			return errors.New("invalid_arguments")
+		}
+		if err := install.ReconcileUpgrade(ctx, *installDir); err != nil {
+			return err
 		}
 		record, err := install.VerifyRunning(*installDir)
 		if errors.Is(err, install.ErrStopped) {
@@ -168,6 +171,11 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
 		return errors.New("invalid_arguments")
 	}
+	if args[0] != "install" {
+		if err = install.ReconcileUpgrade(ctx, dir); err != nil {
+			return err
+		}
+	}
 	report := func(r install.Report, err error) error {
 		if r.State != "" {
 			if writeErr := ipc.WriteFrame(out, r); writeErr != nil {
@@ -196,13 +204,17 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 		if err != nil {
 			return err
 		}
+		config := install.Config{Dir: dir, Home: home, Executable: *source, SHA256: *digest, Version: *version, DataDir: p.Data, RunDir: p.Run}
+		if _, err = install.PlannedRecord(config); err != nil {
+			return err
+		}
 		var r install.Report
 		var installErr error
 		if err = ipc.WriteFrame(out, map[string]string{"credential_store": vault.Location()}); err != nil {
 			return err
 		}
 		err = provisionAuthority(ctx, p.Data, installationVault{vault.New(), dir, p.Data}, func() error {
-			r, installErr = install.Install(ctx, install.Config{Dir: dir, Home: home, Executable: *source, SHA256: *digest, Version: *version, DataDir: p.Data, RunDir: p.Run})
+			r, installErr = install.Install(ctx, config)
 			if errors.Is(installErr, install.ErrUpgrade) {
 				// Explicit retry of a never-opened setup may reuse only the exact
 				// authenticated image/profile supplied by this owner invocation.

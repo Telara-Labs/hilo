@@ -61,3 +61,19 @@ func (v *Vault) DeleteCreatedForInstall(ctx context.Context, r install.Record, h
 func (v *Vault) ReadForInstall(ctx context.Context, r install.Record, handle string) ([]byte, error) {
 	return (Installed{Vault: v, Record: r}).Get(ctx, handle)
 }
+
+// PutForInstall performs creation only through the validated receipt image.
+func (v *Vault) PutForInstall(ctx context.Context, r install.Record, handle string, secret []byte) error {
+	return (Installed{Vault: v, Record: r}).Put(ctx, handle, secret)
+}
+
+// PrepareForInstall resolves durable custody before a provisioning handle is
+// published. A failure here proves that no native creation was attempted.
+func (v *Vault) PrepareForInstall(ctx context.Context, r install.Record) error {
+	if e := (Installed{Vault: v, Record: r}).validate(ctx, "00000000000000000000000000000000"); e != nil {
+		return e
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.bindCustody(ctx, r.DataDir, true)
+}

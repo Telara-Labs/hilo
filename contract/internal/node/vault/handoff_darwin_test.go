@@ -166,11 +166,9 @@ func runCustodyUpgradeFixture(args []string) bool {
 	}
 	var bootstrapVault disclosure.SecretVault = v
 	switch action {
-	case "bootstrap-installed":
+	case "bootstrap-installed", "bootstrap":
 		bootstrapVault = Installed{Vault: v, Record: report.Record}
 		e = disclosure.BootstrapInstalled(ctx, data, "Installed target fixture", disclosure.Grant{Repos: disclosure.AllLocalRepos(), Channels: []disclosure.Channel{disclosure.S}}, disclosure.TaskWriteGrant{}, bootstrapVault)
-	case "bootstrap":
-		e = disclosure.BootstrapInstalled(ctx, data, "Upgrade fixture", disclosure.Grant{Repos: disclosure.AllLocalRepos(), Channels: []disclosure.Channel{disclosure.S}}, disclosure.TaskWriteGrant{}, v)
 	case "poison":
 		h, he := installedHandle(data)
 		e = he

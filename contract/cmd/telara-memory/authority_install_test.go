@@ -158,6 +158,7 @@ type deletionTestCustody struct {
 	refuseLegacyRead   bool
 	data               string
 	creatorAtDelete    bool
+	refusePreparation  bool
 }
 
 func (v *deletionTestCustody) ReadForInstall(ctx context.Context, _ install.Record, h string) ([]byte, error) {
@@ -279,4 +280,15 @@ func TestNeverAdmittedLegacyAbsenceCannotEstablishDeletion(t *testing.T) {
 	if !v.creatorAtDelete || v.installed != 1 || len(v.values) != 0 {
 		t.Fatal("verified legacy custodian was not durable before deletion")
 	}
+}
+
+func (v *deletionTestCustody) PutForInstall(ctx context.Context, _ install.Record, h string, secret []byte) error {
+	return v.serviceVault.Put(ctx, h, secret)
+}
+
+func (v *deletionTestCustody) PrepareForInstall(context.Context, install.Record) error {
+	if v.refusePreparation {
+		return vault.ErrUnavailable
+	}
+	return nil
 }

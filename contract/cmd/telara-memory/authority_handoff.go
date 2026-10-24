@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/peer"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/vault"
 )
 
@@ -134,16 +137,36 @@ func (v installedDeletionVault) Delete(ctx context.Context, handle string) error
 			return install.ErrUnverified
 		}
 		if p.Creator == nil {
-			if vault.UpgradeHandoffRequired() {
-				return install.ErrUnverified
-			}
+			return install.ErrUnverified
 		} else if !validAuthorityCreator(*p.Creator, v.record.DataDir) || *p.Creator != v.record {
 			return install.ErrUnverified
 		}
 		// An interrupted provision can already have a valid manifest and a
 		// prepared transfer. Use the full staging-aware path when it does.
-		if _, e := os.Lstat(filepath.Join(v.record.DataDir, "installed-authority.json")); e == nil {
-			return v.installationCustody.DeleteForInstall(ctx, v.record, handle)
+		path := filepath.Join(v.record.DataDir, "installed-authority.json")
+		if st, e := os.Lstat(path); e == nil {
+			if !safeAuthorityFile(path, st) {
+				return install.ErrUnverified
+			}
+			raw, e := store.ReadInstalledRecord(v.record.DataDir)
+			if e != nil {
+				return e
+			}
+			var m struct {
+				Version    int    `json:"version"`
+				Owner      string `json:"owner"`
+				Machine    string `json:"machine"`
+				Credential string `json:"credential"`
+				Handle     string `json:"vault_handle"`
+			}
+			d := json.NewDecoder(bytes.NewReader(raw))
+			d.DisallowUnknownFields()
+			if d.Decode(&m) == nil && d.Decode(new(any)) == io.EOF && m.Version == 1 && len(m.Handle) == 32 {
+				if m.Handle != handle {
+					return install.ErrUnverified
+				}
+				return v.installationCustody.DeleteForInstall(ctx, v.record, handle)
+			}
 		} else if !os.IsNotExist(e) {
 			return e
 		}

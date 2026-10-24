@@ -25,7 +25,7 @@ func readAuthorityRecord(data string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !safeAuthorityFile(path, before) || before.Size() > 1024 {
+	if !safeAuthorityFile(path, before) || before.Size() > maxAuthorityRecord {
 		return nil, errors.New("runtime_authority_unavailable")
 	}
 	f, err := os.Open(path)
@@ -37,8 +37,8 @@ func readAuthorityRecord(data string) ([]byte, error) {
 	if err != nil || !os.SameFile(before, after) {
 		return nil, errors.New("runtime_authority_unavailable")
 	}
-	b, err := io.ReadAll(io.LimitReader(f, 1025))
-	if err != nil || len(b) > 1024 {
+	b, err := io.ReadAll(io.LimitReader(f, maxAuthorityRecord+1))
+	if err != nil || len(b) > maxAuthorityRecord {
 		return nil, errors.New("runtime_authority_unavailable")
 	}
 	return b, nil
@@ -52,6 +52,9 @@ func syncAuthorityDir(data string) error {
 	return f.Sync()
 }
 func writeAuthorityRecord(data string, b []byte) error {
+	if len(b) == 0 || len(b) > maxAuthorityRecord {
+		return errors.New("runtime_authority_unavailable")
+	}
 	if ipc.ValidateDir(data, false) != nil {
 		return errors.New("runtime_authority_unavailable")
 	}

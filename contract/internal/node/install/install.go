@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 )
 
 // Config contains explicit install inputs. SHA256 must come from an authenticated
@@ -70,7 +72,17 @@ func imagePath(dir, digest string) string {
 	}
 	return filepath.Join(dir, "bin", digest, name)
 }
+
+// ValidExecutablePath shares the platform-specific installed image convention.
+func ValidExecutablePath(r Record) bool {
+	return validDigest(r.SHA256) && absolute(r.Dir) && r.Executable == imagePath(r.Dir, r.SHA256)
+}
+
 func validateRecord(r Record, dir string) error {
+	b, e := json.Marshal(r)
+	if e != nil || len(b) >= 16384 {
+		return ErrUnverified
+	}
 	if r.Schema != 1 || r.Dir != dir || !absolute(dir) || !absolute(r.Home) || !absolute(r.DataDir) || !absolute(r.RunDir) ||
 		!labelPattern.MatchString(r.Label) || !validDigest(r.SHA256) || !cleanValue(r.Version) || len(r.Version) > 128 || r.Platform != runtime.GOOS || r.UserID != userID() || r.Executable != imagePath(dir, r.SHA256) {
 		return ErrUnverified
@@ -154,10 +166,9 @@ func intentState(v intent, r Record, session func() (string, error)) error {
 	}
 }
 
-// Install creates a new immutable, digest-addressed executable and owner-only
-// receipt. Existing installs require Upgrade; no implicit reinstall/downgrade.
-// Manager absence is persisted and returned as a distinct capture blocker.
-func Install(ctx context.Context, c Config) (Report, error) {
+// PlannedRecord validates all receipt inputs and their serialized size before
+// any filesystem, authority, service-manager or native-vault mutation.
+func PlannedRecord(c Config) (Record, error) {
 	if c.Home == "" {
 		c.Home, _ = os.UserHomeDir()
 	}
@@ -166,6 +177,17 @@ func Install(ctx context.Context, c Config) (Report, error) {
 	}
 	r := Record{1, c.Dir, c.Home, c.Label, runtime.GOOS, userID(), imagePath(c.Dir, c.SHA256), c.SHA256, c.Version, c.DataDir, c.RunDir}
 	if e := validateRecord(r, c.Dir); e != nil {
+		return Record{}, e
+	}
+	return r, nil
+}
+
+// Install creates a new immutable, digest-addressed executable and owner-only
+// receipt. Existing installs require Upgrade; no implicit reinstall/downgrade.
+// Manager absence is persisted and returned as a distinct capture blocker.
+func Install(ctx context.Context, c Config) (Report, error) {
+	r, e := PlannedRecord(c)
+	if e != nil {
 		return Report{}, e
 	}
 	if e := ensureDir(c.Dir, true); e != nil {
@@ -415,6 +437,9 @@ func Upgrade(ctx context.Context, dir, source, digest, version string, q Quiesce
 		return Report{}, e
 	}
 	defer lock.Close()
+	if e = reconcileUpgrade(ctx, dir); e != nil {
+		return Report{}, e
+	}
 	r, e := readReceipt(dir)
 	if e != nil {
 		return Report{}, e
@@ -431,6 +456,13 @@ func Upgrade(ctx context.Context, dir, source, digest, version string, q Quiesce
 	if e = validateRecord(next, dir); e != nil {
 		return Report{}, e
 	}
+	if next == r {
+		return Status(ctx, dir)
+	}
+	// Bound the recovery journal before copying images or stopping the source.
+	if b, err := json.Marshal(upgradePublication{1, r, next}); err != nil || len(b) >= 16384 {
+		return Report{}, ErrUnverified
+	}
 	if e = verifyDefinition(r); e != nil {
 		return Report{}, e
 	}
@@ -440,23 +472,28 @@ func Upgrade(ctx context.Context, dir, source, digest, version string, q Quiesce
 	if e = stop(ctx, r, q); e != nil {
 		return Report{}, e
 	}
-	if e = writeJSON(filepath.Join(dir, "install.json"), next); e != nil {
+	if e = ipc.ValidateDir(r.DataDir, true); e != nil {
 		return Report{}, e
 	}
-	b, e := Definition(next.Platform, next)
+	writer, e := ipc.Lock(filepath.Join(r.DataDir, "db.lock"))
 	if e != nil {
 		return Report{}, e
 	}
-	if e = writeAtomic(definitionPath(next), b, 0600); e != nil {
+	defer writer.Close()
+	publication := upgradePublication{1, r, next}
+	if e = writeJSON(filepath.Join(dir, upgradePublicationFile), publication); e != nil {
 		return Report{}, e
 	}
-	if e = writeIntent(dir, next, "upgrade", ""); e != nil {
-		return Report{}, e
-	}
-	if e = managerReplace(ctx, next, r); e != nil {
-		writeIntent(dir, next, "stop", "")
+	if e = publishUpgrade(ctx, publication); e != nil {
 		return Report{"upgrade_failed", next}, e
 	}
+	if e = writer.Close(); e != nil {
+		return Report{}, e
+	}
+	if e = removeOwned(filepath.Join(dir, upgradePublicationFile)); e != nil {
+		return Report{}, e
+	}
+
 	return Status(ctx, dir)
 }
 
@@ -468,6 +505,9 @@ func Uninstall(ctx context.Context, dir string, q Quiesce) error {
 		return e
 	}
 	defer lock.Close()
+	if e = reconcileUpgrade(ctx, dir); e != nil {
+		return e
+	}
 	r, e := readReceipt(dir)
 	if e != nil {
 		return e

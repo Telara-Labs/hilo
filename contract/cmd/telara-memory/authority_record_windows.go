@@ -76,8 +76,8 @@ func readAuthorityRecord(data string) ([]byte, error) {
 		return nil, e
 	}
 	defer f.Close()
-	b, e := io.ReadAll(io.LimitReader(f, 1025))
-	if e != nil || len(b) > 1024 {
+	b, e := io.ReadAll(io.LimitReader(f, maxAuthorityRecord+1))
+	if e != nil || len(b) > maxAuthorityRecord {
 		return nil, errors.New("runtime_authority_unavailable")
 	}
 	return b, nil
@@ -87,6 +87,9 @@ func readAuthorityRecord(data string) ([]byte, error) {
 // the writable file. A read-only directory cannot be flushed on Windows.
 func syncAuthorityDir(string) error { return nil }
 func writeAuthorityRecord(data string, b []byte) error {
+	if len(b) == 0 || len(b) > maxAuthorityRecord {
+		return errors.New("runtime_authority_unavailable")
+	}
 	if ipc.ValidateDir(data, false) != nil {
 		return errors.New("runtime_authority_unavailable")
 	}

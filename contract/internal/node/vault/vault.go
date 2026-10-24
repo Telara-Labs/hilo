@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"sync"
 )
 
 var (
@@ -22,12 +23,17 @@ const maxSecret = 2560
 // Vault uses only native credential custody. The zero value uses the owner's
 // default OS vault. Each Get returns an independent caller-owned byte slice.
 type Vault struct {
+	mu           sync.Mutex
 	keychain     uintptr
 	keychainPath string
+	profile      string
 	closed       bool
 }
 
 func New() *Vault { return &Vault{} }
+
+// ForProfile pins native custody to the durable profile location.
+func ForProfile(data string) *Vault { return &Vault{profile: data} }
 
 func valid(ctx context.Context, handle string) error {
 	if ctx == nil {
@@ -55,8 +61,15 @@ func (v *Vault) Put(ctx context.Context, handle string, secret []byte) error {
 	if v == nil || len(secret) == 0 || len(secret) > maxSecret {
 		return ErrInvalid
 	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	if v.closed {
 		return ErrUnavailable
+	}
+	if v.profile != "" {
+		if err := v.bindCustody(ctx, v.profile, true); err != nil {
+			return err
+		}
 	}
 	return v.put(ctx, handle, secret)
 }
@@ -67,8 +80,15 @@ func (v *Vault) Get(ctx context.Context, handle string) ([]byte, error) {
 	if v == nil {
 		return nil, ErrInvalid
 	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	if v.closed {
 		return nil, ErrUnavailable
+	}
+	if v.profile != "" {
+		if err := v.bindCustody(ctx, v.profile, false); err != nil {
+			return nil, err
+		}
 	}
 	return v.get(ctx, handle)
 }
@@ -79,8 +99,15 @@ func (v *Vault) Delete(ctx context.Context, handle string) error {
 	if v == nil {
 		return ErrInvalid
 	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	if v.closed {
 		return ErrUnavailable
+	}
+	if v.profile != "" {
+		if err := v.bindCustody(ctx, v.profile, false); err != nil {
+			return err
+		}
 	}
 	return v.delete(ctx, handle)
 }

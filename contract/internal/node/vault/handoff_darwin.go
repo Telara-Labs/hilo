@@ -262,7 +262,7 @@ func (v *Vault) PrepareUpgrade(ctx context.Context, source install.Record, targe
 	if (e != nil && !errors.Is(e, install.ErrUnavailable)) || r.Record != source {
 		return install.ErrUnverified
 	}
-	if e = v.selectKeychain(ctx); e != nil {
+	if e = v.bindCustody(ctx, source.DataDir, false); e != nil {
 		return e
 	}
 	targetImage, e := pinHandoffImage(handoffTarget(source, target), target)
@@ -342,7 +342,7 @@ func (v *Vault) RecoverUpgrade(ctx context.Context, current install.Record) erro
 	if e != nil || current != expected || self != current.Executable || m.Phase != "ready" {
 		return install.ErrUnverified
 	}
-	if e = v.selectKeychain(ctx); e != nil {
+	if e = v.bindCustody(ctx, current.DataDir, false); e != nil {
 		return e
 	}
 	if m.Keychain != v.keychainPath {
@@ -473,7 +473,7 @@ func (v *Vault) lifecycleImage(ctx context.Context, source install.Record, targe
 		return e
 	}
 	defer f.Close()
-	if e = v.selectKeychain(ctx); e != nil {
+	if e = v.bindCustody(ctx, source.DataDir, false); e != nil {
 		return e
 	}
 	b, e := json.Marshal(resumeRequest{source, target, v.keychainPath})
@@ -529,7 +529,7 @@ func (v *Vault) DeleteForInstall(ctx context.Context, current install.Record, ha
 	if h, e := installedHandle(current.DataDir); e != nil || h != handle {
 		return ErrUnavailable
 	}
-	if e = v.selectKeychain(ctx); e != nil {
+	if e = v.bindCustody(ctx, current.DataDir, false); e != nil {
 		return e
 	}
 	m, e := readHandoff(current.DataDir)

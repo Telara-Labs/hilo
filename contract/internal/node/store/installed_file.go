@@ -43,11 +43,16 @@ func WriteInstalledRecord(dir string, b []byte) error {
 		return err
 	}
 	path := filepath.Join(dir, "installed-authority.json")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		return failure("installed_authority_exists")
+	}
+	f, err := os.CreateTemp(dir, ".installed-authority-")
 	if err != nil {
 		return failure("installed_authority_exists")
 	}
-	// A failed/partial bootstrap is preserved for explicit trusted recovery.
+	name := f.Name()
+	defer os.Remove(name)
+	// Publish only complete, synced bytes while the caller holds writer admission.
 	_, err = f.Write(b)
 	if err == nil {
 		err = f.Sync()
@@ -56,8 +61,11 @@ func WriteInstalledRecord(dir string, b []byte) error {
 	if err != nil || closeErr != nil {
 		return failure("storage_error")
 	}
-	if err = privateFile(path); err != nil {
+	if err = privateFile(name); err != nil {
 		return err
+	}
+	if err = os.Rename(name, path); err != nil {
+		return failure("storage_error")
 	}
 	d, err := os.Open(dir)
 	if err != nil {
