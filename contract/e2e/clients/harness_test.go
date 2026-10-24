@@ -24,6 +24,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/clients"
 )
 
+var debugRun = flag.Bool("e2e-debug", false, "Record allowlisted peer proof diagnostics without credentials or request bodies")
 var dryRun = flag.Bool("e2e-dry-run", false, "Exercise native node lifecycle with synthetic MCP sessions and hook input; never launch clients")
 var childTimeout = flag.Duration("e2e-child-timeout", 90*time.Second, "Deadline for every child process")
 var resultsDir = flag.String("e2e-results-dir", "", "Existing status directory for private JSON receipts; required for lifecycle tests")
@@ -55,20 +56,21 @@ type hookObservation struct {
 	Result                        clients.HookResult
 }
 type receipt struct {
-	Client     string             `json:"client"`
-	Mode       string             `json:"mode"`
-	Verdict    string             `json:"verdict"`
-	Started    time.Time          `json:"started"`
-	Seconds    float64            `json:"seconds"`
-	Version    string             `json:"version"`
-	Paths      map[string]string  `json:"isolated_paths"`
-	Timings    map[string]float64 `json:"timings_seconds"`
-	Calls      []observation      `json:"observed_calls"`
-	Hooks      []hookObservation  `json:"observed_hooks"`
-	SessionIDs []string           `json:"session_record_ids"`
-	Checks     map[string]string  `json:"checks"`
-	Failure    string             `json:"failure,omitempty"`
-	Cleanup    string             `json:"cleanup"`
+	Client      string             `json:"client"`
+	Mode        string             `json:"mode"`
+	Verdict     string             `json:"verdict"`
+	Started     time.Time          `json:"started"`
+	Seconds     float64            `json:"seconds"`
+	Version     string             `json:"version"`
+	Paths       map[string]string  `json:"isolated_paths"`
+	Timings     map[string]float64 `json:"timings_seconds"`
+	Calls       []observation      `json:"observed_calls"`
+	Hooks       []hookObservation  `json:"observed_hooks"`
+	SessionIDs  []string           `json:"session_record_ids"`
+	Checks      map[string]string  `json:"checks"`
+	Failure     string             `json:"failure,omitempty"`
+	Cleanup     string             `json:"cleanup"`
+	Diagnostics []proofDiagnostic  `json:"proof_diagnostics,omitempty"`
 }
 
 func nonce() string {

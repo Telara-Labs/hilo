@@ -87,12 +87,12 @@ excludes private paths from automatic search-list updates. The fixture uses
 `probe.keychain`, never a login or system keychain name. Native behavior on this
 Mac remains part of the operator gate.
 
-Native Put requires a stable certificate signature. Compile and sign the test
-driver before running it. The harness never performs signing or reads a signing
-keychain. Use an operator-provided signing keychain for the preparation step.
-Ad hoc signatures and ordinary unsigned `go test` binaries cannot establish
-native custody and will fail bootstrap. Never change the login keychain to make
-these tests pass.
+The current vault supports Go's ad hoc signed macOS builds. No stable signing
+certificate or operator signing step is required. The harness preserves the
+compiled image, installs it, and executes bootstrap, native custody helpers,
+daemon and shims through that exact receipt target. It never signs or reads a
+signing keychain. A truly unsigned image without a kernel-verifiable mapped code
+identity may still be refused by macOS peer binding.
 
 Every native client launch, including `--version`, uses a mandatory
 `/usr/bin/sandbox-exec` profile that denies real-home reads and writes, permits
@@ -126,7 +126,10 @@ daemon. `-e2e-child-timeout=180s` allows a longer smoke run, up to 5 minutes per
 child. The outer Go test timeout must leave room for four clients and cleanup.
 No test runs in parallel. Long Unix socket paths are refused before runtime
 state is created. `-e2e-temp-parent=/canonical/private/temp` can select a shorter
-existing parent when needed. The full root is resolved with
+existing parent outside the real HOME when needed. The installer rejects `/tmp`
+and other untrusted sticky ancestors. On macOS a short directory under
+`getconf DARWIN_USER_TEMP_DIR` works.
+The full root is resolved with
 `filepath.EvalSymlinks` and runtime paths must stay beneath it.
 
 ## What each native run proves
@@ -143,7 +146,9 @@ existing parent when needed. The full root is resolved with
    Require live, signature-verified parsed session records for that client and
    identity, referenced transcript
    chunks, redaction epoch/fingerprint and a redacted canary. Task creation by
-   itself cannot satisfy session capture.
+   itself cannot satisfy session capture. A separately labelled harness MCP
+   call after the terminal hook triggers the synchronous production collector.
+   This call cannot satisfy either client's required A/B tool evidence.
 4. Launch session B as a new process in another fresh working directory. Require
    an observed successful `telara_task_list` request and response containing the
    nonce and typed assistant output that prints it. Echoed prompts, tool
@@ -154,13 +159,29 @@ existing parent when needed. The full root is resolved with
    state. Raw client stdout/stderr and auth sources are not persisted. Observation
    text passes through the real redactor, so sensitive values are masked.
 
-The current daemon has no spool/transcript collector connected. Its real peer
-authority refuses a nonempty spool rather than silently ignoring it. The capture
-pipeline currently supports only Claude Code and Codex roots. Cursor and Pi full
-capture remain unavailable. Codex hook trust and Pi's runtime MCP registration
-are additional native gates. This harness intentionally exposes those gaps and
-does not install a test collector, delete pending signals or provide mocked
-Telara services to make native runs green.
+The current installed runtime wires synchronous capture ingress and Claude,
+Codex, Cursor and Pi transcript decoders. Dry-run supplies synthetic native-format
+transcripts to those real paths and requires capture plus durable ACK. Native
+Codex hook trust and Pi runtime MCP registration remain separate client gates.
+The harness does not fabricate trust or provide substitute Telara services.
+
+## Proof diagnostics
+
+`-e2e-debug` includes `proof_diagnostics` in each private receipt. It records
+connection-ID presence, kernel peer PID, hello PID match, installed receipt image,
+peer executable, image equality, binding/lifetime verification, drain wiring and
+outcome, native custody read success/refusal, and exported `Backend.CaptureStats` counters. Binding refusals before
+hello are recorded as well. The harness calls public `peer.BindConnection`,
+`peer.VerifyLifecycle`, `install.VerifiedExecutable`, `daemon.DrainCapture` and
+`proc_pidpath` APIs. No product diagnostics seam is added.
+
+Executable paths outside the disposable installation are replaced by a fixed
+marker. No credentials, token/connection-ID values, vault handles, argv,
+environment, prompt, transcript or tool bodies enter diagnostic records.
+Raw child output and errors stay withheld. Debug off follows the ordinary
+production authority path. An adapter refusal after successful peer proof can
+still indicate custody/credential failure; diagnostics do not claim to expose
+private kernel or Security.framework internals.
 
 ## Run the checks
 
@@ -175,50 +196,44 @@ GOWORK=off go test -p 1 -tags e2e -count=1 -timeout 300s ./e2e/...
 GOWORK=off go test -p 1 -race -tags e2e -count=1 -timeout 300s ./e2e/...
 ```
 
-Compile the driver once into a disposable operator-selected directory.
+Compile an ad hoc driver into a short private directory outside your home
+(macOS limits Unix socket paths, and install refuses world-writable ancestors
+such as /tmp). The per-user temporary directory works:
 
 ```sh
-GOWORK=off go test -p 1 -tags e2e -c -o /canonical/private/temp/clients.test ./e2e/clients
+E2="$(cd "$(getconf DARWIN_USER_TEMP_DIR)" && pwd -P)/e2"
+mkdir -p "$E2" && chmod 700 "$E2"
+GOWORK=off go test -p 1 -tags e2e -c -o "$E2/clients.test" ./e2e/clients
+"$E2/clients.test" \
+  -test.run='^TestInstalledClients$' -test.timeout=20m -test.v \
+  -e2e-dry-run -e2e-debug \
+  -e2e-results-dir=/canonical/existing/status-directory \
+  -e2e-temp-parent="$E2"
 ```
 
-Before the next command, the operator signs that binary with a stable certificate
-using their explicitly supplied signing keychain. Signing is outside the harness.
-For example, the operator can run this preparation command with their own paths
-and certificate identity.
+Dry-run performs real installation, isolated keychain bootstrap through the
+installed target, adapter merge, two synthetic MCP sessions over stdio/IPC,
+terminal-hook publication, real daemon ingress, persisted redacted session/chunk,
+durable spool receipt/ACK, and captured-session MCP read-back. It records
+`DRY_RUN_PASS_NATIVE_UNVERIFIED`, never native client PASS.
 
-```sh
-/usr/bin/codesign --force --sign 'stable certificate identity' \
-  --keychain /canonical/operator-signing.keychain \
-  --identifier dev.telara.memory.clients-e2e \
-  /canonical/private/temp/clients.test
-```
-
-Then exercise the full native node lifecycle without launching any client binary
-or supplying provider auth.
-
-```sh
-/canonical/private/temp/clients.test \
-  -test.run='^TestInstalledClients$' -test.timeout=20m \
-  -e2e-dry-run \
-  -e2e-results-dir=/canonical/existing/status-directory
-```
-
-Dry-run performs real installation, isolated keychain bootstrap, adapter merge,
-two synthetic MCP sessions over stdio/IPC, terminal-hook publication and a real
-fail-closed check for pending spool. It records
-`DRY_RUN_PASS_NATIVE_UNVERIFIED`, never native client PASS. Separately,
-`TestCaptureDryRun` exercises the real supported transcript decoders and SQLite
-capture against synthetic data in its own store. That explicit pipeline call
-does not establish the absent daemon collector. Full native lifecycle dry-run
-requires a signed driver and an available native manager/keychain outside the
-restricted sandbox.
+`TestCaptureDryRun` independently runs all four synthetic formats through real
+hooks, the production collector and SQLite capture/admission/ACK. It checks
+pending versus durable receipt state and rejects wrong session/client/nonces.
+These fixtures use ephemeral generated keys and a fixture credential label.
+They establish no installed identity, native custody or real-client behavior.
+The full lifecycle dry-run requires the available native manager/keychain
+outside the restricted sandbox. In this sandbox native keychain creation is
+refused before installation, so later lifecycle checks remain UNVERIFIED.
 
 Supply canonical operator-prepared mode-0600 auth files for native acceptance.
 Every client without its auth flag skips.
 
 ```sh
-/canonical/private/temp/clients.test \
+"$E2/clients.test" \
   -test.run='^TestInstalledClients$' -test.timeout=20m \
+  -e2e-temp-parent="$E2" \
+  -e2e-debug \
   -e2e-results-dir=/canonical/existing/status-directory \
   -e2e-claude-auth=/canonical/operator-input/claude.json \
   -e2e-codex-auth=/canonical/operator-input/codex.json \

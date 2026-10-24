@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -275,6 +276,24 @@ func TestHarnessEvidenceRejectsEchoesAndFailures(t *testing.T) {
 	}
 }
 
+func TestHarnessSessionReadBackRejectsEchoAndMalformedOutput(t *testing.T) {
+	id := strings.Repeat("a", 64)
+	for _, raw := range []string{
+		`{"params":{"entity_id":"` + id + `"}}`,
+		`{"result":{"isError":true,"content":[{"type":"text","text":"` + id + `"}]}}`,
+		`{"error":{"message":"` + id + `"},"result":{"content":[{"type":"text","text":"` + id + `"}]}}`,
+		`{"result":{"content":[{"type":"image","text":"` + id + `"}]}}`,
+		`garbage ` + id,
+	} {
+		if responseTextContains([]byte(raw), id) {
+			t.Fatal("session read-back accepted request/failed/untyped output")
+		}
+	}
+	if !responseTextContains([]byte(`{"result":{"isError":false,"content":[{"type":"text","text":"record_id `+id+`"}]}}`), id) {
+		t.Fatal("valid typed session read-back refused")
+	}
+}
+
 func TestHarnessReceiptAndBounds(t *testing.T) {
 	root := canonicalTemp(t)
 	if err := writeReceipt(root, receipt{Client: "claude", Verdict: "SKIP"}); err != nil {
@@ -309,9 +328,21 @@ func TestHarnessNativeUtilityCompileAndIPCIsolation(t *testing.T) {
 	if err := privateWrite(source, []byte(keychainSource)); err != nil {
 		t.Fatal(err)
 	}
-	// Compile only. This does not execute the utility or touch any keychain.
+	// Compile the utility. Only its peer-exe mode is executed below.
 	if _, err := run(context.Background(), root, []string{"HOME=" + root, "PATH=/usr/bin:/bin", "TMPDIR=" + root}, nil, "/usr/bin/clang", "-Wno-deprecated-declarations", source, "-framework", "Security", "-framework", "CoreFoundation", "-o", filepath.Join(root, "keychain-helper")); err != nil {
 		t.Fatal("native utility did not compile", err)
+	}
+	// Query only this test process with the public native executable API. This
+	// utility mode returns before calling any Security/keychain operation.
+	out, err := run(context.Background(), root, []string{"HOME=" + root, "PATH=/usr/bin:/bin"}, nil, filepath.Join(root, "keychain-helper"), "peer-exe", strconv.Itoa(os.Getpid()))
+	expected, _ := filepath.EvalSymlinks(mustExecutable())
+	if err != nil || string(out) != expected {
+		t.Fatal("native peer executable query failed", err)
+	}
+	for _, pid := range []string{"0", "-1", "2147483648", "12bad"} {
+		if _, err = run(context.Background(), root, []string{"HOME=" + root}, nil, filepath.Join(root, "keychain-helper"), "peer-exe", pid); err == nil {
+			t.Fatal("invalid peer PID accepted")
+		}
 	}
 	cfg := installedConfig{Root: "/private/short-owned", Data: "/private/short-owned/data", Run: "/private/short-owned/run"}
 	if _, err := isolatedPaths(cfg); err != nil {

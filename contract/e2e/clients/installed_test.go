@@ -39,6 +39,7 @@ import (
 type installedConfig struct {
 	Root, Home, Data, Run, Install, Keychain, ClientConfig, Client string
 	Timeout                                                        time.Duration
+	Debug                                                          bool
 }
 
 func loadInstalled(data string) (installedConfig, error) {
@@ -90,6 +91,20 @@ type observedBackend struct {
 
 func (b *observedBackend) Handle(ctx context.Context, h ipc.Hello, req daemon.Request) daemon.Response {
 	res := b.Backend.Handle(ctx, h, req)
+	if cfg, err := loadInstalled(b.data); err == nil && cfg.Debug && req.Method == "tools/call" {
+		stage, outcome := "adapter_call", "PASS"
+		if res.Error != nil {
+			outcome = "REFUSED"
+		}
+		if result, ok := res.Result.(mcp.Result); ok && result.IsError {
+			outcome = "REFUSED"
+		}
+		if daemon.ConnectionID(ctx) == "" {
+			stage = "connection_id"
+			outcome = "REFUSED"
+		}
+		diagnostic(cfg, proofDiagnostic{Stage: stage, Outcome: outcome, ConnectionIDPresent: daemon.ConnectionID(ctx) != "", PeerPID: daemon.AuthenticatedPeerPID(ctx), HelloPIDMatches: h.PID > 0 && h.PID == daemon.AuthenticatedPeerPID(ctx), DrainState: "see_peer_proof", CaptureStats: b.Backend.CaptureStats()})
+	}
 	if req.Method == "tools/call" {
 		var p struct {
 			Name      string          `json:"name"`
@@ -119,7 +134,7 @@ func TestMain(m *testing.M) {
 	}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "managed-daemon", "shim", "hook", "clients", "sandbox-probe":
+		case "managed-daemon", "shim", "hook", "clients", "sandbox-probe", "bootstrap":
 			if err := helperMain(os.Args[1:]); err != nil {
 				fmt.Fprintln(os.Stderr, "isolated helper failed")
 				os.Exit(1)
@@ -230,15 +245,28 @@ func helperMain(args []string) error {
 		result := clients.RunHook(ctx, o, bytes.NewReader(b))
 		_ = evidence(cfg.Data, "hook", hookObservation{At: time.Now().UTC(), Phase: phase(cfg.Data), Client: string(o.Client), Event: h.Event, Session: h.Session, Result: result})
 		return nil
+	case "bootstrap":
+		if _, err := install.VerifyRunning(cfg.Install); err != nil {
+			return err
+		}
+		lock, err := ipc.Lock(filepath.Join(cfg.Data, "db.lock"))
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		return disclosure.BootstrapInstalled(ctx, cfg.Data, "Disposable client probe", disclosure.Grant{Repos: disclosure.AllLocalRepos(), Channels: []disclosure.Channel{disclosure.S, disclosure.P, disclosure.E}}, disclosure.TaskWriteGrant{Repos: disclosure.AllLocalRepos(), AllowUnscoped: true, Actions: []disclosure.TaskMutation{disclosure.Create}}, isolatedVault{cfg, mustExecutable()})
 	case "shim":
+		if _, err := install.VerifyRunning(cfg.Install); err != nil {
+			return err
+		}
 		return shim.Run(ctx, os.Stdin, os.Stdout, shim.Config{Paths: p})
 	case "managed-daemon":
 		if _, e := os.Lstat(filepath.Join(cfg.Data, "pending")); !os.IsNotExist(e) && !*manual {
 			return nil
 		}
 		v := isolatedVault{cfg: cfg, exe: mustExecutable()}
-		provider := mcp.InstalledRuntimeProvider{Provider: disclosure.InstalledProvider{Dir: cfg.Data, Vault: peer.GuardVault(v), Peers: peer.Authority{InstallDir: cfg.Install, DataDir: cfg.Data}}}
-		err = daemon.Run(ctx, daemon.Config{Paths: p, Verify: func() error { _, e := install.VerifyRunning(cfg.Install); return e }, Open: func(ctx context.Context) (daemon.Backend, error) {
+		provider := mcp.InstalledRuntimeProvider{Provider: disclosure.InstalledProvider{Dir: cfg.Data, Vault: peer.GuardVault(v), Peers: diagnosticAuthority{cfg: cfg}}, CaptureHome: cfg.Home}
+		err = daemon.Run(ctx, daemon.Config{Paths: p, BindConnection: bindInstalled(cfg), Verify: func() error { _, e := install.VerifyRunning(cfg.Install); return e }, Open: func(ctx context.Context) (daemon.Backend, error) {
 			b, e := mcp.Open(ctx, cfg.Data, provider)
 			if e != nil {
 				return nil, e
@@ -268,7 +296,16 @@ type isolatedVault struct {
 	exe string
 }
 
-func (v isolatedVault) operation(ctx context.Context, op byte, h string, secret []byte) ([]byte, error) {
+func (v isolatedVault) operation(ctx context.Context, op byte, h string, secret []byte) (value []byte, operationErr error) {
+	if v.cfg.Debug && op == 2 {
+		defer func() {
+			outcome := "PASS"
+			if operationErr != nil {
+				outcome = "REFUSED"
+			}
+			diagnostic(v.cfg, proofDiagnostic{Stage: "custody_read", Outcome: outcome, ConnectionIDPresent: daemon.ConnectionID(ctx) != "", PeerPID: daemon.AuthenticatedPeerPID(ctx), DrainState: "not_applicable"})
+		}()
+	}
 	if len(h) != 32 || v.cfg.Keychain == "" || !under(v.cfg.Root, v.cfg.Keychain) || len(v.cfg.Keychain) > 4096 || len(secret) > 2560 {
 		return nil, errors.New("invalid isolated vault input")
 	}
@@ -324,8 +361,18 @@ const keychainSource = `
 #include <CoreFoundation/CoreFoundation.h>
 #include <unistd.h>
 #include <string.h>
+#include <libproc.h>
+#include <stdlib.h>
+#include <stdio.h>
 int main(int argc, char **argv) {
   if (argc != 3) return 2;
+  if (!strcmp(argv[1], "peer-exe")) {
+    char *end = NULL; long pid = strtol(argv[2], &end, 10);
+    if (!end || *end || pid <= 0 || pid > 2147483647) return 2;
+    char path[PROC_PIDPATHINFO_MAXSIZE] = {0};
+    if (proc_pidpath((int)pid, path, sizeof(path)) <= 0) return 1;
+    fputs(path, stdout); return 0;
+  }
   SecKeychainSetUserInteractionAllowed(false);
   SecKeychainRef kc = NULL; OSStatus s;
   if (!strcmp(argv[1], "create")) {
@@ -405,17 +452,17 @@ func (i *installation) setup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// Operator signs the compiled driver before invoking it. Signing here would
-	// risk consulting the real login keychain, so the harness never signs.
-	signed := filepath.Join(cfg.Root, "signed-test-image")
-	if err = privateWrite(signed, image); err != nil {
+	// Go builds on this Mac carry an ad hoc signature. Preserve the exact image;
+	// no certificate, signing operation or signing-keychain access is needed.
+	stagedImage := filepath.Join(cfg.Root, "test-image")
+	if err = privateWrite(stagedImage, image); err != nil {
 		return err
 	}
 	clear(image)
-	if err = os.Chmod(signed, 0700); err != nil {
+	if err = os.Chmod(stagedImage, 0700); err != nil {
 		return err
 	}
-	image, err = os.ReadFile(signed)
+	image, err = os.ReadFile(stagedImage)
 	if err != nil {
 		return err
 	}
@@ -426,7 +473,7 @@ func (i *installation) setup(ctx context.Context) error {
 		return err
 	}
 	defer lock.Close()
-	r, err := install.Install(ctx, install.Config{Dir: cfg.Install, Home: cfg.Home, Label: i.label, Executable: signed, SHA256: hex.EncodeToString(hash[:]), Version: "client-e2e", DataDir: cfg.Data, RunDir: cfg.Run})
+	r, err := install.Install(ctx, install.Config{Dir: cfg.Install, Home: cfg.Home, Label: i.label, Executable: stagedImage, SHA256: hex.EncodeToString(hash[:]), Version: "client-e2e", DataDir: cfg.Data, RunDir: cfg.Run})
 	i.record = r.Record
 	if err != nil && !errors.Is(err, install.ErrUnavailable) {
 		return err
@@ -435,11 +482,11 @@ func (i *installation) setup(ctx context.Context) error {
 		return errors.New("installer did not publish a receipt")
 	}
 	i.v = isolatedVault{cfg, r.Record.Executable}
-	if err = disclosure.BootstrapInstalled(ctx, cfg.Data, "Disposable client probe", disclosure.Grant{Repos: disclosure.AllLocalRepos(), Channels: []disclosure.Channel{disclosure.S, disclosure.P, disclosure.E}}, disclosure.TaskWriteGrant{Repos: disclosure.AllLocalRepos(), AllowUnscoped: true, Actions: []disclosure.TaskMutation{disclosure.Create}}, i.v); err != nil {
-		return errors.New("isolated bootstrap failed; driver must be signed by operator with stable certificate, not ad hoc")
-	}
 	if err = lock.Close(); err != nil {
 		return err
+	}
+	if _, err = run(ctx, cfg.Home, env, nil, r.Record.Executable, "bootstrap", "--data-dir", cfg.Data); err != nil {
+		return errors.New("isolated bootstrap through installed target failed")
 	}
 	// Registered job exits successfully while pending. Start explicitly using the
 	// verified installed image, like the existing installed-authority integration.

@@ -51,6 +51,10 @@ func runClient(t *testing.T, s clientSpec) {
 		}
 		if cfg.Data != "" {
 			r.Calls, r.Hooks = readEvidence(t, cfg.Data)
+			r.Diagnostics = readDiagnostics(t, cfg.Data)
+			if cfg.Debug && installed != nil && installed.manual != nil && installed.manual.Process != nil && len(r.Diagnostics) == 0 {
+				t.Error("debug requested but no proof diagnostics were recorded")
+			}
 		}
 		if cfg.Root != "" {
 			if err := os.RemoveAll(cfg.Root); err != nil {
@@ -109,7 +113,7 @@ func runClient(t *testing.T, s clientSpec) {
 		_ = os.RemoveAll(root)
 		t.Fatal(err)
 	}
-	cfg = installedConfig{Root: canonical, Home: filepath.Join(canonical, "home"), Data: filepath.Join(canonical, "data"), Run: filepath.Join(canonical, "run"), Install: filepath.Join(canonical, "install"), Keychain: filepath.Join(canonical, "probe.keychain"), Client: s.name, Timeout: *childTimeout}
+	cfg = installedConfig{Root: canonical, Home: filepath.Join(canonical, "home"), Data: filepath.Join(canonical, "data"), Run: filepath.Join(canonical, "run"), Install: filepath.Join(canonical, "install"), Keychain: filepath.Join(canonical, "probe.keychain"), Client: s.name, Timeout: *childTimeout, Debug: *debugRun}
 	cfg.ClientConfig = filepath.Join(cfg.Home, filepath.FromSlash(s.configRelative))
 	for _, p := range []string{cfg.Home, cfg.ClientConfig, filepath.Join(cfg.Home, "tmp"), filepath.Join(cfg.Home, "work-a"), filepath.Join(cfg.Home, "work-b")} {
 		if err = os.MkdirAll(p, 0700); err != nil {
@@ -175,25 +179,40 @@ func runClient(t *testing.T, s clientSpec) {
 		if err = setPhase(cfg, "A"); err != nil {
 			t.Fatal(err)
 		}
-		payload, _ := json.Marshal(map[string]any{"hook_event_name": terminalEvent(s.name), "session_id": "dryrun_session_12345678", "cwd": filepath.Join(cfg.Home, "work-a")})
+		native := "01990000-0000-4000-8000-000000000001"
+		transcript := writeSyntheticTranscript(t, cfg, native, n)
+		// The production opener requires mtime and ctime quiet for two seconds.
+		time.Sleep(2100 * time.Millisecond)
+		payload := syntheticHook(cfg, native, transcript)
 		_, err = run(ctx, cfg.Home, env, payload, installed.record.Executable, "hook", "--client", s.name, "--home", cfg.Home, "--config-root", cfg.ClientConfig, "--state-dir", cfg.Data)
 		if err != nil {
 			t.Fatal(err)
 		}
+		out, err = syntheticCall(ctx, cfg, installed.record.Executable, "telara_task_list", map[string]any{"query": n, "mode": "detail"})
+		if err != nil || responseError(out) || responseTask(out, n) == "" {
+			t.Fatal("pending spool capture/drain MCP failed", err)
+		}
 		calls, hooks := readEvidence(t, cfg.Data)
-		if !hasCall(calls, "A", "telara_task_create", n) || !hasCall(calls, "B", "telara_task_list", n) || terminalSession(hooks, s.name) == "" {
-			t.Fatal("synthetic tool/hook evidence missing")
+		if !sameTaskReadBack(calls, n) || terminalSession(hooks, s.name) != native {
+			t.Fatal("synthetic tool/hook evidence missing or wrong task")
 		}
-		// Production ingress is presently absent. Prove the real authority refuses
-		// outstanding spool rather than deleting signals to force a green test.
-		out, err = syntheticCall(ctx, cfg, installed.record.Executable, "telara_task_list", map[string]any{"query": n})
-		if err != nil || !responseError(out) {
-			t.Fatal("pending spool did not fail closed", err)
+		r.SessionIDs, err = captured(ctx, cfg.Data, s.name, native, n)
+		if err != nil {
+			t.Fatal("synthetic capture/redaction failed", err)
 		}
-		r.Checks["mcp_round_trip"] = "PASS synthetic calls through real installed shim and backend"
+		if err = captureACK(ctx, cfg.Data, s.name, 1); err != nil {
+			t.Fatal(err)
+		}
+		// The captured session itself must also be readable through installed MCP.
+		out, err = syntheticCall(ctx, cfg, installed.record.Executable, "telara_get_context", map[string]any{"entity_id": r.SessionIDs[0], "entity_type": "session", "include_content": false})
+		if err != nil || responseError(out) || !responseTextContains(out, r.SessionIDs[0]) {
+			t.Fatal("captured session MCP read-back failed", err)
+		}
+		r.Checks["mcp_round_trip"] = "PASS same task through two fresh installed shim processes"
 		r.Checks["hook"] = "PASS synthetic terminal input through real hook and spool"
-		r.Checks["pending_spool"] = "PASS real peer authority refused undrained spool"
-		r.Checks["native_capture"] = "UNVERIFIED — dry-run does not launch clients; capture ingress and Cursor/Pi decoders remain missing"
+		r.Checks["pending_spool"] = "PASS real ingress captured and ACKed with durable receipt"
+		r.Checks["capture_and_redaction"] = "PASS synthetic native format, persisted verified session/chunk, redacted canary, MCP session read-back"
+		r.Checks["native_capture"] = "UNVERIFIED dry-run does not launch client binaries"
 		return
 	}
 	binary := *s.executable
@@ -266,6 +285,20 @@ func runClient(t *testing.T, s clientSpec) {
 			if session == "" {
 				failures = append(failures, "published terminal hook not observed")
 			} else {
+				// Terminal hooks publish after the client's last memory call.
+				// A separately labelled harness call triggers real ingress; it
+				// cannot satisfy the required native session A/B call evidence.
+				if err = setPhase(cfg, "capture"); err != nil {
+					t.Fatal(err)
+				}
+				// Native files have the same two-second quiet requirement as
+				// synthetic fixtures, even after a terminal hook has published.
+				time.Sleep(2100 * time.Millisecond)
+				drainOut, drainErr := syntheticCall(ctx, cfg, installed.record.Executable, "telara_task_list", map[string]any{"query": n, "mode": "detail"})
+				if drainErr != nil || responseError(drainOut) {
+					failures = append(failures, "terminal capture drain failed")
+				}
+				clear(drainOut)
 				probe, stop := context.WithTimeout(ctx, 5*time.Second)
 				r.SessionIDs, err = waitCaptured(probe, cfg.Data, s.name, session, n)
 				stop()
@@ -367,7 +400,7 @@ func readEvidence(t *testing.T, data string) ([]observation, []hookObservation) 
 			} else {
 				calls = append(calls, v)
 			}
-		} else {
+		} else if strings.HasPrefix(filepath.Base(p), "hook-") {
 			var v hookObservation
 			if e = json.Unmarshal(b, &v); e != nil {
 				t.Error("invalid hook observation")
@@ -438,7 +471,29 @@ func responseError(raw []byte) bool {
 	return json.Unmarshal(raw, &r) == nil && (r.Error != nil || r.Result.IsError)
 }
 
+func responseTextContains(raw []byte, text string) bool {
+	var response struct {
+		Error  any `json:"error"`
+		Result struct {
+			IsError bool                          `json:"isError"`
+			Content []struct{ Type, Text string } `json:"content"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(raw, &response) != nil || response.Error != nil || response.Result.IsError {
+		return false
+	}
+	for _, part := range response.Result.Content {
+		if part.Type == "text" && strings.Contains(part.Text, text) {
+			return true
+		}
+	}
+	return false
+}
+
 func syntheticCall(ctx context.Context, cfg installedConfig, exe, tool string, args map[string]any) ([]byte, error) {
+	if err := verifyShimImage(cfg, exe); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, *childTimeout)
 	defer cancel()
 	cmd := command(ctx, cfg.Home, isolatedEnv(cfg.Home, cfg.ClientConfig, specFor(cfg.Client)), exe, "shim", "--data-dir", cfg.Data)
@@ -525,10 +580,7 @@ func captured(ctx context.Context, data, client, native, n string) ([]string, er
 		return nil, err
 	}
 	defer rows.Close()
-	clientID := client
-	if client == "claude" {
-		clientID = "claude-code"
-	}
+	clientID := captureClient(client)
 	var ids []string
 	sessionKeys := map[string]bool{}
 	sessionChunks := map[string]map[string]bool{}
