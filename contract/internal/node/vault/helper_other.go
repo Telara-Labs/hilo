@@ -4,4 +4,6 @@ package vault
 
 import "io"
 
-func RunHelper([]string, io.Reader, io.Writer) bool { return false }
+func RunHelper(args []string, in io.Reader, out io.Writer) bool {
+	return runCapabilities(args, in, out, false)
+}

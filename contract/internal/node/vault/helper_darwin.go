@@ -18,6 +18,9 @@ const helperArg = "native-vault-operation"
 // RunHelper must be called before normal argument handling by executables using
 // this backend. Secrets travel only on anonymous pipes, never argv or files.
 func RunHelper(args []string, in io.Reader, out io.Writer) bool {
+	if runCapabilities(args, in, out, true) {
+		return true
+	}
 	if runHandoffHelper(args, in, out) {
 		return true
 	}
@@ -82,6 +85,8 @@ func RunHelper(args []string, in io.Reader, out io.Writer) bool {
 			result, e = v.nativeLegacySlot(h)
 		case 9:
 			result, e = v.nativeGetOwn(h)
+		case 11:
+			result, e = v.nativeForeignSlots(h, string(secret))
 		case 10:
 			result, e = nativeDefaultKeychain()
 		case 5:
@@ -132,6 +137,8 @@ func (v *Vault) operation(ctx context.Context, op, h string, b []byte) ([]byte, 
 		code = 8
 	case "get-own":
 		code = 9
+	case "foreign-slots":
+		code = 11
 	case "default-keychain":
 		code = 10
 	}

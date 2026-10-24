@@ -15,6 +15,8 @@ func UpgradeHandoffRequired() bool { return false }
 
 func (*Vault) ResumeUpgrade(context.Context, install.Record, string) error { return nil }
 
-func (v *Vault) DeleteForInstall(ctx context.Context, _ install.Record, handle string) error {
-	return v.Delete(ctx, handle)
+func (v *Vault) DeleteForInstall(ctx context.Context, r install.Record, handle string) error {
+	return (Installed{Vault: v, Record: r}).Delete(ctx, handle)
 }
+
+func CheckUpgradeTarget(context.Context, install.Record, string) error { return nil }

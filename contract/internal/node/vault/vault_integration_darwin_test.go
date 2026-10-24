@@ -38,6 +38,13 @@ var liveInstalled = flag.Bool("live-installed-authority", false, "Exercise an is
 // uses the actual installer, daemon, SQLite adapter, native vault and stdio shim.
 // Its keychain selection exists only in this test binary, never in wire input.
 func TestMain(m *testing.M) {
+	// Simulates an older authenticated helper protocol while retaining native
+	// custody/cleanup, so the regression also exercises historical staging items.
+	if custodyBuild == "older-helper" && len(os.Args) == 2 && os.Args[1] == capabilityArg {
+		_, _ = io.Copy(io.Discard, io.LimitReader(os.Stdin, 7))
+		_, _ = os.Stdout.Write([]byte{'T', 'M', 'V', 'C', 0, 0, 7})
+		return
+	}
 	if runCustodyUpgradeFixture(os.Args[1:]) {
 		return
 	}

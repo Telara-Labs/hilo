@@ -251,7 +251,7 @@ func TestNativeCustodyAcrossDifferentAdHocBuilds(t *testing.T) {
 	}
 	type image struct{ path, digest string }
 	builds := make([]image, 0, 3)
-	for _, variant := range []string{"first", "second", "third"} {
+	for _, variant := range []string{"first", "second", "third", "older-helper"} {
 		exe := filepath.Join(root, variant)
 		cmd := exec.Command("go", "test", "-p", "1", "-c", "-o", exe, "-ldflags=-X github.com/Telara-Labs/telara-memory/contract/internal/node/vault.custodyBuild="+variant, ".")
 		cmd.Env = append(os.Environ(), "GOWORK=off")
@@ -280,7 +280,31 @@ func TestNativeCustodyAcrossDifferentAdHocBuilds(t *testing.T) {
 	if builds[0].digest == builds[1].digest {
 		t.Fatal("two builds are identical")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// A real static target has native custody compiled out.
+	static := filepath.Join(root, "static")
+	buildStatic := exec.Command("go", "build", "-p", "2", "-o", static, "../../../cmd/telara-memory")
+	buildStatic.Env = append(os.Environ(), "GOWORK=off", "CGO_ENABLED=0")
+	if b, e := buildStatic.CombinedOutput(); e != nil {
+		t.Fatalf("static build %v %s", e, b)
+	}
+	if b, e := exec.Command("/usr/bin/codesign", "--force", "--sign", "-", static).CombinedOutput(); e != nil {
+		t.Fatalf("static sign %v %s", e, b)
+	}
+	rawStatic, e := os.ReadFile(static)
+	if e != nil {
+		t.Fatal(e)
+	}
+	staticSum := sha256.Sum256(rawStatic)
+	staticDigest := hex.EncodeToString(staticSum[:])
+	staticPath := filepath.Join(dir, "bin", staticDigest, "telara-memory")
+	if e = os.MkdirAll(filepath.Dir(staticPath), 0700); e != nil {
+		t.Fatal(e)
+	}
+	if e = os.WriteFile(staticPath, rawStatic, 0700); e != nil {
+		t.Fatal(e)
+	}
+	builds = append(builds, image{staticPath, staticDigest})
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	// Native custody fixture uses real validated receipts without registering a
 	// service. Stop intent selects the receipt without requiring an OS manager.
@@ -293,9 +317,10 @@ func TestNativeCustodyAcrossDifferentAdHocBuilds(t *testing.T) {
 	if e = os.WriteFile(filepath.Join(dir, "intent.json"), fixtureIntent, 0600); e != nil {
 		t.Fatal(e)
 	}
+	targetDigest := builds[1].digest
 	action := func(i int, name string) string {
 		t.Helper()
-		cmd := exec.CommandContext(ctx, builds[i].path, "custody-upgrade-fixture", name, keychain, data, dir, builds[1].digest)
+		cmd := exec.CommandContext(ctx, builds[i].path, "custody-upgrade-fixture", name, keychain, data, dir, targetDigest)
 		cmd.Env = replaceHome(os.Environ(), home)
 		b, e := cmd.CombinedOutput()
 		if e != nil {
@@ -446,6 +471,76 @@ func TestNativeCustodyAcrossDifferentAdHocBuilds(t *testing.T) {
 		t.Fatal("post-publication marker retained", e)
 	}
 
+	// Both new refusals leave no marker; historical incompatible markers are
+	// recoverable from a third build through uninstall or replacement retry.
+	for _, incompatible := range []int{3, 4} {
+		for _, recovery := range []string{"uninstall", "replacement"} {
+			data = filepath.Join(root, fmt.Sprintf("incompatible-%d-%s", incompatible, recovery))
+			if e = ipc.ValidateDir(data, true); e != nil {
+				t.Fatal(e)
+			}
+			original.DataDir = data
+			writeJSON("install.json", original)
+			writeJSON("intent.json", map[string]string{"mode": "stop", "sha256": original.SHA256, "version": original.Version, "session": ""})
+			owner := action(2, "bootstrap-installed")
+			targetDigest = builds[incompatible].digest
+			bad := exec.CommandContext(ctx, builds[0].path, "custody-upgrade-fixture", "prepare", keychain, data, dir, targetDigest)
+			bad.Env = replaceHome(os.Environ(), home)
+			if b, e := bad.CombinedOutput(); e == nil {
+				t.Fatalf("incompatible %d accepted %s", incompatible, b)
+			}
+			if _, e := readHandoff(data); !os.IsNotExist(e) {
+				t.Fatal("incompatible refusal published marker", e)
+			}
+			if got := action(0, "load"); got != owner {
+				t.Fatal("refusal changed source custody")
+			}
+			h, e := installedHandle(data)
+			if e != nil {
+				t.Fatal(e)
+			}
+			m := custodyHandoff{1, original, targetDigest, h, keychain, "prepared", false}
+			// Historical older helpers may already have received authority. Recovery
+			// must remove that slot, rather than merely trusting handshake refusal.
+			if incompatible == 3 {
+				secret, e := v.imageOperation(ctx, original.Executable, original.SHA256, 9, h, nil)
+				if e != nil {
+					t.Fatal(e)
+				}
+				readback, e := v.imageOperation(ctx, builds[incompatible].path, targetDigest, 4, h, secret)
+				clear(secret)
+				clear(readback)
+				if e != nil {
+					t.Fatal(e)
+				}
+			}
+			if e = writeHandoff(m); e != nil {
+				t.Fatal(e)
+			}
+			if recovery == "replacement" {
+				targetDigest = builds[1].digest
+				action(2, "resume")
+				got, e := readHandoff(data)
+				if e != nil || got.Target != targetDigest || got.Phase != "ready" {
+					t.Fatal("replacement failed", got, e)
+				}
+				if got := action(0, "load"); got != owner {
+					t.Fatal("replacement lost source")
+				}
+			}
+			action(2, "uninstall-secret")
+			action(0, "absent")
+			if incompatible == 3 {
+				action(3, "absent")
+			}
+			if recovery == "replacement" {
+				action(1, "absent")
+			}
+			if _, e := readHandoff(data); !os.IsNotExist(e) {
+				t.Fatal("incompatible marker retained", e)
+			}
+		}
+	}
 }
 
 var _ io.Writer = (*custodyOutput)(nil)
@@ -490,7 +585,67 @@ func TestHandoffRecoveryAdmissionRefusalsPreserveMarker(t *testing.T) {
 	if e = New().ResumeUpgrade(context.Background(), source, "bad"); !errors.Is(e, ErrInvalid) {
 		t.Fatal(e)
 	}
+	if e = CheckUpgradeTarget(nil, source, m.Target); !errors.Is(e, ErrInvalid) {
+		t.Fatal(e)
+	}
+	if e = CheckUpgradeTarget(context.Background(), source, "bad"); !errors.Is(e, ErrInvalid) {
+		t.Fatal(e)
+	}
+	if e = CheckUpgradeTarget(context.Background(), source, m.Target); !errors.Is(e, install.ErrUnverified) {
+		t.Fatal(e)
+	}
+	if e = New().ResumeUpgrade(nil, source, m.Target); !errors.Is(e, ErrInvalid) {
+		t.Fatal(e)
+	}
 	if e = New().DeleteForInstall(context.Background(), source, "bad"); !errors.Is(e, ErrInvalid) {
 		t.Fatal(e)
+	}
+}
+
+// These helper exchanges execute real images but do not open any Keychain.
+func TestHandoffCapabilitiesNativeStaticAndOlderProtocol(t *testing.T) {
+	root, e := filepath.EvalSymlinks(t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, variant := range []string{"native", "static", "older-helper"} {
+		path := filepath.Join(root, variant)
+		var cmd *exec.Cmd
+		if variant == "static" {
+			cmd = exec.Command("go", "build", "-p", "2", "-o", path, "../../../cmd/telara-memory")
+		} else {
+			cmd = exec.Command("go", "test", "-p", "1", "-c", "-o", path, "-ldflags=-X github.com/Telara-Labs/telara-memory/contract/internal/node/vault.custodyBuild="+variant, ".")
+		}
+		cmd.Env = append(os.Environ(), "GOWORK=off")
+		if variant == "static" {
+			cmd.Env = append(cmd.Env, "CGO_ENABLED=0")
+		}
+		if b, e := cmd.CombinedOutput(); e != nil {
+			t.Fatalf("%s build %v %s", variant, e, b)
+		}
+		if e = os.Chmod(path, 0700); e != nil {
+			t.Fatal(e)
+		}
+		b, e := os.ReadFile(path)
+		if e != nil {
+			t.Fatal(e)
+		}
+		sum := sha256.Sum256(b)
+		digest := hex.EncodeToString(sum[:])
+		before, e := os.ReadDir(root)
+		if e != nil {
+			t.Fatal(e)
+		}
+		e = checkTargetCapabilities(context.Background(), path, digest)
+		if (e == nil) != (variant == "native") {
+			t.Fatalf("%s compatibility %v", variant, e)
+		}
+		after, e := os.ReadDir(root)
+		if e != nil || len(before) != len(after) {
+			t.Fatal("handshake mutated directory", e)
+		}
+		if e = checkTargetCapabilities(context.Background(), path, fmt.Sprintf("%064x", 1)); e == nil {
+			t.Fatal("unauthenticated image accepted")
+		}
 	}
 }

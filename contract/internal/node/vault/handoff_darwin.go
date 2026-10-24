@@ -241,6 +241,109 @@ func (b *custodyOutput) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// checkTargetCapabilities authenticates the target image before a nonmutating
+// protocol exchange. No native location or authority is sent during this probe.
+func checkTargetCapabilities(ctx context.Context, path, digest string) error {
+	f, e := pinHandoffImage(path, digest)
+	if e != nil {
+		return e
+	}
+	defer f.Close()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, capabilityArg)
+	cmd.WaitDelay = time.Second
+	cmd.Stdin = bytes.NewReader(capabilityRequest)
+	out := &custodyOutput{}
+	cmd.Stdout = out
+	if cmd.Run() != nil {
+		return ErrUnavailable
+	}
+	before, se := f.Stat()
+	after, ae := os.Lstat(path)
+	if se != nil || ae != nil || !os.SameFile(before, after) || !compatibleCapabilities(out.b[:out.n]) {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+// CheckUpgradeTarget lets a newer lifecycle caller reject an incompatible
+// successor before asking an older installed daemon to prepare any transfer.
+func CheckUpgradeTarget(ctx context.Context, source install.Record, target string) error {
+	if ctx == nil || !digestValid(target) {
+		return ErrInvalid
+	}
+	if e := ctx.Err(); e != nil {
+		return e
+	}
+	report, e := install.Status(ctx, source.Dir)
+	if (e != nil && !errors.Is(e, install.ErrUnavailable)) || report.Record != source {
+		return install.ErrUnverified
+	}
+	return checkTargetCapabilities(ctx, handoffTarget(source, target), target)
+}
+
+// abortUnpublished authenticates the still-current source and proves its custody
+// before removing a historical incompatible-target marker. Metadata enumeration
+// refuses unexplained foreign slots even when a target cannot run any helper.
+// Caller holds custody-upgrade.lock and lifecycle/db writer admission.
+func (v *Vault) abortUnpublished(ctx context.Context, current install.Record, m custodyHandoff) error {
+	report, e := install.Status(ctx, current.Dir)
+	if (e != nil && !errors.Is(e, install.ErrUnavailable)) || report.Record != current || current != m.Source || m.Keychain != v.keychainPath {
+		return install.ErrUnverified
+	}
+	h, e := installedHandle(current.DataDir)
+	if e != nil || h != m.Handle {
+		return ErrUnavailable
+	}
+	f, e := pinHandoffImage(handoffTarget(current, m.Target), m.Target)
+	if e != nil {
+		return e
+	}
+	f.Close()
+	secret, e := v.imageOperation(ctx, current.Executable, current.SHA256, 2, h, nil)
+	if e != nil {
+		return e
+	}
+	clear(secret)
+	own, e := v.imageOperation(ctx, current.Executable, current.SHA256, 5, h, nil)
+	if e != nil {
+		return e
+	}
+	if m.Legacy {
+		own = []byte(service)
+	}
+	probe := func() error {
+		b, e := v.operation(ctx, "foreign-slots", h, own)
+		if e != nil || len(b) != 1 || b[0] != 0 {
+			return ErrUnavailable
+		}
+		return nil
+	}
+	if probe() != nil {
+		// Older helpers can lack the handshake yet still support exact-slot cleanup.
+		target, e := v.imageOperation(ctx, handoffTarget(current, m.Target), m.Target, 5, h, nil)
+		if e != nil {
+			return e
+		}
+		if m.Legacy {
+			own = []byte(service)
+		}
+		if string(own) != string(target) {
+			if _, e = v.imageOperation(ctx, handoffTarget(current, m.Target), m.Target, 6, h, nil); e != nil {
+				return e
+			}
+		}
+		if e = probe(); e != nil {
+			return e
+		}
+	}
+	if e = os.Remove(filepath.Join(current.DataDir, handoffFile)); e != nil {
+		return e
+	}
+	return syncHandoffDir(current.DataDir)
+}
+
 // PrepareUpgrade runs in the old verified daemon before quiescence. The install
 // lifecycle lock has already authenticated and staged Target. Secrets go only
 // through bounded anonymous pipes into that exact image's native helper.
@@ -270,6 +373,10 @@ func (v *Vault) PrepareUpgrade(ctx context.Context, source install.Record, targe
 		return e
 	}
 	defer targetImage.Close()
+	// Refuse incompatible targets before even creating the transfer lock file.
+	if e = checkTargetCapabilities(ctx, handoffTarget(source, target), target); e != nil {
+		return e
+	}
 	lock, e := ipc.Lock(filepath.Join(source.DataDir, "custody-upgrade.lock"))
 	if e != nil {
 		return e
@@ -280,6 +387,13 @@ func (v *Vault) PrepareUpgrade(ctx context.Context, source install.Record, targe
 		return e
 	}
 	m, e := readHandoff(source.DataDir)
+	if e == nil && m.Source == source && m.Handle == handle && m.Keychain == v.keychainPath &&
+		(m.Target != target || checkTargetCapabilities(ctx, handoffTarget(source, m.Target), m.Target) != nil) {
+		if e = v.abortUnpublished(ctx, source, m); e != nil {
+			return e
+		}
+		e = os.ErrNotExist
+	}
 	if os.IsNotExist(e) {
 		slot, e := v.operation(ctx, "legacy-slot", handle, nil)
 		if e != nil || len(slot) != 1 || slot[0] > 1 {
@@ -446,8 +560,38 @@ func runHandoffHelper(args []string, in io.Reader, out io.Writer) bool {
 // ResumeUpgrade uses the retained receipt image after an interrupted transfer.
 // It never depends on cached plaintext or launches a shim-supplied executable.
 func (v *Vault) ResumeUpgrade(ctx context.Context, source install.Record, target string) error {
-	if !digestValid(target) {
+	if ctx == nil || !digestValid(target) || source.Executable != handoffTarget(source, source.SHA256) {
 		return ErrInvalid
+	}
+	if e := ctx.Err(); e != nil {
+		return e
+	}
+	if v == nil || v.closed {
+		return ErrUnavailable
+	}
+	report, e := install.Status(ctx, source.Dir)
+	if (e != nil && !errors.Is(e, install.ErrUnavailable)) || report.Record != source {
+		return install.ErrUnverified
+	}
+	if e = checkTargetCapabilities(ctx, handoffTarget(source, target), target); e != nil {
+		return e
+	}
+	if e = v.bindCustody(ctx, source.DataDir, false); e != nil {
+		return e
+	}
+	lock, e := ipc.Lock(filepath.Join(source.DataDir, "custody-upgrade.lock"))
+	if e != nil {
+		return e
+	}
+	m, e := readHandoff(source.DataDir)
+	if e == nil && (m.Target != target || checkTargetCapabilities(ctx, handoffTarget(source, m.Target), m.Target) != nil) {
+		e = v.abortUnpublished(ctx, source, m)
+	} else if os.IsNotExist(e) {
+		e = nil
+	}
+	lock.Close()
+	if e != nil {
+		return e
 	}
 	return v.lifecycleImage(ctx, source, target, resumeArg)
 }
@@ -551,6 +695,13 @@ func (v *Vault) DeleteForInstall(ctx context.Context, current install.Record, ha
 			again, e := readHandoff(current.DataDir)
 			if e != nil || again != m || m.Handle != handle || m.Keychain != v.keychainPath {
 				return ErrUnavailable
+			}
+			if checkTargetCapabilities(ctx, handoffTarget(current, m.Target), m.Target) != nil {
+				if e = v.abortUnpublished(ctx, current, m); e != nil {
+					return e
+				}
+				_, e = v.imageOperation(ctx, current.Executable, current.SHA256, 3, handle, nil)
+				return e
 			}
 			oldService, e := v.imageOperation(ctx, current.Executable, current.SHA256, 5, handle, nil)
 			if e != nil {

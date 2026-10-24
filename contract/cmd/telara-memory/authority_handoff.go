@@ -41,6 +41,25 @@ func installedCustodyHandoff(record install.Record) func(context.Context, json.R
 }
 
 func requestCustodyHandoff(ctx context.Context, p ipc.Paths, digest string) error {
+	if vault.UpgradeHandoffRequired() {
+		// A prior daemon may predate capability negotiation. Derive only the install
+		// directory from durable creator evidence, then revalidate the current receipt.
+		pending, e := readPending(p.Data)
+		if e != nil || pending.Creator == nil {
+			return install.ErrUnverified
+		}
+		report, e := install.Status(ctx, pending.Creator.Dir)
+		if e != nil && !errors.Is(e, install.ErrUnavailable) {
+			return install.ErrUnverified
+		}
+		paths, e := ipc.Resolve(report.Record.DataDir, report.Record.RunDir)
+		if e != nil || paths.Data != p.Data || paths.Run != p.Run || paths.Endpoint != p.Endpoint {
+			return install.ErrUnverified
+		}
+		if e = vault.CheckUpgradeTarget(ctx, report.Record, digest); e != nil {
+			return e
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	c, e := ipc.Dial(ctx, p)

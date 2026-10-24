@@ -22,12 +22,23 @@ const maxSecret = 2560
 
 // Vault uses only native credential custody. The zero value uses the owner's
 // default OS vault. Each Get returns an independent caller-owned byte slice.
+type secretServiceLocation struct {
+	Version    int    `json:"version"`
+	Collection string `json:"collection"`
+	Item       string `json:"item"`
+	Handle     string `json:"handle"`
+	Bus        string `json:"bus"`
+	Owner      string `json:"owner"`
+	State      string `json:"state"`
+}
+
 type Vault struct {
-	mu           sync.Mutex
-	keychain     uintptr
-	keychainPath string
-	profile      string
-	closed       bool
+	mu            sync.Mutex
+	secretService *secretServiceLocation
+	keychain      uintptr
+	keychainPath  string
+	profile       string
+	closed        bool
 }
 
 func New() *Vault { return &Vault{} }
