@@ -66,10 +66,17 @@ type Backend interface {
 	Close() error
 }
 type Opener func(context.Context) (Backend, error)
+type custodyHandoffKey struct{}
+
 type Config struct {
-	Paths ipc.Paths
-	Open  Opener
-	Ready func()
+	// CustodyHandoff accepts only direct authenticated lifecycle control frames.
+	// Forwarded MCP requests cannot reach this callback.
+	CustodyHandoff func(context.Context, json.RawMessage) error
+	// BindConnection captures kernel connection identity before hello.
+	BindConnection func(context.Context, net.Conn) (context.Context, func(), error)
+	Paths          ipc.Paths
+	Open           Opener
+	Ready          func()
 	// Verify revalidates managed startup authority under db.lock, before
 	// invalidating prior settlement or opening any storage or listener.
 	Verify func() error
@@ -295,6 +302,9 @@ func Run(ctx context.Context, cfg Config) error {
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, 64)
 	serving, cancelServing := context.WithCancel(ctx)
+	if cfg.CustodyHandoff != nil {
+		serving = context.WithValue(serving, custodyHandoffKey{}, cfg.CustodyHandoff)
+	}
 	defer cancelServing()
 	done := make(chan struct{})
 	defer close(done)
@@ -350,7 +360,7 @@ func Run(ctx context.Context, cfg Config) error {
 					conn.Close()
 				}
 			}()
-			transferred = serve(serving, conn, backend, life)
+			transferred = serveBound(serving, conn, backend, life, cfg.BindConnection)
 		}()
 	}
 	if !life.isDraining() || ctx.Err() != nil {
@@ -365,7 +375,19 @@ func Run(ctx context.Context, cfg Config) error {
 	return ctx.Err()
 }
 
-func serve(parent context.Context, c net.Conn, backend Backend, life *lifecycle) (transferred bool) {
+func serve(parent context.Context, c net.Conn, backend Backend, life *lifecycle) bool {
+	return serveBound(parent, c, backend, life, nil)
+}
+
+func serveBound(parent context.Context, c net.Conn, backend Backend, life *lifecycle, bind func(context.Context, net.Conn) (context.Context, func(), error)) (transferred bool) {
+	if bind != nil {
+		bound, release, err := bind(parent, c)
+		if err != nil {
+			return false
+		}
+		defer release()
+		parent = bound
+	}
 	pid, e := ipc.Peer(c)
 	if e != nil {
 		return
@@ -480,6 +502,23 @@ func serve(parent context.Context, c net.Conn, backend Backend, life *lifecycle)
 		if len(req.ID) == 0 {
 			if id, ok := CancellationID(req); ok {
 				pending.Cancel(id)
+			}
+			continue
+		}
+		if req.Method == "custody-handoff" {
+			callback, _ := ctx.Value(custodyHandoffKey{}).(func(context.Context, json.RawMessage) error)
+			var err error
+			if h.Kind != "control" || len(req.OriginalID) != 0 || callback == nil {
+				err = errors.New("unsupported_control")
+			} else {
+				err = callback(ctx, req.Params)
+			}
+			response := Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]string{"state": "custody_ready"}}
+			if err != nil {
+				response = Error(req.ID, "custody_handoff_unavailable")
+			}
+			if write(response) != nil {
+				return
 			}
 			continue
 		}

@@ -14,17 +14,40 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcp"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/peer"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/shim"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/vault"
 )
 
-// Installed key custody and per-client proofs must be supplied by an installed
-// RuntimeProvider. Until one exists, Open reports the explicit authority gap and
-// leaves memory unavailable. Client and transport hints never fill that gap.
+// Installed key custody and per-client proofs come from the native vault and
+// verified peer image. Missing authority leaves only diagnostics available.
+// Client and transport hints never fill an authority gap.
 func existingOpener(data string, provider mcp.RuntimeProvider) daemon.Opener {
+	dir, _ := install.DefaultDir()
+	return installedOpener(data, dir, provider)
+}
+
+func installedOpener(data, dir string, provider mcp.RuntimeProvider) daemon.Opener {
 	return func(ctx context.Context) (daemon.Backend, error) {
+		pending, pendingErr := readPending(data)
+		if pendingErr == nil {
+			if pending.Phase == "provisioning" {
+				return nil, errors.New("runtime_authority_unavailable")
+			}
+			if pending.Phase == "complete" {
+				// daemon.Run holds db.lock before invoking this opener. A failed
+				// open remains conservatively admitted and requires settlement.
+				pending.Phase = "admitted"
+				if err := writePending(data, pending); err != nil {
+					return nil, err
+				}
+			}
+		} else if pendingErr != nil && !os.IsNotExist(pendingErr) {
+			return nil, pendingErr
+		}
 		installed := provider
 		if installed == nil {
-			installed = mcp.InstalledRuntimeProvider{Provider: disclosure.InstalledProvider{Dir: data}}
+			installed = mcp.InstalledRuntimeProvider{Provider: disclosure.InstalledProvider{Dir: data, Vault: peer.GuardVault(vault.New()), Peers: peer.Authority{InstallDir: dir, DataDir: data}}}
 		}
 		backend, err := mcp.Open(ctx, data, installed)
 		if err != nil && err.Error() == "runtime_authority_unavailable" {
@@ -94,7 +117,12 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 		if err != nil {
 			return err
 		}
-		err = daemon.Run(ctx, daemon.Config{Paths: p, Open: existingOpener(p.Data, nil), Verify: func() error {
+		err = daemon.Run(ctx, daemon.Config{CustodyHandoff: installedCustodyHandoff(record), BindConnection: peer.BindConnection, Paths: p, Open: func(ctx context.Context) (daemon.Backend, error) {
+			if e := vault.New().RecoverUpgrade(ctx, record); e != nil {
+				return nil, e
+			}
+			return installedOpener(p.Data, *installDir, nil)(ctx)
+		}, Verify: func() error {
 			current, err := install.VerifyRunning(*installDir)
 			if err != nil {
 				return err
@@ -116,7 +144,7 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 			return errors.New("invalid_paths")
 		}
 		if args[0] == "daemon" {
-			err = daemon.Run(ctx, daemon.Config{Paths: p, Open: existingOpener(p.Data, nil)})
+			err = daemon.Run(ctx, daemon.Config{BindConnection: peer.BindConnection, Paths: p, Open: existingOpener(p.Data, nil)})
 		} else {
 			err = shim.Run(ctx, in, out, shim.Config{Paths: p, Start: func() error { return shim.Spawn(p) }})
 		}
@@ -168,8 +196,52 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 		if err != nil {
 			return err
 		}
-		r, err := install.Install(ctx, install.Config{Dir: dir, Home: home, Executable: *source, SHA256: *digest, Version: *version, DataDir: p.Data, RunDir: p.Run})
-		if err = report(r, err); err != nil {
+		var r install.Report
+		var installErr error
+		if err = ipc.WriteFrame(out, map[string]string{"credential_store": vault.Location()}); err != nil {
+			return err
+		}
+		err = provisionAuthority(ctx, p.Data, vault.New(), func() error {
+			r, installErr = install.Install(ctx, install.Config{Dir: dir, Home: home, Executable: *source, SHA256: *digest, Version: *version, DataDir: p.Data, RunDir: p.Run})
+			if errors.Is(installErr, install.ErrUpgrade) {
+				// Explicit retry of a never-opened setup may reuse only the exact
+				// authenticated image/profile supplied by this owner invocation.
+				prior, statusErr := install.Status(ctx, dir)
+				if statusErr == nil || errors.Is(statusErr, install.ErrUnavailable) {
+					if prior.Record.Dir == dir && prior.Record.SHA256 == *digest && prior.Record.Version == *version && prior.Record.DataDir == p.Data && prior.Record.RunDir == p.Run {
+						if prior.State == "autostart_stopped" {
+							// This explicit owner install retry authorizes resuming
+							// the exact receipt. Pending startup still cannot open
+							// a backend while writer admission is held here.
+							if err := install.Start(ctx, dir); err != nil {
+								return err
+							}
+						}
+						r, installErr = install.Register(ctx, dir)
+					}
+				}
+			}
+			if installErr != nil && !errors.Is(installErr, install.ErrUnavailable) {
+				return installErr
+			}
+			if r.Record.Dir != dir || r.Record.DataDir != p.Data || r.Record.RunDir != p.Run {
+				return install.ErrUnverified
+			}
+			verified, err := install.VerifiedExecutable(dir)
+			if err != nil {
+				return err
+			}
+			return verified.Close()
+		})
+		if err != nil {
+			return report(r, err)
+		}
+		if err = report(r, installErr); err != nil {
+			return err
+		}
+		// A manager launch attempted while bootstrap held writer admission may
+		// have refused the lock. Explicitly start the now-complete installation.
+		if err = install.Start(ctx, dir); err != nil {
 			return err
 		}
 		return readiness(r)
@@ -239,12 +311,55 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 		case "stop":
 			return install.Stop(ctx, dir, q)
 		case "uninstall":
-			return install.Uninstall(ctx, dir, q)
+			return install.Uninstall(ctx, dir, func(ctx context.Context) error {
+				r, err := install.Status(ctx, dir)
+				if err != nil && !errors.Is(err, install.ErrUnavailable) {
+					return err
+				}
+				if r.Record.Dir != dir {
+					return install.ErrUnverified
+				}
+				if pending, pendingErr := readPending(r.Record.DataDir); pendingErr == nil && pending.Phase != "admitted" {
+					// A validated pending record plus exclusive writer admission
+					// proves no store was eligible to open, even if no daemon ever
+					// existed to write a clean-close receipt.
+					if err := deleteNeverAdmittedAuthority(ctx, r.Record.DataDir, vault.New()); err == nil {
+						return nil
+					} else if !errors.Is(err, ipc.ErrBusy) && !errors.Is(err, errAuthorityAdmitted) {
+						return err
+					}
+				} else if pendingErr != nil && !os.IsNotExist(pendingErr) {
+					return pendingErr
+				}
+				if err := q(ctx); err != nil {
+					return err
+				}
+				return deleteAuthority(ctx, r.Record.DataDir, installedDeletionVault{vault.New(), r.Record})
+			})
 		default:
 			if !releaseInputs(*source, *digest, *version) {
 				return errors.New("release_inputs_required")
 			}
-			r, err = install.Upgrade(ctx, dir, *source, *digest, *version, q)
+			r, err = install.Upgrade(ctx, dir, *source, *digest, *version, func(ctx context.Context) error {
+				prior, e := install.Status(ctx, dir)
+				if e != nil && !errors.Is(e, install.ErrUnavailable) {
+					return e
+				}
+				p, e := ipc.Resolve(prior.Record.DataDir, prior.Record.RunDir)
+				if e != nil {
+					return e
+				}
+				if vault.UpgradeHandoffRequired() {
+					if e = requestCustodyHandoff(ctx, p, *digest); e != nil {
+						// A crash may leave no live daemon. Only the retained,
+						// receipt-verified old image can resume its custody work.
+						if e = vault.New().ResumeUpgrade(ctx, prior.Record, *digest); e != nil {
+							return e
+						}
+					}
+				}
+				return q(ctx)
+			})
 			if err = report(r, err); err != nil {
 				return err
 			}

@@ -1,0 +1,91 @@
+// Package vault keeps installed runtime secrets in the operating system vault.
+// There is no file, environment or command-line secret fallback.
+package vault
+
+import (
+	"context"
+	"encoding/hex"
+	"errors"
+)
+
+var (
+	ErrUnavailable         = errors.New("secret_vault_unavailable")
+	ErrKeychainUnavailable = keychainUnavailable{}
+	ErrExists              = errors.New("secret_vault_handle_exists")
+	ErrNotFound            = errors.New("secret_vault_handle_missing")
+	ErrInvalid             = errors.New("secret_vault_invalid_input")
+)
+
+const service = "dev.telara.memory.runtime"
+const maxSecret = 2560
+
+// Vault uses only native credential custody. The zero value uses the owner's
+// default OS vault. Each Get returns an independent caller-owned byte slice.
+type Vault struct {
+	keychain     uintptr
+	keychainPath string
+	closed       bool
+}
+
+func New() *Vault { return &Vault{} }
+
+func valid(ctx context.Context, handle string) error {
+	if ctx == nil {
+		return ErrInvalid
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	b, err := hex.DecodeString(handle)
+	if err != nil || len(b) != 16 {
+		return ErrInvalid
+	}
+	for _, c := range handle {
+		if c >= 'A' && c <= 'F' {
+			return ErrInvalid
+		}
+	}
+	return nil
+}
+
+func (v *Vault) Put(ctx context.Context, handle string, secret []byte) error {
+	if err := valid(ctx, handle); err != nil {
+		return err
+	}
+	if v == nil || len(secret) == 0 || len(secret) > maxSecret {
+		return ErrInvalid
+	}
+	if v.closed {
+		return ErrUnavailable
+	}
+	return v.put(ctx, handle, secret)
+}
+func (v *Vault) Get(ctx context.Context, handle string) ([]byte, error) {
+	if err := valid(ctx, handle); err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, ErrInvalid
+	}
+	if v.closed {
+		return nil, ErrUnavailable
+	}
+	return v.get(ctx, handle)
+}
+func (v *Vault) Delete(ctx context.Context, handle string) error {
+	if err := valid(ctx, handle); err != nil {
+		return err
+	}
+	if v == nil {
+		return ErrInvalid
+	}
+	if v.closed {
+		return ErrUnavailable
+	}
+	return v.delete(ctx, handle)
+}
+
+type keychainUnavailable struct{}
+
+func (keychainUnavailable) Error() string { return "keychain_unavailable" }
+func (keychainUnavailable) Unwrap() error { return ErrUnavailable }

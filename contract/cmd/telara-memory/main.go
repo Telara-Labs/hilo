@@ -14,6 +14,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/shim"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/vault"
 )
 
 func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error {
@@ -33,6 +34,9 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 }
 
 func main() {
+	if vault.RunHelper(os.Args[1:], os.Stdin, os.Stdout) {
+		return
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), stopSignals()...)
 	defer cancel()
 	if e := run(ctx, os.Args[1:], os.Stdin, os.Stdout); e != nil {
@@ -46,7 +50,7 @@ func publicCode(e error) string {
 		return refused.Error()
 	}
 	for _, code := range []error{install.ErrUnavailable, install.ErrStopped, install.ErrUnverified, install.ErrUnsafe, install.ErrUpgrade, daemon.ErrSettlement,
-		clients.ErrOptions, clients.ErrUnsafe, clients.ErrConflict, clients.ErrMalformed, clients.ErrBusy} {
+		clients.ErrOptions, clients.ErrUnsafe, clients.ErrConflict, clients.ErrMalformed, clients.ErrBusy, vault.ErrKeychainUnavailable, vault.ErrUnavailable} {
 		if errors.Is(e, code) {
 			return code.Error()
 		}
@@ -62,7 +66,7 @@ func publicCode(e error) string {
 		return "invalid_frame"
 	}
 	switch e.Error() {
-	case "invalid_arguments", "invalid_command", "invalid_paths", "daemon_unavailable", "settlement_unknown", "release_inputs_required":
+	case "invalid_arguments", "invalid_command", "invalid_paths", "daemon_unavailable", "settlement_unknown", "release_inputs_required", "runtime_authority_unavailable":
 		return e.Error()
 	}
 	return "daemon_error"

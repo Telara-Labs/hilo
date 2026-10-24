@@ -1,0 +1,101 @@
+# Installed credential custody
+
+The native vault contains the device signing key and installed shim credential.
+The local manifest stores only an opaque handle. There is no file fallback.
+
+macOS uses Security.framework through a separate process with a five-second
+operation deadline. All item queries request kSecUseAuthenticationUIFail and the
+helper disables Keychain interaction. Failure returns keychain_unavailable.
+Installation reports the user default Keychain as the selected credential store.
+Static builds refuse custody.
+
+Certificate-signed executables use an explicit SecAccess trusted-application ACL
+and a designated requirement binding the identifier AND leaf-certificate
+fingerprint. Release signing supplies that exact requirement without additional
+OR clauses or cdhash constraints. Its identity and identifier stay stable across
+signed upgrades.
+
+Ad hoc source builds use Keychain creator-identity trust and an identity-specific
+service slot. Creation omits the access attribute to select the native creator
+policy. It never supplies an empty trusted-application list or an all-applications
+ACL. All queries fail authentication UI. Unsigned/static builds refuse custody.
+
+Before upgrade quiesces the old daemon, the installer stages the authenticated
+content-addressed target. A direct lifecycle control request asks the old daemon
+to persist a nonsecret owner-only transfer marker, read the secret, and send it
+on an anonymous pipe to that exact digest-verified target. The target creates its
+own item and reads it back. A mismatched existing item refuses replacement.
+Forwarded MCP requests cannot invoke this control. The marker is fsynced before
+transfer and after readback.
+
+Old custody remains available until the install receipt switches. The new managed
+daemon, under writer admission and before opening storage, verifies its item and
+asks the retained verified old executable to delete the exact source slot. A
+crash before receipt publication retains old custody; a retry resumes through the
+old daemon or retained old image. A crash after publication resumes retirement
+from the new daemon. Cleanup is idempotent, including a crash after old deletion.
+Stable signed builds sharing one slot never delete that slot during handoff.
+Explicit settled uninstall removes pending staging custody and the current item.
+A different target is refused while a transfer is pending.
+
+Readback-before-delete necessarily creates a temporary staging item alongside
+the old item. The marker selects the active installation and recovery removes
+the obsolete item. This is not an atomic physical move between Keychain items.
+Both items stay inside the same selected native Keychain; no plaintext recovery
+file is written. Round-one creator items can be read from their legacy slot by
+their owning image. An older daemon without the handoff entrypoint cannot be
+made upgrade-aware retroactively; keep its readable image until migration is
+explicitly performed.
+
+Put borrows caller bytes through no-copy CFData during the synchronous native
+operation. Get uses a caller-owned mutable Keychain allocation, wipes it with
+memset_s, and frees it through the matching Keychain API. Binary helper pipe
+buffers are bounded and wiped. OS/framework/transport internals are not claimed
+to provide forensic memory erasure.
+
+Windows uses per-user Credential Manager with durable local-machine persistence
+and an owner-only native mutex to prevent duplicate replacement. Linux uses the
+existing session bus and org.freedesktop.Secret.Service through godbus, with an
+explicit telara-memory collection alias. No session-bus autolaunch, interactive
+unlock or prompt is attempted. Missing, locked or prompting custody refuses
+explicitly. Plain Secret Service transport runs only over the authenticated local
+session bus; same-user bus inspection is outside the stated containment boundary.
+
+Installation explicitly grants the registered local shim read access to local
+repositories through search, prime and explicit retrieval, plus task create,
+checkpoint, pause and complete, including unscoped tasks. Hook injection remains
+off. These grants belong to the installed credential, never the hello client
+name. No daemon opening or client hello creates a registration or widens a grant.
+
+Installation holds writer admission across provisioning. An owner-only pending
+record stores an opaque recovery handle before a key enters native custody. The
+complete marker remains durable until first daemon opening transitions it to
+admitted under db.lock, before any backend open. Provisioning refuses startup.
+An explicit install retry may discard only never-admitted partial bootstrap.
+Never-started uninstall deletes native keys under db.lock without a clean-close
+receipt. Admitted profiles require normal daemon settlement. Uninstall retains
+database files. Windows markers use DACL checks, reparse refusal and write-through
+MoveFileEx publication after a writable file flush, rather than mode-bit checks
+or a read-only directory flush.
+
+Peer lifetime binding must run before reading hello and remain held through all
+requests and proof creation. Darwin uses LOCAL_PEERTOKEN and checks running signed
+code against the receipt image. Unsigned Darwin images refuse authorization.
+Linux pins SO_PEERCRED with SO_PEERPIDFD and the running executable descriptor.
+Kernels without SO_PEERPIDFD explicitly refuse installed authorization. Windows
+pins the named pipe client's process handle. PID, image and lifetime checks are
+repeated around capture drain and native secret retrieval before proof creation. Same-user injection and transferred IPC handles
+are outside containment. No claim is made that image checks detect injected code.
+
+Pending capture signals require synchronous drain before disclosure. Until the
+capture consumer is connected, a nonempty or unsafe spool refuses authority.
+That refusal must not be reported as successful capture.
+
+Native Keychain tests use a separate encrypted temporary Keychain. A temporary
+HOME alone does not isolate the login Keychain. The ad hoc two-build test builds
+different executables with -ldflags -X and checks retained-profile identity,
+failed target readback, interrupted transfer/retry and idempotent source cleanup.
+Its receipt publication fixture does not prove service-manager replacement. The
+signed two-build test additionally requires custody-signing-identity. A skipped
+test is not upgrade acceptance. Native Windows and Linux runtime tests are
+separate from cross-compilation.
