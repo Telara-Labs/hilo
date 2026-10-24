@@ -24,7 +24,7 @@ func validOccurrence(o Options, q SourceOccurrence) bool {
 	return true
 }
 func readerValid(r record.SourceRef) bool {
-	if r.Reader != "claude-code" && r.Reader != "codex" {
+	if r.Reader != "claude-code" && r.Reader != "codex" && r.Reader != "cursor-agent" && r.Reader != "pi" {
 		return false
 	}
 	if len(r.ReaderVersion) == 0 || len(r.ReaderVersion) > 128 {
@@ -141,6 +141,10 @@ func (s *Store) captureProgress(ctx context.Context, q SourceOccurrence) (Captur
 	return p, nil
 }
 func (s *Store) Capture(ctx context.Context, q CaptureRequest, producer func(*CaptureTxn) (CommitPlan, error)) (CaptureReceipt, error) {
+	return s.capture(ctx, q, producer, nil)
+}
+
+func (s *Store) capture(ctx context.Context, q CaptureRequest, producer func(*CaptureTxn) (CommitPlan, error), signal *spoolAdmission) (CaptureReceipt, error) {
 	if !validOccurrence(s.opts, q.Occurrence) || q.ExpectedVersion < 0 || !record.IsKeyID(q.AuthorKeyID) || !readerValid(q.Reader) || !record.IsHex64(q.RulesetFingerprint) || len(q.EventIDs) == 0 || len(q.EventIDs) > 4096 || q.Range.First != 0 || q.Range.LastExclusive <= 0 || producer == nil {
 		return CaptureReceipt{}, failure("invalid_request")
 	}
@@ -156,9 +160,24 @@ func (s *Store) Capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 	q.Occurrence.EventIDs = append([]string(nil), q.Occurrence.EventIDs...)
 	transition := record.H("capture-transition", s.opts.PinnedGenesisID, s.opts.LocalMachineID, q.Occurrence.Source, strconv.FormatInt(q.ExpectedVersion, 10))
 	var out CaptureReceipt
+	finish := func() error {
+		if signal == nil {
+			return nil
+		}
+		return s.persistSpool(ctx, *signal, out)
+	}
 	err := s.writeMode(ctx, true, func() error {
 		if e := s.checkInstance(ctx); e != nil {
 			return e
+		}
+		var spoolPrior CaptureReceipt
+		var spoolFound bool
+		if signal != nil {
+			var err error
+			spoolPrior, spoolFound, err = s.spoolReceipt(ctx, *signal)
+			if err != nil {
+				return err
+			}
 		}
 		d, e := s.load(ctx)
 		if e != nil {
@@ -168,6 +187,14 @@ func (s *Store) Capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 			s.poisoned = true
 			return failure("outcome_unknown")
 		}
+		if spoolFound {
+			if spoolPrior.Status == "committed" {
+				spoolPrior.Status = "prior_transition_committed"
+			}
+			spoolPrior.CurrentAvailability = currentAvailability(d, spoolPrior.ActualRecordRefs)
+			out = spoolPrior
+			return nil
+		}
 		receipt, ok, e := s.captureReceipt(ctx, d, transition, q)
 		if e != nil {
 			s.poisoned = true
@@ -175,7 +202,7 @@ func (s *Store) Capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 		}
 		if ok {
 			out = receipt
-			return nil
+			return finish()
 		}
 		p, e := s.captureProgress(ctx, q.Occurrence)
 		if e != nil {
@@ -237,7 +264,7 @@ func (s *Store) Capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 		}
 		if !changed {
 			out = CaptureReceipt{Status: "no_change", ActualRecordRefs: refs, CurrentAvailability: currentAvailability(d, refs), ResultingProgress: p}
-			return nil
+			return finish()
 		}
 		next := CaptureProgress{Version: p.Version + 1, SettledThrough: plan.Next.SettledThrough, Reader: plan.Next.Reader, RulesetFingerprint: plan.Next.RulesetFingerprint, Range: plan.Next.Range, SessionPages: append([]PageRef(nil), plan.Next.SessionPageIDs...)}
 		for _, id := range plan.Next.LastSourceRecordIDs {
@@ -248,7 +275,7 @@ func (s *Store) Capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 			return e
 		}
 		out = CaptureReceipt{Status: "committed", ActualRecordRefs: refs, CurrentAvailability: currentAvailability(d, refs), ResultingProgress: next, TransitionID: transition}
-		return nil
+		return finish()
 	})
 	if err != nil {
 		return CaptureReceipt{}, err

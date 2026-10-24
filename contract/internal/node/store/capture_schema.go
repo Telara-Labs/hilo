@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS capture_transition_page(transition_id TEXT NOT NULL R
 `
 
 func (s *Store) initializeCapture(ctx context.Context) error {
-	if _, e := s.conn.ExecContext(ctx, captureSchema); e != nil {
+	if _, e := s.conn.ExecContext(ctx, captureSchema+spoolSchema); e != nil {
 		return failure("storage_error")
 	}
 	var id string
