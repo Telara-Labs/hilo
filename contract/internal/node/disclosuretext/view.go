@@ -12,7 +12,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-const RendererVersion = "quoted-local/1;xtext=0.43.0;unicode=15.0.0;empty=neutral/1;tenant-overlay=post-normalize/1;assembled-policy/1"
+const RendererVersion = "quoted-local/1;xtext=0.43.0;unicode=15.0.0;empty=neutral/1;tenant-overlay=post-normalize/1;assembled-policy/2"
 const ClassifierVersion = "possible-recall-field/1;" + RendererVersion
 const MaxViewValue = 2 << 20
 const MaxViewOperation = 64 << 20
@@ -31,7 +31,7 @@ func Capability() error {
 
 // WorkBudget is per operation and must be shared across ALL typed values.
 // It counts full transforms, not fitted prefixes. Zero starts a fresh budget.
-type WorkBudget struct{ bytes, candidates int }
+type WorkBudget struct{ bytes, candidates, assemblyMatches int }
 
 func normalize(value string, b *WorkBudget) (string, bool, error) {
 	return normalizeOverlay(value, b, localpolicy.Overlay{})

@@ -11,7 +11,7 @@ import (
 
 func TestTenantOverlayAfterCompleteDisplayNormalization(t *testing.T) {
 	policy := &record.PolicyBody{Redaction: record.PolicyRedact{Shapes: []record.Shape{{Name: "secret", RE2: `tenant-secret-(123|office|café)`}}}}
-	overlay, err := localpolicy.TenantOverlay(policy)
+	overlay, err := NewAssemblyPolicy(policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestTenantOverlayAfterCompleteDisplayNormalization(t *testing.T) {
 			if err != nil || overlay.Text(raw) == raw {
 				t.Fatal("fixture did not reconstruct policy match", raw, err)
 			}
-			p, err := PrepareField(FieldInput{Family: "goal", Value: input, Overlay: overlay}, &WorkBudget{})
+			p, err := PrepareField(FieldInput{Family: "goal", Value: input, Overlay: overlay.FieldOverlay()}, &WorkBudget{})
 			if err != nil || p.ProjectionValue() != "[REDACTED]" {
 				t.Fatal("unsafe projection", p.ProjectionValue(), err)
 			}

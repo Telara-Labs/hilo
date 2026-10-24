@@ -6,7 +6,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
 
@@ -28,7 +27,7 @@ type CountSummary struct {
 	RecordUnits, TotalUnits, SearchableUnits, ExcludedUnits, UnclassifiedUnits, RecordsWithExclusions *int64
 }
 type RenderInput struct {
-	Overlay          localpolicy.Overlay
+	Overlay          AssemblyPolicy
 	CallRef, Nonce   string
 	Items            []RenderItem
 	Budget           ByteBudget
@@ -148,24 +147,16 @@ func Render(in RenderInput) (RenderResult, error) {
 		return out, fail("budget_too_small")
 	}
 	work := WorkBudget{}
-	seen := map[string]bool{}
 	flags := map[string]bool{}
+	prepared, err := prepareReplyAssembly(in, &work, flags)
+	if err != nil {
+		return out, err
+	}
 	// Reserve a fixed bounded omission line, even if every item ultimately fits.
 	const omitReserve = 192
 	for i, item := range in.Items {
-		if !record.IsHex64(item.LID) || !record.IsHex64(item.ID) || seen[item.LID+"@"+item.ID] || len(item.Fields) > 4096 {
-			return out, fail("outcome_render_unavailable")
-		}
-		seen[item.LID+"@"+item.ID] = true
-		labels := []string{item.Labels.Source, item.Labels.Kind, item.Labels.Signature, item.Labels.Coverage, item.Labels.Trust, item.Labels.Evidence}
-		for j, v := range labels {
-			s, stripped, e := normalizeOverlay(v, &work, in.Overlay)
-			if e != nil {
-				return out, e
-			}
-			if stripped {
-				flags["controls_stripped"] = true
-			}
+		labels := prepared[i].labels
+		for j, s := range labels {
 			s, tr := fitRunes(s, 256)
 			if tr {
 				flags["truncated"] = true
@@ -183,46 +174,12 @@ func Render(in RenderInput) (RenderResult, error) {
 		var body strings.Builder
 		type sourceSpan struct{ start, end, field int }
 		var spans []sourceSpan
-		keys := map[string]bool{}
-		values := make([]string, len(item.Fields))
-		for fi, f := range item.Fields {
-			if !fieldFamilies[f.Family] || f.Ordinal < 0 || f.Ordinal > 4095 {
-				return out, fail("unsupported_field")
-			}
-			key := f.Family + "/" + strconv.Itoa(f.Ordinal)
-			if keys[key] {
-				return out, fail("unsupported_field")
-			}
-			keys[key] = true
-			s, stripped, e := normalizeOverlay(f.Value, &work, in.Overlay)
-			if e != nil {
-				return out, e
-			}
-			if stripped {
-				flags["controls_stripped"] = true
-			}
-			if instructionShape(s) {
-				flags["instruction_shaped"] = true
-			}
-			// Escape into a bounded buffer only after complete transformation.
-			// At most six ASCII bytes are produced per input byte.
-			if len(s) > MaxViewValue {
-				return out, fail("render_limit")
-			}
-			values[fi] = s
-		}
-		assembly, e := CheckAssembly(values, in.Overlay, &work)
-		if e != nil {
-			return out, e
-		}
-		if assembly.Restricted {
-			for _, span := range assembly.Spans {
-				values[span.Field] = ""
-			}
+		values := prepared[i].values
+		if prepared[i].withheld {
 			body.WriteString("    | Content withheld by current policy.\n")
 		}
 		for fi, s := range values {
-			if assembly.Restricted || s == "" {
+			if s == "" {
 				continue
 			}
 			lines := strings.Split(s, "\n")
@@ -294,6 +251,90 @@ func Render(in RenderInput) (RenderResult, error) {
 	}
 	out.Text = b.String()
 	return out, nil
+}
+
+// preparedRenderItem contains detached views only. Source coordinates are kept
+// through normalization and policy removal, before any escaping or byte fitting.
+type preparedRenderItem struct {
+	labels   []string
+	values   []string
+	withheld bool
+}
+
+func prepareReplyAssembly(in RenderInput, work *WorkBudget, flags map[string]bool) ([]preparedRenderItem, error) {
+	prepared := make([]preparedRenderItem, len(in.Items))
+	type source struct {
+		item, field int
+		label       bool
+	}
+	var sources []source
+	var values []string
+	seen := map[string]bool{}
+	add := func(value string, src source) (string, error) {
+		s, stripped, err := normalizeOverlay(value, work, in.Overlay.FieldOverlay())
+		if err != nil {
+			return "", err
+		}
+		if stripped {
+			flags["controls_stripped"] = true
+		}
+		if !src.label && instructionShape(s) {
+			flags["instruction_shaped"] = true
+		}
+		values = append(values, s)
+		sources = append(sources, src)
+		return s, nil
+	}
+	for i, item := range in.Items {
+		if !record.IsHex64(item.LID) || !record.IsHex64(item.ID) || seen[item.LID+"@"+item.ID] || len(item.Fields) > 4096 {
+			return nil, fail("outcome_render_unavailable")
+		}
+		seen[item.LID+"@"+item.ID] = true
+		if item.TaskID != "" && !record.IsUUIDv4(item.TaskID) {
+			return nil, fail("outcome_render_unavailable")
+		}
+		p := &prepared[i]
+		p.labels = []string{item.Labels.Source, item.Labels.Kind, item.Labels.Signature, item.Labels.Coverage, item.Labels.Trust, item.Labels.Evidence}
+		for j, v := range p.labels {
+			s, err := add(v, source{i, j, true})
+			if err != nil {
+				return nil, err
+			}
+			p.labels[j] = s
+		}
+		p.values = make([]string, len(item.Fields))
+		keys := map[string]bool{}
+		for j, f := range item.Fields {
+			if !fieldFamilies[f.Family] || f.Ordinal < 0 || f.Ordinal > 4095 {
+				return nil, fail("unsupported_field")
+			}
+			key := f.Family + "/" + strconv.Itoa(f.Ordinal)
+			if keys[key] {
+				return nil, fail("unsupported_field")
+			}
+			keys[key] = true
+			s, err := add(f.Value, source{i, j, false})
+			if err != nil {
+				return nil, err
+			}
+			p.values[j] = s
+		}
+	}
+	assembly, err := CheckAssembly(values, in.Overlay, work)
+	if err != nil {
+		return nil, err
+	}
+	for _, index := range assembly.Suppressed {
+		src := sources[index]
+		p := &prepared[src.item]
+		p.withheld = true
+		if src.label {
+			p.labels[src.field] = ""
+		} else {
+			p.values[src.field] = ""
+		}
+	}
+	return prepared, nil
 }
 
 func renderCounts(c CountSummary) (string, error) {

@@ -180,7 +180,8 @@ func (d *databaseState) classifyFields() error {
 	if e != nil {
 		return failure("ruleset_unavailable")
 	}
-	overlay, e := localpolicy.TenantOverlay(d.tenant.body())
+	assemblyPolicy, e := disclosuretext.NewAssemblyPolicy(d.tenant.body())
+	overlay := assemblyPolicy.FieldOverlay()
 	if e != nil {
 		return failure("policy_violation")
 	}
@@ -295,7 +296,7 @@ func (d *databaseState) classifyFields() error {
 				values[i] = f.projection
 			}
 		}
-		assembly, err := disclosuretext.CheckAssembly(values, overlay, work)
+		assembly, err := disclosuretext.CheckAssembly(values, assemblyPolicy, work)
 		if err != nil || assembly.Restricted {
 			exclude := func(i int) {
 				fields[i].class = disclosuretext.ClassificationUnavailable
@@ -312,8 +313,8 @@ func (d *databaseState) classifyFields() error {
 					}
 				}
 			} else {
-				for _, span := range assembly.Spans {
-					exclude(span.Field)
+				for _, i := range assembly.Suppressed {
+					exclude(i)
 				}
 			}
 		}

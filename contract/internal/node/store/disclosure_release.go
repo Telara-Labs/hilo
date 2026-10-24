@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosuretext"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/replay"
 	"github.com/Telara-Labs/telara-memory/contract/view"
@@ -401,7 +400,7 @@ func (e *DisclosureEngine) prepareRender(ctx context.Context, d *databaseState, 
 			r.warnings = appendUnique(r.warnings, "cursor_expired")
 		}
 	}
-	overlay, err := localpolicy.TenantOverlay(d.tenant.body())
+	overlay, err := disclosuretext.NewAssemblyPolicy(d.tenant.body())
 	if err != nil {
 		return nil, failure("policy_violation")
 	}
