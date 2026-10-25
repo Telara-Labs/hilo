@@ -1,5 +1,5 @@
 {
-  "Contract": "mnc/2.0",
+  "Contract": "mnc/3.0",
   "Status": "INCOMPLETE",
   "Vectors": [
     {
@@ -15,12 +15,15 @@
     {
       "ID": "V3",
       "Status": "PASS",
-      "PureTests": 2
+      "PureTests": 7
     },
     {
       "ID": "V4",
-      "Status": "PASS",
-      "PureTests": 5
+      "Status": "INCOMPLETE",
+      "PureTests": 8,
+      "adapter_required": [
+        "Durable transition-to-seal lookup before every producer, unknown/erased settlement never resealed, internal RNG failure leaves no progress/candidate, actual exact-id erasure and managed secret scrub across every body/config producer."
+      ]
     },
     {
       "ID": "V5",
@@ -45,7 +48,7 @@
     {
       "ID": "V9",
       "Status": "PASS",
-      "PureTests": 1
+      "PureTests": 3
     },
     {
       "ID": "V10",
@@ -54,8 +57,11 @@
     },
     {
       "ID": "V11",
-      "Status": "PASS",
-      "PureTests": 1
+      "Status": "INCOMPLETE",
+      "PureTests": 5,
+      "adapter_required": [
+        "Real two-device event control with unknown issuer chunk, durable membership/pending-owner blocks, supplemental controls and invalid late-body no-side-effect admission under the erasure fence, restart and no early ACK."
+      ]
     },
     {
       "ID": "V12",
@@ -73,12 +79,12 @@
     {
       "ID": "V14",
       "Status": "PASS",
-      "PureTests": 1
+      "PureTests": 2
     },
     {
       "ID": "V15",
       "Status": "PASS",
-      "PureTests": 3
+      "PureTests": 6
     },
     {
       "ID": "V16",
@@ -91,15 +97,18 @@
     {
       "ID": "V17",
       "Status": "INCOMPLETE",
-      "PureTests": 1,
+      "PureTests": 3,
       "adapter_required": [
         "Node crash/restart after each persisted page, ctl_pending replay and transaction rollback."
       ]
     },
     {
       "ID": "V18",
-      "Status": "PASS",
-      "PureTests": 1
+      "Status": "INCOMPLETE",
+      "PureTests": 5,
+      "adapter_required": [
+        "Actual configured TLS login/control freshness validation, FULL durable floor/equivocation facts, one active tenant, policy issuance exact retry and complete configuration/salt scrub on replacement/logout."
+      ]
     },
     {
       "ID": "V19",
@@ -112,9 +121,10 @@
     {
       "ID": "V20",
       "Status": "INCOMPLETE",
-      "PureTests": 3,
+      "PureTests": 6,
       "adapter_required": [
-        "Node age transfer must use verified device EKs; backup must use sole scrypt recipient. Restore after co-signed device_add and verify signed manifest before atomic exposure union and data admission."
+        "Node age transfer must use verified device EKs; backup must use sole scrypt recipient. Restore after co-signed device_add and verify signed manifest before atomic exposure union and data admission.",
+        "Actual signed encrypted no-event checkpoint plus CallBody full recursive dependency transfer/restore, all managed unopened bundle/staging indexes rebuilt and scrubbed before erasure ACK, current policy rechecked independently on export/import."
       ]
     },
     {
@@ -136,15 +146,16 @@
       "PureTests": 0,
       "adapter_required": [
         "Node modernc.org/sqlite v1.60.1 must verify FTS5 secure-delete config1 at open and planted token absence in DB WAL and shadow tables after FULL-synchronous erasure. Contract module has no database.",
-        "Contract2 event salts and nonce intermediates must be absent from every persisted equality workspace, cache, diagnostic and erased event copy; recapture tombs apply before sealing."
+        "Contract3 independent body/event/call/policy salts and commitment intermediates must be absent from every persisted equality workspace, cache, diagnostic and erased event copy; recapture tombs apply before sealing."
       ]
     },
     {
       "ID": "V24",
       "Status": "INCOMPLETE",
-      "PureTests": 2,
+      "PureTests": 6,
       "adapter_required": [
-        "Node must atomically persist mutation, original tool/args, exposure, render version, dedup generation and confirmation with actual store transactions."
+        "Node must atomically persist mutation, original tool/args, exposure, render version, dedup generation and confirmation with actual store transactions.",
+        "Credential-bound initialize token issuance and consumption persisted atomically with mutation/CallBody/key/deps/outcome, competing retries/restart, uniform keyless result after actual secret scrub; no fallback for unknown supplied token."
       ]
     },
     {

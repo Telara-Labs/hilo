@@ -3,3 +3,7 @@ V2 PASS
 V3 PASS
 V4 PASS
 V5 PASS
+Worked examples and signed exposure manifest PASS
+Historical major-2 integrity PASS
+V6 PASS
+V7 PASS
