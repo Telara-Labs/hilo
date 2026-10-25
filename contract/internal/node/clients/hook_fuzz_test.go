@@ -101,6 +101,18 @@ var allowedHookValues = map[string]bool{"hook_event_name": true, "session_id": t
 	"conversation_id": true, "generation_id": true, "cursor_version": true, "workspace_roots": true, "turn_id": true,
 	"source": true, "reason": true, "status": true}
 
+// containedInKept reports whether s occurs inside a value that may be
+// published, so finding s in the spool does not prove it was copied from its
+// own member.
+func containedInKept(keep map[string]bool, s string) bool {
+	for k := range keep {
+		if strings.Contains(k, s) {
+			return true
+		}
+	}
+	return false
+}
+
 // FuzzRunHookPayload drives the native hook entry point with arbitrary
 // client payloads. Published signals must parse under the consumer's
 // rules, round-trip, and never carry a value from a non-identity member.
@@ -155,7 +167,7 @@ func FuzzRunHookPayload(f *testing.F) {
 				continue
 			}
 			var s string
-			if json.Unmarshal(v, &s) != nil || len(s) < 12 || keep[s] {
+			if json.Unmarshal(v, &s) != nil || len(s) < 12 || keep[s] || containedInKept(keep, s) {
 				continue
 			}
 			if bytes.Contains(spooled, []byte(s)) {

@@ -22,12 +22,19 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/install/installtest"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 )
 
 var binary, driver string
 
 func TestMain(m *testing.M) {
+	// Built binaries and install fixtures must sit under a root the installer
+	// trusts; the shared Linux /tmp is not one.
+	cleanup, e := installtest.UsePrivateTempRoot()
+	if e != nil {
+		panic(e)
+	}
 	dir, e := os.MkdirTemp("", "memory-process-binaries-")
 	if e != nil {
 		panic(e)
@@ -45,11 +52,13 @@ func TestMain(m *testing.M) {
 		if out, e := cmd.CombinedOutput(); e != nil {
 			fmt.Fprintf(os.Stderr, "build %v %s", e, out)
 			os.RemoveAll(dir)
+			cleanup()
 			os.Exit(1)
 		}
 	}
 	code := m.Run()
 	os.RemoveAll(dir)
+	cleanup()
 	os.Exit(code)
 }
 
