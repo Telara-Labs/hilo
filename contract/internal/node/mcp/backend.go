@@ -22,7 +22,10 @@ func result(text string, bad bool) Result { return Result{bad, []Content{{"text"
 
 // Backend exposes only the store-owned disclosure kernel. Fixture callback
 // stores, signers and renderers are isolated in internal/fixture for old tests.
-type Backend struct{ disclosure *DisclosureAdapter }
+type Backend struct {
+	disclosure *DisclosureAdapter
+	control    *ownerControl
+}
 type Metadata = daemon.Metadata
 type Native = daemon.Native
 

@@ -4,6 +4,8 @@ package vault
 
 import "context"
 
+func init() { nativeCustody = false }
+
 // Security.framework requires the native bridge in cgo builds. Static builds
 // remain useful for diagnostics but explicitly refuse installed key custody.
 func (*Vault) put(context.Context, string, []byte) error   { return ErrUnavailable }

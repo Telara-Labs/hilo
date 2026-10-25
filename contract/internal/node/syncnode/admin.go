@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
 	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
@@ -255,4 +256,34 @@ func validRefresh(s string) bool {
 		return false
 	}
 	return !strings.ContainsAny(s, "\r\n\t ")
+}
+
+// Blockers lists the durable reasons sync is not making progress, in a fixed
+// order, from a status report alone. An unconfigured profile has none: sync
+// is simply off. The last round failure code is reported verbatim, for example
+// sync_hosted_log_unavailable when the hosted control log is absent.
+func Blockers(r StatusReport, now time.Time) []string {
+	out := []string{}
+	if !r.Configured {
+		return out
+	}
+	if !r.Enrolled {
+		out = append(out, "not_enrolled")
+	}
+	if !r.Enabled {
+		out = append(out, "disabled")
+	}
+	if r.Enrolled && r.GrantExpiresAt > 0 && now.Unix() >= r.GrantExpiresAt {
+		out = append(out, "grant_expired")
+	}
+	if r.BarrierReason != "" {
+		out = append(out, ErrControlBlocked.Error()+":"+r.BarrierReason)
+	}
+	if r.LastError != "" && r.LastError != "cancelled" {
+		out = append(out, r.LastError)
+	}
+	if r.Quarantined > 0 {
+		out = append(out, "hosted_data_quarantined")
+	}
+	return out
 }

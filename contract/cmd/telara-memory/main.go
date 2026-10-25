@@ -29,6 +29,10 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 		return runClients(ctx, args[1:], out)
 	case "sync":
 		return runSync(ctx, args[1:], in, out)
+	case "erase":
+		return runErase(ctx, args[1:], in, out)
+	case "doctor":
+		return runDoctor(ctx, args[1:], out)
 	case "daemon", "managed-daemon", "shim", "install", "uninstall", "status", "register", "start", "stop", "upgrade":
 		return runService(ctx, args, out, in)
 	default:
@@ -51,6 +55,10 @@ func publicCode(e error) string {
 	var refused *shim.AutostartError
 	if errors.As(e, &refused) {
 		return refused.Error()
+	}
+	var fixed publicError
+	if errors.As(e, &fixed) {
+		return fixed.Error()
 	}
 	for _, code := range []error{install.ErrUnavailable, install.ErrStopped, install.ErrUnverified, install.ErrUnsafe, install.ErrUpgrade, daemon.ErrSettlement,
 		clients.ErrOptions, clients.ErrUnsafe, clients.ErrConflict, clients.ErrMalformed, clients.ErrBusy, vault.ErrKeychainUnavailable, vault.ErrUnavailable,

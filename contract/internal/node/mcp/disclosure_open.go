@@ -76,7 +76,16 @@ func Open(ctx context.Context, dir string, provider RuntimeProvider) (*Backend, 
 		_ = st.Close()
 		return nil, err
 	}
-	return NewDisclosure(service, source, startSync(ctx, dir, st, runtime, closeStore)), nil
+	control := newOwnerControl(st, runtime.CaptureKeys)
+	stop := startSync(ctx, dir, st, runtime, closeStore)
+	backend := NewDisclosure(service, source, func() error {
+		// The signing copy is cleared before the store closes; a retried
+		// close finds it already cleared.
+		control.clear()
+		return stop()
+	})
+	backend.control = control
+	return backend, nil
 }
 
 // startSync runs the hosted metadata sync worker under this backend. Sync is a

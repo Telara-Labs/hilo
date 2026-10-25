@@ -143,6 +143,12 @@ func (s *Store) clock(ctx context.Context) (*policy.Clock, error) {
 	return s.policyClock, nil
 }
 func (s *Store) tenant(ctx context.Context) (*tenantState, error) {
+	return s.tenantWith(ctx, s.clock)
+}
+
+// tenantWith evaluates the installed policy chain with the supplied clock
+// source. Admission uses the persisting clock; read-only inspection does not.
+func (s *Store) tenantWith(ctx context.Context, clockOf func(context.Context) (*policy.Clock, error)) (*tenantState, error) {
 	t := &tenantState{}
 	var seq int64
 	var id string
@@ -178,7 +184,7 @@ func (s *Store) tenant(ctx context.Context) (*tenantState, error) {
 			}
 		}
 	}
-	clock, err := s.clock(ctx)
+	clock, err := clockOf(ctx)
 	if err != nil {
 		return nil, err
 	}

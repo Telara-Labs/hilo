@@ -61,6 +61,17 @@ func (s *Store) Append(ctx context.Context, in SignedRecord) (AdmissionResult, e
 	}
 	var result AdmissionResult
 	err = s.write(ctx, func() error {
+		var e error
+		result, e = s.appendLocked(ctx, r, signatures)
+		return e
+	})
+	return result, err
+}
+
+// appendLocked is the admission body. The caller holds the store writer.
+func (s *Store) appendLocked(ctx context.Context, r *record.Record, signatures []record.Signature) (AdmissionResult, error) {
+	var result AdmissionResult
+	err := func() error {
 		if held, e := s.guarded(ctx); e != nil {
 			return e
 		} else if held {
@@ -113,7 +124,7 @@ func (s *Store) Append(ctx context.Context, in SignedRecord) (AdmissionResult, e
 		}
 		result = AdmissionResult{ID: r.ID, Sequence: x.seq, Generation: x.generation, State: x.state}
 		return nil
-	})
+	}()
 	return result, err
 }
 func boolInt(v bool) int {

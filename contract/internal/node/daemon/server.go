@@ -65,6 +65,13 @@ type Backend interface {
 	Handle(context.Context, ipc.Hello, Request) Response
 	Close() error
 }
+
+// ControlBackend serves owner control methods on direct control connections.
+// It reports false for a method it does not implement.
+type ControlBackend interface {
+	Control(context.Context, Request) (Response, bool)
+}
+
 type Opener func(context.Context) (Backend, error)
 type custodyHandoffKey struct{}
 
@@ -577,6 +584,17 @@ func serveBound(parent context.Context, c net.Conn, backend Backend, life *lifec
 				out = Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"state": "running", "pid": os.Getpid(), "store_wired": storeWired(backend), "autostart": "reported_by_install_status"}}
 				if source, ok := backend.(interface{ CaptureStats() map[string]uint64 }); ok {
 					out.Result.(map[string]any)["capture"] = source.CaptureStats()
+				}
+			} else if h.Kind == "control" {
+				// Owner control methods (erasure, scrub) are served only on a
+				// direct control connection, never for a forwarded request.
+				out = Error(req.ID, "unsupported_control")
+				if owner, ok := backend.(ControlBackend); ok && len(req.OriginalID) == 0 {
+					if r, handled := owner.Control(flight.Context, req); handled {
+						out = r
+						out.JSONRPC = "2.0"
+						out.ID = req.ID
+					}
 				}
 			} else if h.Kind != "mcp" {
 				out = Error(req.ID, "unsupported_control")
