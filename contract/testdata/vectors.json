@@ -148,9 +148,19 @@
         {
           "package": "./sig",
           "run": "^Test(Keyring|Tenant|CompromiseAndLosingRotationDescendants|StateOperationSnapshotsDetached|OpsAccessorDetached|ConflictRetirementNeverRevivesLosingRotator|DuplicateKeyOpCannotDowngradeIssuer)"
+        },
+        {
+          "package": "./sig",
+          "run": "^TestV6PossessionBootstrapVector$"
+        },
+        {
+          "package": "./conformance",
+          "run": "^TestKeyringVectors$"
         }
       ],
-      "fixtures": [],
+      "fixtures": [
+        "v06-possession-bootstrap.json"
+      ],
       "adapter_required": []
     },
     {
@@ -160,6 +170,10 @@
         {
           "package": "./sig",
           "run": "^TestValidityAcrossRevocation$"
+        },
+        {
+          "package": "./conformance",
+          "run": "^TestKeyringVectors$"
         }
       ],
       "fixtures": [],
@@ -673,6 +687,7 @@
     "v05-signature.json": "2e9bc49d27855db4440dc52884358189738ef230dea81c77f088db52c10abb39",
     "v15-matrix.json": "3621921eac204db397e9b44664ba94fb1e772808b4c54d2065a9db7665897bd2",
     "v20-exposures.json": "456ce14ffa4cf721fffff7487af0a85107fa3cec7830f6909d52ce28a9554655",
-    "v03-task-status.json": "b484d1a2be6f209370a025b06945833e2b7b83cb6af28380ffa173f3aa0a7041"
+    "v03-task-status.json": "b484d1a2be6f209370a025b06945833e2b7b83cb6af28380ffa173f3aa0a7041",
+    "v06-possession-bootstrap.json": "a3e228b31be5c44d8c30fb039df7ed451e01b9b91cfa8d96d4813e51a4aa60ff"
   }
 }

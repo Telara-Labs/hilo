@@ -7,3 +7,4 @@ Worked examples and signed exposure manifest PASS
 Historical major-2 integrity PASS
 V6 PASS
 V7 PASS
+V6 possession bootstrap PASS

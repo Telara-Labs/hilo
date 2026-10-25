@@ -5,6 +5,9 @@ V6 (key operations, possession bootstrap, deterministic key state) and V7
 (validity across rotation and revocation) reimplement contract sections
 4.3-4.6 from the signed bytes in v06-v07-keyring.json and compare against the
 committed expected document. --results writes the canonical result bytes.
+The possession-bootstrap vector in testdata/v06-possession-bootstrap.json is
+checked with the same keyring: every case status and every arrival order of
+the bootstrap ops.
 """
 import argparse
 import base64
@@ -666,5 +669,54 @@ for name, want in expected['v7'].items():
     assert v7.get(name) == want, 'v7 %s: python %r, expected %r' % (name, v7.get(name), want)
 assert results == kf['expected_jcs'].encode(), 'canonical V6/V7 result bytes differ'
 print('V7 PASS')
+
+# ---- V6 possession bootstrap (contract sections 4.3 and 4.6) ----
+# genesis: one signature by its own subject. device_add: subject possession
+# plus one active device of the same genesis in the op's history. tenant_key:
+# exactly one subject signature, empty parents, accepted only from a pinned
+# TLS login naming the same tenant and role.
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from itertools import permutations
+pb = load('v06-possession-bootstrap.json')
+assert pb['contract'] == 'mnc/3.0'
+for k in pb['keys']:
+    seed = bytes.fromhex(k['test_seed_hex'])
+    assert len(seed) == 32, k['name']
+    raw = Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    assert b64(raw) == k['pub'] and key_id(raw) == k['key_id'], k['name']
+pb_ops = {}
+for o in pb['ops']:
+    assert o['name'] not in pb_ops, o['name']
+    assert digest(o['header_jcs'].encode()) == o['id'], o['name']
+    pb_ops[o['name']] = o
+pb_used = set()
+for c in pb['cases']:
+    kr = Keyring(pb['pinned_genesis'])
+    for n in c['prior']:
+        prior = kr.add(pb_ops[n])
+        assert kr.state()['status'][prior.id] == 'authorized', c['name'] + ' prior ' + n
+    pb_used.add(c['op'])
+    try:
+        added_op = kr.add(pb_ops[c['op']])
+        got = kr.state()['status'][added_op.id]
+    except Rejected:
+        got = 'invalid'
+    assert got == c['expected'], '%s: python %r, expected %r' % (c['name'], got, c['expected'])
+assert pb_used == set(pb_ops), 'ops not exercised: %s' % sorted(set(pb_ops) - pb_used)
+boot = pb['bootstrap']
+for order in permutations(boot['ops']):
+    kr = Keyring(pb['pinned_genesis'])
+    for n in order:
+        kr.add(pb_ops[n])
+    st = kr.state()
+    for n, want in boot['expected'].items():
+        assert st['status'][pb_ops[n]['id']] == want, '%s in %s' % (n, order)
+    assert len(st['keys']) == len(boot['keys']), order
+    for want in boot['keys']:
+        k = key_for(st, want['key_id'], want['role'], want['domain'])
+        assert k is not None and k.status == want['status'] and k.machine == want['machine_id'], (want, order)
+        assert want['role'] != 'device' or want['domain'] == st['genesis']
+print('V6 possession bootstrap PASS')
 if args.results:
     Path(args.results).write_bytes(results)

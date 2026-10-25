@@ -24,7 +24,7 @@ func RedactionCorpusV1() []byte { return []byte(redactionCorpusV1) }
 func RedactionGoldenV1() []byte { return []byte(redactionGoldenV1) }
 
 // ConformanceRegistryDigest pins the registry and its referenced fixture hashes.
-const ConformanceRegistryDigest = "4ee912327ea630c223545e232607924b043a901223edee1b8f28e19b335c9f2f"
+const ConformanceRegistryDigest = "7c540ff8f07d94f98f55ee72530656c85e22ecacd52c7fa7d54dcdd6e11d7c6d"
 
 //go:embed testdata/vectors.json
 var conformanceRegistry string

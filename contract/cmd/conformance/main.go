@@ -54,6 +54,8 @@ func main() {
 		panic(err)
 	}
 	allowed := map[string]bool{".": true, "./jcs": true, "./record": true, "./sig": true, "./heads": true, "./invalidate": true, "./policy": true, "./view": true, "./transport": true, "./replay": true,
+		// Cross-language fixture pinned by the Go verifier; the Python runner checks the same bytes.
+		"./conformance": true,
 		// Node adapter tests run the actual SQLite store and the installed command.
 		"./internal/node/bundle": true, "./internal/node/store": true, "./internal/node/syncnode": true, "./cmd/telara-memory": true}
 	out := []result{}
