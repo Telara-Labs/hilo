@@ -232,7 +232,7 @@ func (w *Worker) round(ctx context.Context, p Profile, client *nodesync.Client, 
 	if err = w.pullControl(ctx, client, ob.dest, c.Ctl, reply.CtlHead); err != nil {
 		return err
 	}
-	blocked, err := w.enforce(ctx, ob.dest)
+	blocked, err := w.enforce(ctx, ob.dest, p.Device)
 	if err != nil {
 		return err
 	}
@@ -310,31 +310,82 @@ func checkPage(page transport.Page, class string, pos, head int64) error {
 // enforce applies fetched controls strictly in hseq order. The first control
 // that is unknown, of a higher version, undecodable or refused by the store is
 // a barrier: it stays pending and ctl_cursor stays below it.
-func (w *Worker) enforce(ctx context.Context, dest string) (bool, error) {
+//
+// A control the store admitted while it still reports the owner blocked, such
+// as an erasure whose event coverage is pending, is not yet enforced. Later
+// recognized controls are still applied, so a supplement can complete it, but
+// ctl_cursor advances only through the contiguous prefix that is complete.
+func (w *Worker) enforce(ctx context.Context, dest, device string) (bool, error) {
+	var after, held int64
+	var applied []int64
 	for {
-		pending, err := w.state.pendingControls(ctx, dest, 64)
+		pending, err := w.state.pendingControls(ctx, dest, after, 64)
 		if err != nil {
 			return false, err
 		}
 		if len(pending) == 0 {
-			return false, nil
+			break
 		}
 		for _, c := range pending {
-			reason := w.applyControl(ctx, c)
+			after = c.HSeq
+			reason := w.applyControl(ctx, c, device)
 			if ctx.Err() != nil {
 				return false, ctx.Err()
 			}
 			if reason != "" {
-				return true, w.state.blockControl(ctx, dest, c.HSeq, reason)
+				if err = w.state.blockControl(ctx, dest, c.HSeq, reason); err != nil || held == 0 {
+					return true, err
+				}
+				return true, w.state.blockControl(ctx, dest, held, "coverage_pending")
 			}
-			if err = w.state.completeControl(ctx, dest, c.HSeq); err != nil {
+			incomplete, err := w.enforcementIncomplete(ctx, c.Envelope.ID)
+			if err != nil {
 				return false, err
 			}
+			applied = append(applied, c.HSeq)
+			if incomplete {
+				if held == 0 {
+					held = c.HSeq
+				}
+				continue
+			}
+			for _, h := range applied {
+				if err = w.state.completeControl(ctx, dest, h); err != nil {
+					return false, err
+				}
+			}
+			applied, held = nil, 0
 		}
 	}
+	if held != 0 {
+		return true, w.state.blockControl(ctx, dest, held, "coverage_pending")
+	}
+	return false, nil
 }
 
-func (w *Worker) applyControl(ctx context.Context, c pendingControl) string {
+// enforcementIncomplete reports whether the store still holds the owner
+// blocked after a control, which a coverage-pending erasure does until a
+// supplement or the missing membership completes it.
+func (w *Worker) enforcementIncomplete(ctx context.Context, id string) (bool, error) {
+	if !record.IsHex64(id) {
+		return false, nil
+	}
+	_, err := w.cfg.Store.Snapshot(ctx, store.ReadRequest{IDs: []string{id}})
+	var e *store.Error
+	if errors.As(err, &e) && e.OwnerBlocked {
+		return true, nil
+	}
+	return false, err
+}
+
+// controlImporter is implemented by the node store. It admits erasure and
+// retraction controls signed by another enrolled device of the pinned
+// genesis, which ordinary local admission refuses by author machine.
+type controlImporter interface {
+	ImportBundle(context.Context, store.BundleImport) (store.BundleImportReport, error)
+}
+
+func (w *Worker) applyControl(ctx context.Context, c pendingControl, device string) string {
 	r, err := transport.CheckEnvelope(c.Envelope, c.Body)
 	if err != nil {
 		if c.Envelope.V != record.Version {
@@ -348,7 +399,12 @@ func (w *Worker) applyControl(ctx context.Context, c pendingControl) string {
 	in := store.SignedRecord{HeaderJCS: r.HeaderJCS, BodyJCS: r.BodyJCS, Sigs: c.Envelope.Sigs, AdvisoryID: r.ID}
 	switch r.Header.Type {
 	case record.KindErasure, record.KindRetraction:
-		_, err = w.cfg.Store.ApplyControl(ctx, in)
+		imp, ok := w.cfg.Store.(controlImporter)
+		if r.Header.Author.MachineID != device && ok && w.cfg.Signer != nil {
+			_, err = imp.ImportBundle(ctx, store.BundleImport{LocalKeyID: w.cfg.Signer.KeyID(), Controls: []store.SignedRecord{in}})
+		} else {
+			_, err = w.cfg.Store.ApplyControl(ctx, in)
+		}
 	case record.KindPolicy:
 		_, err = w.cfg.Store.Append(ctx, in)
 	case record.KindKeyOp:

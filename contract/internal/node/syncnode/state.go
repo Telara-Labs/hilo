@@ -380,10 +380,12 @@ type pendingControl struct {
 	Body     []byte
 }
 
-func (s *State) pendingControls(ctx context.Context, dest string, limit int) ([]pendingControl, error) {
+// pendingControls returns fetched controls above both ctl_cursor and the
+// in-round position after, in hseq order.
+func (s *State) pendingControls(ctx context.Context, dest string, after int64, limit int) ([]pendingControl, error) {
 	var out []pendingControl
 	err := s.tx(ctx, func(q querier) error {
-		rows, err := q.QueryContext(ctx, "SELECT p.hseq,p.envelope,p.body FROM ctl_pending p JOIN sync_state s ON s.destination=p.destination WHERE p.destination=? AND p.hseq>s.ctl_cursor ORDER BY p.hseq LIMIT ?", dest, limit)
+		rows, err := q.QueryContext(ctx, "SELECT p.hseq,p.envelope,p.body FROM ctl_pending p JOIN sync_state s ON s.destination=p.destination WHERE p.destination=? AND p.hseq>s.ctl_cursor AND p.hseq>? ORDER BY p.hseq LIMIT ?", dest, after, limit)
 		if err != nil {
 			return errStateInvalid
 		}

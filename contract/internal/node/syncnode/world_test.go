@@ -70,6 +70,10 @@ type world struct {
 	st      *store.Store
 	key     ed25519.PrivateKey
 	genesis string
+	machine string
+	// keyring is this device's enrollment: the genesis operation, then its
+	// device_add when it joined an existing genesis.
+	keyring []store.SignedRecord
 	at      int64
 	keys    *capture.PreloadedKeyMaterial
 	vault   *memVault
@@ -85,7 +89,7 @@ func newWorld(t *testing.T) *world {
 	dir := filepath.Join(base, "data")
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32))
 	pub := key.Public().(ed25519.PublicKey)
-	w := &world{t: t, dir: dir, key: key, genesis: sig.KeyID(pub), at: 1761150000000, vault: newMemVault()}
+	w := &world{t: t, dir: dir, key: key, genesis: sig.KeyID(pub), machine: testMachine, at: 1761150000000, vault: newMemVault()}
 	w.st, err = store.Open(context.Background(), store.Options{Dir: dir, PinnedGenesisID: w.genesis, LocalMachineID: testMachine})
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +100,7 @@ func newWorld(t *testing.T) *world {
 		t.Fatal(err)
 	}
 	w.append(op.Rec, op.Sigs)
+	w.keyring = []store.SignedRecord{{HeaderJCS: op.Rec.HeaderJCS, BodyJCS: op.Rec.BodyJCS, Sigs: op.Sigs, AdvisoryID: op.Rec.ID}}
 	keys, err := capture.PreloadKeys(make([]byte, 32), key)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +122,7 @@ func (w *world) append(r *record.Record, sigs []record.Signature) store.Admissio
 func (w *world) signed(h record.Header, body any) (*record.Record, []record.Signature) {
 	w.t.Helper()
 	w.at++
-	h.Author = record.Author{MachineID: testMachine, KeyID: w.genesis}
+	h.Author = record.Author{MachineID: w.machine, KeyID: sig.KeyID(w.key.Public().(ed25519.PublicKey))}
 	h.At = w.at
 	h.Red = record.Redact{Profile: record.ProfileLocal}
 	r, err := record.Build(h, body)
@@ -183,8 +188,10 @@ func (w *world) enroll() Profile {
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	grant := w.hosted.grant
-	p := Profile{Version: ProfileVersion, Enabled: true, Genesis: w.genesis, Device: testMachine, Credential: key, Refresh: refresh, Origin: w.hosted.srv.URL, Tenant: w.hosted.tenant, User: w.hosted.user, Config: w.hosted.config, AuthIssuer: "https://auth.example", AuthKey: &jwk, ServiceKeys: []ServiceKey{w.hosted.serviceKey()}, Grant: &grant}
+	w.hosted.mu.Lock()
+	grant, _ := w.hosted.grantFor(w.machine)
+	w.hosted.mu.Unlock()
+	p := Profile{Version: ProfileVersion, Enabled: true, Genesis: w.genesis, Device: w.machine, Credential: key, Refresh: refresh, Origin: w.hosted.srv.URL, Tenant: w.hosted.tenant, User: w.hosted.user, Config: w.hosted.config, AuthIssuer: "https://auth.example", AuthKey: &jwk, ServiceKeys: []ServiceKey{w.hosted.serviceKey()}, Grant: &grant}
 	if err := SaveProfile(w.dir, p); err != nil {
 		w.t.Fatal(err)
 	}

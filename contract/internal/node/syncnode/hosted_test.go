@@ -68,11 +68,18 @@ type hosted struct {
 	acks           []transport.Ack
 	mints          int
 	failures       []string
+
+	// Further devices of the same genesis share this one log. Each has its own
+	// grant, and its ACKs are recorded per device as the fan-out view.
+	peers  map[string]ed25519.PublicKey
+	grants map[string]nodesync.MemoryGrant
+	acksBy map[string][]transport.Ack
+	onAck  func(machine string, a transport.Ack)
 }
 
 func newHosted(t *testing.T, device ed25519.PublicKey, machine string, repos []string) *hosted {
 	t.Helper()
-	h := &hosted{t: t, device: device, machine: machine, tenant: "tenant-one", user: "user-one", config: "config-one", bootstrap: "telara_mcp_bootstrap_one", seen: map[string]bool{}, receipts: map[string]record.Receipt{}, unavailable: map[string]bool{}, pageLimit: nodesync.MaxPageItems}
+	h := &hosted{t: t, device: device, machine: machine, tenant: "tenant-one", user: "user-one", config: "config-one", bootstrap: "telara_mcp_bootstrap_one", seen: map[string]bool{}, receipts: map[string]record.Receipt{}, unavailable: map[string]bool{}, pageLimit: nodesync.MaxPageItems, peers: map[string]ed25519.PublicKey{}, grants: map[string]nodesync.MemoryGrant{}, acksBy: map[string][]transport.Ack{}}
 	h.authKey, _ = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	_, h.tsk, _ = ed25519.GenerateKey(rand.Reader)
 	h.grant = nodesync.MemoryGrant{Ops: []string{"push", "pull"}, Repos: repos, Origin: "local", GenesisID: sig.KeyID(device), DeviceID: machine, ExpiresAtUnix: time.Now().Add(2 * time.Hour).Unix()}
@@ -81,6 +88,34 @@ func newHosted(t *testing.T, device ed25519.PublicKey, machine string, repos []s
 	h.srv.StartTLS()
 	t.Cleanup(h.srv.Close)
 	return h
+}
+
+// addDevice serves another enrolled device of the same genesis from this log.
+func (h *hosted) addDevice(machine string, pub ed25519.PublicKey) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	g := h.grant
+	g.DeviceID = machine
+	h.peers[machine] = pub
+	h.grants[machine] = g
+}
+
+// grantFor returns the grant of an enrolled device. The caller holds h.mu or
+// owns the fixture exclusively.
+func (h *hosted) grantFor(machine string) (nodesync.MemoryGrant, bool) {
+	if machine == h.grant.DeviceID {
+		return h.grant, true
+	}
+	g, ok := h.grants[machine]
+	return g, ok
+}
+
+func (h *hosted) deviceKey(machine string) (ed25519.PublicKey, bool) {
+	if machine == h.machine {
+		return h.device, true
+	}
+	k, ok := h.peers[machine]
+	return k, ok
 }
 
 func (h *hosted) fail(w http.ResponseWriter, status int, reason string) {
@@ -130,16 +165,24 @@ func (h *hosted) serve(w http.ResponseWriter, r *http.Request) {
 		Cnf struct {
 			JKT string `json:"jkt"`
 		} `json:"cnf"`
+		Grant struct {
+			Device string `json:"device_id"`
+		} `json:"memory_grant"`
 	}
 	if json.Unmarshal(claims, &c) != nil || c.Cnf.JKT != jkt || c.Exp <= time.Now().Unix() {
 		h.fail(w, 401, "binding")
 		return
 	}
+	machine := c.Grant.Device
+	if _, ok := h.deviceKey(machine); !ok {
+		h.fail(w, 403, "device")
+		return
+	}
 	switch {
 	case r.Method == "POST" && r.URL.Path == "/v1/memory/import":
-		h.importRecords(w, r)
+		h.importRecords(w, r, machine)
 	case r.Method == "POST" && r.URL.Path == "/sync/v1/hello":
-		h.hello(w, r)
+		h.hello(w, r, machine)
 	case r.Method == "GET" && r.URL.Path == "/sync/v1/log":
 		h.page(w, r)
 	case r.Method == "POST" && r.URL.Path == "/sync/v1/ack":
@@ -148,7 +191,13 @@ func (h *hosted) serve(w http.ResponseWriter, r *http.Request) {
 			h.fail(w, 400, "ack")
 			return
 		}
-		h.acks = append(h.acks, a)
+		if h.onAck != nil {
+			h.onAck(machine, a)
+		}
+		if machine == h.machine {
+			h.acks = append(h.acks, a)
+		}
+		h.acksBy[machine] = append(h.acksBy[machine], a)
 		_, _ = io.WriteString(w, "{}\n")
 	default:
 		h.fail(w, 404, "route")
@@ -176,13 +225,18 @@ func (h *hosted) mint(w http.ResponseWriter, r *http.Request) {
 			Expiry  string   `json:"expires_at_unix"`
 		} `json:"memory_grant"`
 	}
-	if decodeStrict(r.Body, &body) != nil || body.Grant.Genesis != h.grant.GenesisID || body.Grant.Device != h.grant.DeviceID || body.Grant.Origin != "local" {
+	if decodeStrict(r.Body, &body) != nil || body.Grant.Genesis != h.grant.GenesisID || body.Grant.Origin != "local" {
+		h.fail(w, 400, "grant")
+		return
+	}
+	grant, ok := h.grantFor(body.Grant.Device)
+	if !ok {
 		h.fail(w, 400, "grant")
 		return
 	}
 	h.mints++
 	now := time.Now().UTC().Truncate(time.Second)
-	claims := map[string]any{"exp": now.Add(10 * time.Minute).Unix(), "iat": now.Unix(), "nbf": now.Unix(), "iss": "https://auth.example", "sub": h.user, "aud": []string{"telara-mcp-session"}, "tenant_id": h.tenant, "mcp_config_id": h.config, "cnf": map[string]string{"jkt": jkt}, "memory_grant": h.grant}
+	claims := map[string]any{"exp": now.Add(10 * time.Minute).Unix(), "iat": now.Unix(), "nbf": now.Unix(), "iss": "https://auth.example", "sub": h.user, "aud": []string{"telara-mcp-session"}, "tenant_id": h.tenant, "mcp_config_id": h.config, "cnf": map[string]string{"jkt": jkt}, "memory_grant": grant}
 	token, err := signES256(h.authKey, claims)
 	if err != nil {
 		h.fail(w, 500, "sign")
@@ -192,7 +246,8 @@ func (h *hosted) mint(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"session_token": token, "expires_at": claims["exp"]})
 }
 
-func (h *hosted) importRecords(w http.ResponseWriter, r *http.Request) {
+func (h *hosted) importRecords(w http.ResponseWriter, r *http.Request, machine string) {
+	device, _ := h.deviceKey(machine)
 	raw, err := io.ReadAll(io.LimitReader(r.Body, nodesync.MaxRequestBytes+1))
 	if err != nil || len(raw) > nodesync.MaxRequestBytes {
 		h.fail(w, 413, "memory request too large")
@@ -233,16 +288,16 @@ func (h *hosted) importRecords(w http.ResponseWriter, r *http.Request) {
 			h.fail(w, 400, "profile_not_allowed")
 			return
 		}
-		if rec.Header.Author.MachineID != h.machine {
+		if rec.Header.Author.MachineID != machine {
 			h.fail(w, 400, "device_mismatch")
 			return
 		}
-		if !contains(h.grant.Repos, rec.Header.Subj.RepoID) {
+		if grant, _ := h.grantFor(machine); !contains(grant.Repos, rec.Header.Subj.RepoID) {
 			h.fail(w, 400, "repo_not_allowed")
 			return
 		}
 		message, _ := sig.RecordMessage(rec.ID)
-		if len(e.Sigs) != 1 || sig.Verify(h.device, sig.CtxRecord, message, e.Sigs[0]) != nil {
+		if len(e.Sigs) != 1 || sig.Verify(device, sig.CtxRecord, message, e.Sigs[0]) != nil {
 			h.fail(w, 400, "invalid_signature")
 			return
 		}
@@ -253,7 +308,7 @@ func (h *hosted) importRecords(w http.ResponseWriter, r *http.Request) {
 		receipt, exists := h.receipts[rec.ID]
 		if !exists {
 			h.hseq++
-			receipt, _ = sig.SignReceipt(h.tsk, record.Receipt{ID: rec.ID, Tenant: h.tenant, DeviceID: h.machine, AcceptedAt: time.Now().UnixMilli(), HSeq: h.hseq, Policy: strings.Repeat("c", 64)})
+			receipt, _ = sig.SignReceipt(h.tsk, record.Receipt{ID: rec.ID, Tenant: h.tenant, DeviceID: machine, AcceptedAt: time.Now().UnixMilli(), HSeq: h.hseq, Policy: strings.Repeat("c", 64)})
 			h.receipts[rec.ID] = receipt
 			stored := e
 			h.log = append(h.log, transport.LogItem{HSeq: h.hseq, Class: "data", Envelope: stored, Own: true})
@@ -292,13 +347,13 @@ func (h *hosted) heads() (ctl, data int64) {
 	return
 }
 
-func (h *hosted) hello(w http.ResponseWriter, r *http.Request) {
+func (h *hosted) hello(w http.ResponseWriter, r *http.Request, machine string) {
 	if h.helloStatus != 0 {
 		h.fail(w, h.helloStatus, "route")
 		return
 	}
 	var in transport.Hello
-	if decodeStrict(r.Body, &in) != nil || in.DeviceID != h.machine || in.Contract != record.ContractVersion {
+	if decodeStrict(r.Body, &in) != nil || in.DeviceID != machine || in.Contract != record.ContractVersion {
 		h.fail(w, 400, "hello")
 		return
 	}
@@ -353,6 +408,12 @@ func (h *hosted) ackList() []transport.Ack {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]transport.Ack(nil), h.acks...)
+}
+
+func (h *hosted) acksOf(machine string) []transport.Ack {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]transport.Ack(nil), h.acksBy[machine]...)
 }
 
 func (h *hosted) serviceKey() ServiceKey {
