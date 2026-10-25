@@ -122,6 +122,11 @@ func (w *Worker) export(ctx context.Context, p Profile, ob *outbox) (int, error)
 		if superseded[c.entry.Owner+"\x00"+string(h.Type)+"\x00"+h.LID+"\x00"+c.entry.ID] || !contains(p.Grant.Repos, h.Subj.RepoID) {
 			continue
 		}
+		// A record sealed under a tenant policy is pushable only while a
+		// tenant authority governs this node; after logout it stays local.
+		if h.Pol != "" && !pol.Governed {
+			continue
+		}
 		var rule *Rule
 		for i := range enabled {
 			if enabled[i].matches(h.Type, h.Subj.RepoID) {

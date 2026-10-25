@@ -29,6 +29,10 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 		return runClients(ctx, args[1:], out)
 	case "sync":
 		return runSync(ctx, args[1:], in, out)
+	case "login":
+		return runLogin(ctx, args[1:], in, out)
+	case "logout":
+		return runLogout(ctx, args[1:], out)
 	case "erase":
 		return runErase(ctx, args[1:], in, out)
 	case "bundle":
@@ -64,7 +68,8 @@ func publicCode(e error) string {
 	}
 	for _, code := range []error{install.ErrUnavailable, install.ErrStopped, install.ErrUnverified, install.ErrUnsafe, install.ErrUpgrade, daemon.ErrSettlement,
 		clients.ErrOptions, clients.ErrUnsafe, clients.ErrConflict, clients.ErrMalformed, clients.ErrBusy, vault.ErrKeychainUnavailable, vault.ErrUnavailable,
-		syncnode.ErrProfile, syncnode.ErrNotEnrolled, syncnode.ErrIdentity, syncnode.ErrCredential, syncnode.ErrEnrollment, syncnode.ErrUnsupported, syncnode.ErrRule} {
+		syncnode.ErrProfile, syncnode.ErrNotEnrolled, syncnode.ErrIdentity, syncnode.ErrCredential, syncnode.ErrEnrollment, syncnode.ErrUnsupported, syncnode.ErrRule,
+		syncnode.ErrTenantConflict, syncnode.ErrLogin, syncnode.ErrPolicyState, syncnode.ErrPolicyNotCurrent} {
 		if errors.Is(e, code) {
 			return code.Error()
 		}

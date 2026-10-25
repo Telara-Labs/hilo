@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"strings"
 	"time"
@@ -71,7 +70,9 @@ func CreateKey(ctx context.Context, dir string, vault SecretVault) (string, erro
 }
 
 // Enroll binds a hosted enrollment to the existing DPoP key and enables sync.
-// The grant must name this installation's genesis and device exactly.
+// The grant must name this installation's genesis and device exactly. An
+// enrollment to a different destination, or to a tenant other than the active
+// tenant authority, is refused until an explicit logout.
 func Enroll(ctx context.Context, dir string, vault SecretVault, e Enrollment) error {
 	defer func() { e.RefreshToken = "" }()
 	p, err := LoadProfile(dir)
@@ -81,41 +82,14 @@ func Enroll(ctx context.Context, dir string, vault SecretVault, e Enrollment) er
 	if err != nil {
 		return err
 	}
-	if e.Grant.GenesisID != p.Genesis || e.Grant.DeviceID != p.Device {
-		return ErrIdentity
+	if _, err = checkSecondLogin(ctx, dir, p, e); err != nil {
+		return err
 	}
-	if _, err := CredentialThumbprint(ctx, vault, p.Credential); err != nil {
-		return ErrCredential
-	}
-	next := p
-	next.Enabled = true
-	next.Origin, next.Tenant, next.User, next.Config = e.Origin, e.Tenant, e.User, e.Config
-	next.AuthIssuer = e.AuthIssuer
-	key := e.AuthKey
-	next.AuthKey = &key
-	next.ServiceKeys = append([]ServiceKey(nil), e.ServiceKeys...)
-	grant := e.Grant
-	next.Grant = &grant
-	if !validRefresh(e.RefreshToken) {
-		return ErrEnrollment
-	}
-	refresh, err := StoreRefresh(ctx, vault, e.RefreshToken)
+	next, err := bindProfile(ctx, vault, p, e)
 	if err != nil {
 		return err
 	}
-	next.Refresh = refresh
-	if err := next.validate(); err != nil {
-		_ = vault.Delete(ctx, refresh)
-		return ErrEnrollment
-	}
-	if err := SaveProfile(dir, next); err != nil {
-		_ = vault.Delete(ctx, refresh)
-		return err
-	}
-	if p.Refresh != "" && p.Refresh != refresh {
-		_ = vault.Delete(ctx, p.Refresh)
-	}
-	return nil
+	return commitProfile(ctx, dir, vault, p, next, e.RefreshToken)
 }
 
 // SetEnabled switches sync on or off without touching credentials or state.
@@ -138,31 +112,11 @@ func SetEnabled(dir string, enabled bool) error {
 	return SaveProfile(dir, p)
 }
 
-// Logout cancels this destination's queue, removes its cursors and fetched
-// controls, deletes both credential slots and removes the profile.
+// Logout is LogoutDetailed without the report. A logout whose physical policy
+// scrub is still pending has completed logically and returns nil.
 func Logout(ctx context.Context, dir string, vault SecretVault) error {
-	p, err := LoadProfile(dir)
-	if Disabled(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	var errs []error
-	if p.Enrolled() {
-		st, err := OpenState(ctx, dir)
-		if err != nil {
-			errs = append(errs, err)
-		} else {
-			errs = append(errs, st.purgeDestination(ctx, destination(p.Scope())))
-			errs = append(errs, st.Close())
-		}
-	}
-	errs = append(errs, DeleteCredentials(ctx, vault, p.Credential, p.Refresh))
-	if err := errors.Join(errs...); err != nil {
-		return err
-	}
-	return store.RemoveSyncProfile(dir)
+	_, err := LogoutDetailed(ctx, dir, vault)
+	return err
 }
 
 // StatusReport is the public, secret-free sync state.

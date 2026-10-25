@@ -186,7 +186,7 @@ func (a *DisclosureAdapter) issueTokens(ctx context.Context, hello ipc.Hello) ([
 
 func adapterError(err error) string {
 	switch err.Error() {
-	case "op_conflict", "not_found", "ambiguous_id", "read_only", "unsupported_filter", "unsupported_argument", "unsupported_tool", "invalid_arguments", "argument_limit", "missing_argument", "invalid_budget", "scope_resolution_unsupported", "unsafe_identity", "unauthorized", "credential_revoked", "stale_credential", "read_not_permitted", "write_not_permitted", "owner_blocked", "scope_limit", "connection_limit", "cursor_expired", "op_schema_unavailable", "privacy_hold_required", "lineage_evaluation_required", "runtime_authority_unavailable", "unissued_operation", "unsafe_operation_identity", "request_limit", "disclosure_unavailable":
+	case "op_conflict", "not_found", "ambiguous_id", "read_only", "unsupported_filter", "unsupported_argument", "unsupported_tool", "invalid_arguments", "argument_limit", "missing_argument", "invalid_budget", "scope_resolution_unsupported", "unsafe_identity", "unauthorized", "credential_revoked", "stale_credential", "read_not_permitted", "write_not_permitted", "owner_blocked", "scope_limit", "connection_limit", "cursor_expired", "op_schema_unavailable", "privacy_hold_required", "lineage_evaluation_required", "runtime_authority_unavailable", "unissued_operation", "unsafe_operation_identity", "request_limit", "disclosure_unavailable", "unavailable":
 		return err.Error()
 	}
 	return "storage_error"
