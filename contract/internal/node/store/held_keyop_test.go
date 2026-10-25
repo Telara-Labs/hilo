@@ -82,3 +82,112 @@ func TestHeldParentsKeyOpCannotPoisonAuthorityUnderEvaluationBlock(t *testing.T)
 		t.Fatal("owner block released by a key operation")
 	}
 }
+
+// A key operation admitted while its parents were absent (no owner block at
+// the time) must not poison authority when a privacy barrier or projection
+// hold commits before the parent arrives. Authority stays evaluable while the
+// child is held, the parent that completes it is admitted under the guard,
+// the completed child then takes effect, and restart preserves all of it.
+func TestHeldChildParentAdmissibleUnderGuard(t *testing.T) {
+	for _, guard := range []string{"privacy_barrier", "projection_hold"} {
+		t.Run(guard, func(t *testing.T) {
+			ctx := context.Background()
+			w := newWorld(t)
+			b := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{43}, 32))
+			c := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{44}, 32))
+			genesis := w.o.PinnedGenesisID
+			parent := w.op(record.KeyOpBody{Op: record.OpDeviceAdd, Subject: sig.KeyRefOf(b.Public().(ed25519.PublicKey), record.RoleDevice, testMachine), Genesis: genesis, Parents: []string{w.genesis.AdvisoryID}}, w.key, w.key, b)
+			child := w.op(record.KeyOpBody{Op: record.OpDeviceAdd, Subject: sig.KeyRefOf(c.Public().(ed25519.PublicKey), record.RoleDevice, testMachine), Genesis: genesis, Parents: []string{parent.AdvisoryID}}, b, b, c)
+			if _, err := w.s.Append(ctx, child); err != nil {
+				t.Fatal("held child refused while the owner is not blocked", err)
+			}
+			if err := authorityError(t, w.s); err != nil {
+				t.Fatal("held child made authority unevaluable", err)
+			}
+			err := w.s.write(ctx, func() error {
+				if guard == "privacy_barrier" {
+					return w.s.commitPrivacyBarrier(ctx, record.H("barrier-cause"), "bulk_confirmation_required", "bulk_confirmation_required")
+				}
+				return w.s.commitProjectionHold(ctx)
+			})
+			var blocked *Error
+			if !isOwnerBlocked(err, &blocked) {
+				t.Fatal("guard not committed", err)
+			}
+			if held, err := w.s.guarded(ctx); err != nil || !held {
+				t.Fatal("fixture is not guarded", held, err)
+			}
+			if err := authorityError(t, w.s); err != nil {
+				t.Fatal("authority unevaluable under the guard", err)
+			}
+			for stage := range 2 {
+				if _, err := w.s.Append(ctx, parent); err != nil {
+					t.Fatalf("stage %d: parent completing a held child refused under the guard: %v", stage, err)
+				}
+				if err := authorityError(t, w.s); err != nil {
+					t.Fatalf("stage %d: authority poisoned: %v", stage, err)
+				}
+				var st *sig.State
+				if err := w.s.write(ctx, func() error {
+					d, err := w.s.loadAuthority(ctx)
+					if err == nil {
+						st = d.kr.State()
+					}
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if st.Status[child.AdvisoryID] != sig.OpAuthorized || st.Status[parent.AdvisoryID] != sig.OpAuthorized {
+					t.Fatalf("stage %d: completed child not authorized: %v %v", stage, st.Status[child.AdvisoryID], st.Status[parent.AdvisoryID])
+				}
+				if k := st.KeyFor(sig.KeyID(c.Public().(ed25519.PublicKey)), record.RoleDevice, ""); k == nil || k.Status != sig.KeyActive {
+					t.Fatalf("stage %d: completed child key not active", stage)
+				}
+				if countRows(t, w.s, "SELECT count(*) FROM record WHERE id=? AND sig_status='verified'", child.AdvisoryID) != 1 {
+					t.Fatalf("stage %d: completed child keeps a held signature status", stage)
+				}
+				if held, err := w.s.guarded(ctx); err != nil || !held {
+					t.Fatalf("stage %d: guard released by a key operation", stage)
+				}
+				reopenStore(t, &w.s, w.o)
+			}
+		})
+	}
+}
+
+// A held revocation completed by its parent under a privacy barrier takes
+// effect at once: the restriction is never lost behind the guard.
+func TestHeldRevocationCompletesUnderGuard(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	b := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{45}, 32))
+	c := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{46}, 32))
+	genesis := w.o.PinnedGenesisID
+	enroll := w.op(record.KeyOpBody{Op: record.OpDeviceAdd, Subject: sig.KeyRefOf(b.Public().(ed25519.PublicKey), record.RoleDevice, testMachine), Genesis: genesis, Parents: []string{w.genesis.AdvisoryID}}, w.key, w.key, b)
+	w.append(enroll)
+	parent := w.op(record.KeyOpBody{Op: record.OpDeviceAdd, Subject: sig.KeyRefOf(c.Public().(ed25519.PublicKey), record.RoleDevice, testMachine), Genesis: genesis, Parents: []string{enroll.AdvisoryID}}, w.key, w.key, c)
+	revoke := w.op(record.KeyOpBody{Op: record.OpDeviceRevoke, Subject: sig.KeyRefOf(b.Public().(ed25519.PublicKey), record.RoleDevice, testMachine), Genesis: genesis, Parents: []string{parent.AdvisoryID}, Reason: "compromised"}, w.key, w.key)
+	w.append(revoke)
+	if err := w.s.write(ctx, func() error {
+		return w.s.commitPrivacyBarrier(ctx, record.H("barrier-cause"), "bulk_confirmation_required", "bulk_confirmation_required")
+	}); err == nil {
+		t.Fatal("barrier not committed")
+	}
+	if _, err := w.s.Append(ctx, parent); err != nil {
+		t.Fatal("parent of a held revocation refused under the guard", err)
+	}
+	reopenStore(t, &w.s, w.o)
+	var st *sig.State
+	if err := w.s.write(ctx, func() error {
+		d, err := w.s.loadAuthority(ctx)
+		if err == nil {
+			st = d.kr.State()
+		}
+		return err
+	}); err != nil {
+		t.Fatal("authority unevaluable", err)
+	}
+	if k := st.KeyFor(sig.KeyID(b.Public().(ed25519.PublicKey)), record.RoleDevice, ""); k == nil || k.Status != sig.KeyRevoked {
+		t.Fatal("completed revocation did not take effect under the guard")
+	}
+}

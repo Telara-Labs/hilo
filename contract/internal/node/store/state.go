@@ -61,6 +61,7 @@ type databaseState struct {
 	records                             []*stored
 	byID                                map[string]*stored
 	kr                                  *sig.Keyring
+	restrict                            []*sig.KeyOp
 	model                               *invalidate.Model
 	eval                                *invalidate.Eval
 	facts                               map[string]view.EventFacts
@@ -222,6 +223,9 @@ func (s *Store) load(ctx context.Context) (*databaseState, error) {
 		}
 		return nil, err
 	}
+	if err = s.loadKeyRestrictions(ctx, d); err != nil {
+		return nil, err
+	}
 	if err = d.rebuild(s.opts); err != nil {
 		if _, ok := err.(*projectionLimit); ok {
 			return nil, s.commitProjectionHold(ctx)
@@ -286,7 +290,7 @@ func (d *databaseState) rebuild(o Options) error {
 			}
 		}
 	}
-	st := d.kr.State()
+	st := d.keyState()
 	for _, x := range d.records {
 		h := x.rec.Header
 		if h.Type == record.KindKeyOp {

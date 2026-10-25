@@ -151,12 +151,20 @@ func (s *Store) loadAuthority(ctx context.Context) (*databaseState, error) {
 	if rows.Err() != nil {
 		return nil, failure("storage_error")
 	}
+	if err := s.loadKeyRestrictions(ctx, d); err != nil {
+		return nil, err
+	}
+	// An operation whose parents are absent is retained but held outside
+	// authority: the fold activates, retires and revokes nothing for it, nor for
+	// any operation that descends from it, until every parent is present. It
+	// therefore leaves the evaluated key state exactly what it would be without
+	// it, and authority stays evaluable while it waits.
 	st := d.kr.State()
 	for _, x := range d.records {
 		switch st.Status[x.rec.ID] {
 		case sig.OpInvalid:
 			return nil, failure("corrupt_database")
-		case sig.OpHeldParents, sig.OpHeldGenesis:
+		case sig.OpHeldGenesis:
 			return nil, failure("authority_evaluation_required")
 		}
 		expected := sig.StatusUnknownSigner
@@ -197,7 +205,7 @@ func (e *DisclosureEngine) checkAuthority(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	k := d.kr.State().KeyFor(e.authority.keyID, record.RoleDevice, "")
+	k := d.keyState().KeyFor(e.authority.keyID, record.RoleDevice, "")
 	if k == nil || k.Status != sig.KeyActive || k.MachineID != e.config.MachineID {
 		return failure("unauthorized")
 	}
@@ -266,12 +274,30 @@ func (s *Store) appendGuardedKeyOp(ctx context.Context, r *record.Record, signat
 	if err = s.verifyCandidate(d, r, signatures, d.nextSeq); err != nil {
 		return AdmissionResult{}, err
 	}
+	before := d.kr.State().Status
 	op := &sig.KeyOp{Rec: r, Body: r.Body.(*record.KeyOpBody), Sigs: signatures, AdmittedSeq: d.nextSeq}
 	if d.kr.Add(op) != nil {
 		return AdmissionResult{}, failure("invalid_record")
 	}
 	st := d.kr.State()
-	if st.Status[r.ID] != sig.OpAuthorized {
+	// Under the guard an operation is admitted when it is authorized at its
+	// position, or when it is the missing parent that completes a retained held
+	// operation: refusing that parent would leave the held operation waiting
+	// forever. An operation that is itself still held stays outside durable
+	// authority and is refused.
+	completes := false
+	for _, old := range d.records {
+		if before[old.rec.ID] == sig.OpHeldParents && st.Status[old.rec.ID] != sig.OpHeldParents {
+			completes = true
+		}
+	}
+	switch st.Status[r.ID] {
+	case sig.OpAuthorized:
+	case sig.OpUnauthorized, sig.OpConflictLost:
+		if !completes {
+			return AdmissionResult{}, failure("authority_evaluation_required")
+		}
+	default:
 		return AdmissionResult{}, failure("authority_evaluation_required")
 	}
 	for _, old := range d.records {
@@ -283,7 +309,11 @@ func (s *Store) appendGuardedKeyOp(ctx context.Context, r *record.Record, signat
 			return AdmissionResult{}, failure("storage_error")
 		}
 	}
-	x := &stored{rec: r, sigs: signatures, owner: s.opts.PinnedGenesisID, seq: d.nextSeq, generation: d.generation + 1, state: "authority-held", sigStatus: sig.StatusVerified}
+	status := sig.StatusUnknownSigner
+	if st.Status[r.ID] == sig.OpAuthorized {
+		status = sig.StatusVerified
+	}
+	x := &stored{rec: r, sigs: signatures, owner: s.opts.PinnedGenesisID, seq: d.nextSeq, generation: d.generation + 1, state: "authority-held", sigStatus: status}
 	material(x)
 	if err = s.insertRecord(ctx, x); err != nil {
 		return AdmissionResult{}, err

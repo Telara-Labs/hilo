@@ -224,7 +224,7 @@ func (s *Store) capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 			}
 			return failure("suppressed")
 		}
-		k := d.kr.State().KeyFor(q.AuthorKeyID, record.RoleDevice, "")
+		k := d.keyState().KeyFor(q.AuthorKeyID, record.RoleDevice, "")
 		if k == nil || k.Status != sig.KeyActive || k.Genesis != s.opts.PinnedGenesisID || k.MachineID != s.opts.LocalMachineID {
 			return failure("unauthorized_capture")
 		}

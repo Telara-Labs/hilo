@@ -156,6 +156,12 @@ func (s *Store) insertRecord(ctx context.Context, x *stored) error {
 	if _, err = s.conn.ExecContext(ctx, "INSERT INTO record VALUES(?,?,?,?,?,?,?,?)", r.ID, r.HeaderJCS, signatures, x.owner, x.seq, x.generation, string(x.sigStatus), x.state); err != nil {
 		return failure("storage_error")
 	}
+	if r.Header.Type == record.KindKeyOp {
+		// A staged key operation admitted durably no longer needs its overlay.
+		if _, err = s.conn.ExecContext(ctx, "DELETE FROM key_restriction WHERE id=?", r.ID); err != nil {
+			return failure("storage_error")
+		}
+	}
 	if r.BodyJCS != nil && x.state != string(invalidate.Invalidated) {
 		if _, err = s.conn.ExecContext(ctx, "INSERT INTO record_body VALUES(?,?)", r.ID, r.BodyJCS); err != nil {
 			return failure("storage_error")
@@ -311,7 +317,7 @@ func (s *Store) enrichBody(ctx context.Context, d *databaseState, x *stored, r *
 	if err := s.verifyCandidate(d, r, x.sigs, x.seq); err != nil {
 		return AdmissionResult{}, err
 	}
-	res := sig.VerifyRecord(r, x.sigs, d.kr.State(), sig.Context{Route: record.RouteLocal, AdmittedSeq: x.seq})
+	res := sig.VerifyRecord(r, x.sigs, d.keyState(), sig.Context{Route: record.RouteLocal, AdmittedSeq: x.seq})
 	if res.Status != sig.StatusVerified || res.Owner != x.owner || !s.authorMachineAllowed(r, res) {
 		return AdmissionResult{}, failure("unauthorized_record")
 	}
@@ -378,13 +384,12 @@ func (s *Store) prepareNew(d *databaseState, r *record.Record, signatures []reco
 	if err := d.rebuild(s.opts); err != nil {
 		return nil, s.refuseVerified(d.ctx, d, err)
 	}
-	// While the owner is blocked, durable authority must stay evaluable so a
-	// supplement, revocation or barrier recovery can still be verified. A key
-	// operation whose parents are absent would make every authority load
-	// refuse, so it is refused without a write, as guarded admission refuses
-	// it; the caller keeps it pending outside durable authority until its
-	// parents arrive. The evaluation-only block and the barrier row are one
-	// owner block.
+	// While the owner is blocked, a key operation whose parents are absent is
+	// refused without a write, as guarded admission refuses it; the caller keeps
+	// it pending outside durable authority until its parents arrive. The
+	// evaluation-only block and the barrier row are one owner block. A held
+	// operation admitted earlier, before any block, stays retained but outside
+	// authority, and the parent that completes it remains admissible.
 	if r.Header.Type == record.KindKeyOp && d.blocked && d.kr.State().Status[r.ID] == sig.OpHeldParents {
 		return nil, failure("authority_evaluation_required")
 	}
@@ -423,7 +428,7 @@ func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures [
 	if r.Header.Type == record.KindCall && r.Body != nil && record.ValidateCommitmentDependencies(r, knownCallRoots(d, r)) != nil {
 		return failure("commitment_dependencies")
 	}
-	st := d.kr.State()
+	st := d.keyState()
 	if r.Header.Type == record.KindKeyOp {
 		if d.authorityEpoch == math.MaxInt64 {
 			return failure("ordinal_limit")

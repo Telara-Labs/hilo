@@ -411,6 +411,7 @@ type stagedAuthority interface {
 	ApplySupplement(context.Context, store.SignedRecord, []store.SignedRecord) (store.AdmissionResult, error)
 	VerifyStaged(context.Context, []store.SignedRecord) error
 	StagePolicy(context.Context, store.SignedRecord, []store.SignedRecord) (bool, error)
+	StageKeyOperation(context.Context, store.SignedRecord, []store.SignedRecord) error
 }
 
 // checkControl decodes a fetched control. A non-empty reason is a barrier.
@@ -482,7 +483,10 @@ func (w *Worker) applyControl(ctx context.Context, c pendingControl, device stri
 // durably now. Key activation and relaxing policies are verified against the
 // staged view and returned for staging; they are not applied, though a staged
 // policy's restrictions apply at once as the intersection with the committed
-// head. Anything invalid in that view is a barrier.
+// head, and a staged device key operation's restrictions on keys already
+// active, such as a rotation's retirement of its previous key, apply at once
+// through the store's key-restriction overlay. Anything invalid in that view
+// is a barrier.
 func (w *Worker) lookahead(ctx context.Context, c pendingControl, device string, view []store.SignedRecord) (string, *store.SignedRecord) {
 	r, in, reason := checkControl(c)
 	if reason != "" {
@@ -520,6 +524,15 @@ func (w *Worker) lookahead(ctx context.Context, c pendingControl, device string,
 			// parents are only staged applies within the view until then.
 			_, err := w.cfg.Store.Append(ctx, in)
 			return storeReason(err), nil
+		}
+		if b.Subject.Role == record.RoleDevice {
+			// A device operation's restrictions on keys already active, such
+			// as a rotation retiring its previous key, apply durably at once;
+			// its key activation stays in the view.
+			if err := sa.StageKeyOperation(ctx, in, view); err != nil {
+				return storeReason(err), nil
+			}
+			return "", &in
 		}
 		if err := sa.VerifyStaged(ctx, append(append([]store.SignedRecord(nil), view...), in)); err != nil {
 			return storeReason(err), nil

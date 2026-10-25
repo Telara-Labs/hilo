@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/Telara-Labs/telara-memory/contract/jcs"
 	"github.com/Telara-Labs/telara-memory/contract/policy"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
@@ -233,26 +234,224 @@ func (s *Store) ApplySupplement(ctx context.Context, in SignedRecord, staged []S
 		if err != nil {
 			return err
 		}
-		enrolled := false
-		for _, k := range d.kr.State().Keys {
-			if k.Role == record.RoleDevice && k.Genesis == s.opts.PinnedGenesisID && k.MachineID == s.opts.LocalMachineID && k.Status == sig.KeyActive {
-				enrolled = true
-			}
-		}
-		if !enrolled {
-			return failure("device_not_enrolled")
-		}
+		var view *sig.State
 		if r.Header.Type == record.KindErasure && len(staged) > 0 {
 			v, err := s.stagedView(ctx, d, staged)
 			if err != nil {
 				return err
 			}
-			s.verifyView = v.devices.State()
+			view = v.devices.State()
 		}
+		// A staged rotation of this device's key retires the old key durably
+		// at once while its successor is active only in the view, so
+		// enrollment is satisfied by either.
+		if !localEnrolled(d.keyState(), s.opts) && !localEnrolled(view, s.opts) {
+			return failure("device_not_enrolled")
+		}
+		s.verifyView = view
 		s.bundleImport = true
 		defer func() { s.bundleImport, s.verifyView = false, nil }()
 		out, err = s.appendLocked(ctx, r, signatures)
 		return err
+	})
+	return out, err
+}
+
+// A device key operation staged during coverage-pending recovery may carry
+// restrictive consequences for keys that are already active: a rotation
+// retires its previous key, a rotation that wins against an earlier one
+// revokes the loser's subject for conflict, and a revocation whose parents are
+// only staged revokes its subject. Those consequences apply at once and
+// durably through a key-restriction overlay that keeps the exact staged
+// envelope. Effective key state is completed authority restricted by the
+// state the overlay operations would fold to: a key already present may only
+// move from active to retired or revoked, gaining revocation causes. A key
+// that exists only because of a staged operation is never activated by it. A
+// row is dropped when its operation is admitted durably by ordinary
+// admission, and kept when revalidation refuses it, so restrictions survive.
+
+const keyRestrictionSchema = `
+CREATE TABLE IF NOT EXISTS key_restriction(id TEXT PRIMARY KEY,seq INTEGER NOT NULL,header BLOB NOT NULL,sigs BLOB NOT NULL,body BLOB NOT NULL);
+`
+
+// maxKeyRestrictions bounds staged key operations; it matches the staged view.
+const maxKeyRestrictions = 256
+
+// StageKeyOperation verifies a device key operation at its position in the
+// staged view and stages it. Its restrictive consequences for keys that are
+// already active apply at once and durably, in the same writer transaction;
+// its key activation stays only in the verification view until it commits by
+// ordinary admission.
+func (s *Store) StageKeyOperation(ctx context.Context, in SignedRecord, staged []SignedRecord) error {
+	return s.write(ctx, func() error {
+		d, err := s.authorityState(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err = s.stagedView(ctx, d, append(append([]SignedRecord(nil), staged...), in)); err != nil {
+			return err
+		}
+		r, signatures, err := parse(in)
+		if err != nil {
+			return err
+		}
+		b, ok := r.Body.(*record.KeyOpBody)
+		if !ok || b.Subject.Role != record.RoleDevice || b.Genesis != s.opts.PinnedGenesisID {
+			return failure("unauthorized_staged")
+		}
+		if d.byID[r.ID] != nil {
+			return nil
+		}
+		var n int
+		if s.conn.QueryRowContext(ctx, "SELECT count(*) FROM key_restriction").Scan(&n) != nil {
+			return failure("storage_error")
+		}
+		if n >= maxKeyRestrictions {
+			return failure("invalid_request")
+		}
+		raw, err := jcs.MarshalRecord(signatures)
+		if err != nil {
+			return failure("invalid_record")
+		}
+		res, err := s.conn.ExecContext(ctx, "INSERT OR IGNORE INTO key_restriction VALUES(?,?,?,?,?)", r.ID, d.nextSeq, r.HeaderJCS, raw, r.BodyJCS)
+		if err != nil {
+			return failure("storage_error")
+		}
+		if added, _ := res.RowsAffected(); added == 0 {
+			return nil
+		}
+		return s.policyProjectionFence(ctx)
+	})
+}
+
+// loadKeyRestrictions reads staged key operations not yet admitted durably.
+// An unreadable or foreign row fails closed.
+func (s *Store) loadKeyRestrictions(ctx context.Context, d *databaseState) error {
+	d.restrict = nil
+	// Read-only inspection may open a database written before the table.
+	var present int
+	if s.conn.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='key_restriction'").Scan(&present) != nil {
+		return failure("storage_error")
+	}
+	if present == 0 {
+		return nil
+	}
+	rows, err := s.conn.QueryContext(ctx, "SELECT id,seq,header,sigs,body FROM key_restriction ORDER BY seq,id LIMIT ?", maxKeyRestrictions+1)
+	if err != nil {
+		return failure("storage_error")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var seq int64
+		var h, sg, b []byte
+		if len(d.restrict) >= maxKeyRestrictions || rows.Scan(&id, &seq, &h, &sg, &b) != nil {
+			return failure("corrupt_database")
+		}
+		r, signatures, err := parse(SignedRecord{HeaderJCS: h, BodyJCS: b, Sigs: decodeSignatures(sg), AdvisoryID: id})
+		if err != nil || r.Header.Type != record.KindKeyOp || seq <= 0 {
+			return failure("corrupt_database")
+		}
+		body := r.Body.(*record.KeyOpBody)
+		if body.Genesis != s.opts.PinnedGenesisID {
+			return failure("corrupt_database")
+		}
+		d.restrict = append(d.restrict, &sig.KeyOp{Rec: r, Body: body, Sigs: signatures, AdmittedSeq: seq})
+	}
+	if rows.Err() != nil {
+		return failure("storage_error")
+	}
+	return nil
+}
+
+// keyState is the effective device key state: completed authority restricted
+// by the staged key-restriction overlay.
+func (d *databaseState) keyState() *sig.State {
+	st := d.kr.State()
+	if len(d.restrict) == 0 {
+		return st
+	}
+	kr := sig.NewKeyring(d.kr.Pinned())
+	ops := d.kr.Ops()
+	for _, op := range ops {
+		if kr.Add(op) != nil {
+			return st
+		}
+	}
+	for _, op := range d.restrict {
+		if ops[op.Rec.ID] == nil {
+			// A row that no longer adds to the keyring restricts nothing more.
+			_ = kr.Add(op)
+		}
+	}
+	restrictKeys(st, kr.State())
+	return st
+}
+
+func keySeverity(s sig.KeyStatus) int {
+	switch s {
+	case sig.KeyActive:
+		return 0
+	case sig.KeyRetired:
+		return 1
+	}
+	return 2
+}
+
+// restrictKeys moves each key of st to the more restrictive status in
+// combined, never the reverse, and never adds a key.
+func restrictKeys(st, combined *sig.State) {
+	for binding, k := range st.Keys {
+		c := combined.Keys[binding]
+		if c == nil || keySeverity(c.Status) < keySeverity(k.Status) {
+			continue
+		}
+		if c.Status == sig.KeyRevoked {
+			causes := slices.Clone(k.RevocationCauses)
+			for _, cause := range c.RevocationCauses {
+				if !slices.Contains(causes, cause) {
+					causes = append(causes, cause)
+				}
+			}
+			slices.Sort(causes)
+			k.RevocationCauses = causes
+			if k.Status != sig.KeyRevoked || c.RevokedReason == "compromised" {
+				k.RevokedReason = c.RevokedReason
+			}
+			if c.RevokedSeq > 0 && (k.RevokedSeq == 0 || c.RevokedSeq < k.RevokedSeq) {
+				k.RevokedSeq = c.RevokedSeq
+			}
+		}
+		k.Status = c.Status
+	}
+}
+
+func localEnrolled(st *sig.State, o Options) bool {
+	if st == nil {
+		return false
+	}
+	for _, k := range st.Keys {
+		if k.Role == record.RoleDevice && k.Genesis == o.PinnedGenesisID && k.MachineID == o.LocalMachineID && k.Status == sig.KeyActive {
+			return true
+		}
+	}
+	return false
+}
+
+// DeviceKeyStatus reports a device key's effective durable status: active,
+// retired or revoked, or empty when completed authority does not hold it. A
+// key active only in a staged verification view reports empty.
+func (s *Store) DeviceKeyStatus(ctx context.Context, keyID string) (string, error) {
+	var out string
+	err := s.write(ctx, func() error {
+		d, err := s.loadAuthority(ctx)
+		if err != nil {
+			return err
+		}
+		if k := d.keyState().KeyFor(keyID, record.RoleDevice, ""); k != nil {
+			out = string(k.Status)
+		}
+		return nil
 	})
 	return out, err
 }
