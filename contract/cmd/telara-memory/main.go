@@ -14,6 +14,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/shim"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/syncnode"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/vault"
 )
 
@@ -26,6 +27,8 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 		return runHook(ctx, args[1:], in)
 	case "clients":
 		return runClients(ctx, args[1:], out)
+	case "sync":
+		return runSync(ctx, args[1:], in, out)
 	case "daemon", "managed-daemon", "shim", "install", "uninstall", "status", "register", "start", "stop", "upgrade":
 		return runService(ctx, args, out, in)
 	default:
@@ -50,7 +53,8 @@ func publicCode(e error) string {
 		return refused.Error()
 	}
 	for _, code := range []error{install.ErrUnavailable, install.ErrStopped, install.ErrUnverified, install.ErrUnsafe, install.ErrUpgrade, daemon.ErrSettlement,
-		clients.ErrOptions, clients.ErrUnsafe, clients.ErrConflict, clients.ErrMalformed, clients.ErrBusy, vault.ErrKeychainUnavailable, vault.ErrUnavailable} {
+		clients.ErrOptions, clients.ErrUnsafe, clients.ErrConflict, clients.ErrMalformed, clients.ErrBusy, vault.ErrKeychainUnavailable, vault.ErrUnavailable,
+		syncnode.ErrProfile, syncnode.ErrNotEnrolled, syncnode.ErrIdentity, syncnode.ErrCredential, syncnode.ErrEnrollment, syncnode.ErrUnsupported, syncnode.ErrRule} {
 		if errors.Is(e, code) {
 			return code.Error()
 		}

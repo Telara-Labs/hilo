@@ -1,0 +1,464 @@
+package syncnode
+
+import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"errors"
+	"math/big"
+	"os"
+	"strconv"
+	gosync "sync"
+	"time"
+
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
+	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
+	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/telara-memory/contract/transport"
+)
+
+// Round timing is fixed in code. A successful round waits Interval; failures
+// back off exponentially with full jitter between MinBackoff and MaxBackoff.
+const (
+	Interval   = time.Minute
+	MinBackoff = 5 * time.Second
+	MaxBackoff = 5 * time.Minute
+	// maxPages bounds one class scan per round; the next round resumes.
+	maxPages = 256
+	// maxPushes bounds operations sent per round.
+	maxPushes = 16
+)
+
+var (
+	// ErrControlBlocked reports a control that cannot be enforced. PUSH and
+	// PULL(data) are skipped and ctl_cursor stays below it until it can.
+	ErrControlBlocked = errors.New("sync_control_blocked")
+	ErrHostedLog      = errors.New("sync_hosted_log_unavailable")
+)
+
+// Config assembles a worker. Dir is the owner-only data directory holding the
+// profile and sync database. TLSRoots overrides the system pool for a private
+// test or enterprise deployment and is code configuration, never environment.
+type Config struct {
+	Dir      string
+	Store    Store
+	Signer   RecordSigner
+	Vault    SecretVault
+	TLSRoots *x509.CertPool
+	// Clock and wait hooks exist for deterministic tests.
+	Now      func() time.Time
+	MaxRetry int
+}
+
+// Worker runs one sync round at a time under the daemon.
+type Worker struct {
+	cfg    Config
+	state  *State
+	mu     gosync.Mutex // the single round mutex
+	client *nodesync.Client
+	digest string
+	ob     *outbox
+	cancel context.CancelFunc
+	done   chan struct{}
+	wake   chan struct{}
+}
+
+// NewWorker opens the sync database. It does not start a goroutine or read
+// credentials; Start or Round does that only for an enabled profile.
+func NewWorker(ctx context.Context, cfg Config) (*Worker, error) {
+	if cfg.Store == nil || cfg.Dir == "" {
+		return nil, ErrUnsupported
+	}
+	st, err := OpenState(ctx, cfg.Dir)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Now != nil {
+		st.now = cfg.Now
+	}
+	return &Worker{cfg: cfg, state: st, wake: make(chan struct{}, 1)}, nil
+}
+
+// Start runs rounds until Stop or parent cancellation.
+func (w *Worker) Start(parent context.Context) {
+	ctx, cancel := context.WithCancel(parent)
+	w.cancel = cancel
+	w.done = make(chan struct{})
+	go w.loop(ctx)
+}
+
+// Kick requests an immediate round without waiting.
+func (w *Worker) Kick() {
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Stop cancels any in-flight round, waits for it, and closes the database.
+func (w *Worker) Stop() error {
+	if w.cancel != nil {
+		w.cancel()
+		<-w.done
+	}
+	return w.state.Close()
+}
+
+func (w *Worker) loop(ctx context.Context) {
+	defer close(w.done)
+	failures := 0
+	delay := time.Duration(0)
+	for {
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-w.wake:
+			timer.Stop()
+		case <-timer.C:
+		}
+		err := w.Round(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil && !errors.Is(err, ErrNotEnrolled) {
+			failures++
+			delay = backoff(failures)
+			continue
+		}
+		failures = 0
+		delay = Interval
+	}
+}
+
+func backoff(failures int) time.Duration {
+	ceiling := MinBackoff << min(failures-1, 10)
+	if ceiling > MaxBackoff || ceiling <= 0 {
+		ceiling = MaxBackoff
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(ceiling-MinBackoff)+1))
+	if err != nil {
+		return ceiling
+	}
+	return MinBackoff + time.Duration(n.Int64())
+}
+
+// Round runs HELLO, PULL(control), ENFORCE, PUSH, PULL(data), APPLY and ACK
+// once. A disabled or missing profile does nothing and sends nothing.
+func (w *Worker) Round(ctx context.Context) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	p, err := LoadProfile(w.cfg.Dir)
+	if Disabled(err) || err == nil && (!p.Enabled || !p.Enrolled()) {
+		return ErrNotEnrolled
+	}
+	if err != nil {
+		return err
+	}
+	client, ob, err := w.clientFor(p)
+	if err != nil {
+		return err
+	}
+	err = w.round(ctx, p, client, ob)
+	failure := ""
+	if err != nil {
+		failure = publicCode(err)
+	}
+	if ctx.Err() == nil {
+		_ = w.state.recordRound(ctx, ob.dest, failure)
+	}
+	return err
+}
+
+func (w *Worker) clientFor(p Profile) (*nodesync.Client, *outbox, error) {
+	digest := profileDigest(p)
+	if w.client != nil && w.digest == digest {
+		return w.client, w.ob, nil
+	}
+	if w.cfg.Vault == nil {
+		return nil, nil, ErrCredential
+	}
+	authKey, err := p.AuthKey.PublicKey()
+	if err != nil {
+		return nil, nil, ErrProfile
+	}
+	keys := &sig.State{Genesis: p.Genesis, Keys: map[string]*sig.Key{}}
+	for _, k := range p.ServiceKeys {
+		pub, err := k.public()
+		if err != nil {
+			return nil, nil, ErrProfile
+		}
+		keys.Keys[record.H("authority", string(record.RoleService), p.Tenant, k.KeyID)] = &sig.Key{KeyID: k.KeyID, Pub: ed25519.PublicKey(pub), Role: record.RoleService, Tenant: p.Tenant, Status: sig.KeyActive}
+	}
+	scope := p.Scope()
+	ob := newOutbox(w.state, w.cfg.Store, scope)
+	client, err := nodesync.New(nodesync.Config{Scope: scope, Grant: *p.Grant, Keystore: VaultKeystore{Vault: w.cfg.Vault, Key: p.Credential, Refresh: p.Refresh, Tenant: p.Tenant}, Outbox: ob, Keys: pinnedKeys{keys}, AuthKey: authKey, AuthIssuer: p.AuthIssuer, TLSRoots: w.cfg.TLSRoots, MaxRetries: w.cfg.MaxRetry})
+	if err != nil {
+		return nil, nil, err
+	}
+	w.client, w.digest, w.ob = client, digest, ob
+	return client, ob, nil
+}
+
+type pinnedKeys struct{ st *sig.State }
+
+func (k pinnedKeys) State(context.Context) (*sig.State, error) { return k.st, nil }
+
+func (w *Worker) round(ctx context.Context, p Profile, client *nodesync.Client, ob *outbox) error {
+	c, err := w.state.cursors(ctx, ob.dest)
+	if err != nil {
+		return err
+	}
+	depth, err := w.state.outboxDepth(ctx, ob.dest)
+	if err != nil {
+		return err
+	}
+	hello := transport.Hello{DeviceID: p.Device, Contract: record.ContractVersion, CtlCursor: c.Ctl, DataCursor: c.Data, KeysetVersion: c.Keyset, OutboxDepth: depth}
+	reply, err := client.Hello(ctx, hello)
+	if err != nil {
+		if status, ok := nodesync.HTTPStatus(err); ok && (status == 404 || status == 405 || status == 501) {
+			return ErrHostedLog
+		}
+		return err
+	}
+	if reply.KeysetVersion != c.Keyset {
+		if err := w.state.recordKeyset(ctx, ob.dest, reply.KeysetVersion); err != nil {
+			return err
+		}
+	}
+	if err = w.pullControl(ctx, client, ob.dest, c.Ctl, reply.CtlHead); err != nil {
+		return err
+	}
+	blocked, err := w.enforce(ctx, ob.dest)
+	if err != nil {
+		return err
+	}
+	var pushErr error
+	if !blocked {
+		pushErr = w.push(ctx, p, client, ob)
+		if pushErr == nil || !errors.Is(pushErr, nodesync.ErrForbidden) && !errors.Is(pushErr, nodesync.ErrLoggedOut) {
+			c, err = w.state.cursors(ctx, ob.dest)
+			if err != nil {
+				return err
+			}
+			if err = w.pullData(ctx, client, ob.dest, c.Data, reply.DataHead); err != nil {
+				return err
+			}
+		}
+	}
+	c, err = w.state.cursors(ctx, ob.dest)
+	if err != nil {
+		return err
+	}
+	// ACK reports exactly the durable cursors, never the scan position.
+	ack := transport.Ack{CtlEnforcedThrough: c.Ctl, DataAppliedThrough: c.Data}
+	if err = client.Ack(ctx, ack); err != nil {
+		return err
+	}
+	if err = w.state.recordAck(ctx, ob.dest, ack); err != nil {
+		return err
+	}
+	if blocked {
+		return ErrControlBlocked
+	}
+	return pushErr
+}
+
+// pullControl fetches every control page to ctl_head and persists exact
+// envelopes. The scan position is in-round only; it is never a cursor or ACK.
+func (w *Worker) pullControl(ctx context.Context, client *nodesync.Client, dest string, cursor, head int64) error {
+	pos := cursor
+	for i := 0; i < maxPages && pos < head; i++ {
+		page, err := client.Log(ctx, "control", pos, head, nodesync.MaxPageItems)
+		if err != nil {
+			return err
+		}
+		if err = checkPage(page, "control", pos, head); err != nil {
+			return err
+		}
+		if err = w.state.persistControls(ctx, dest, page.Items); err != nil {
+			return err
+		}
+		pos = page.NextAfter
+		if !page.More {
+			break
+		}
+	}
+	return nil
+}
+
+func checkPage(page transport.Page, class string, pos, head int64) error {
+	if _, _, err := transport.ApplyPage(page, class, pos, head, func(transport.LogItem) bool { return true }); err != nil {
+		return ErrHostedLog
+	}
+	if page.More && page.NextAfter <= pos || !page.More && page.NextAfter != head {
+		return ErrHostedLog
+	}
+	return nil
+}
+
+// enforce applies fetched controls strictly in hseq order. The first control
+// that is unknown, of a higher version, undecodable or refused by the store is
+// a barrier: it stays pending and ctl_cursor stays below it.
+func (w *Worker) enforce(ctx context.Context, dest string) (bool, error) {
+	for {
+		pending, err := w.state.pendingControls(ctx, dest, 64)
+		if err != nil {
+			return false, err
+		}
+		if len(pending) == 0 {
+			return false, nil
+		}
+		for _, c := range pending {
+			reason := w.applyControl(ctx, c)
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			if reason != "" {
+				return true, w.state.blockControl(ctx, dest, c.HSeq, reason)
+			}
+			if err = w.state.completeControl(ctx, dest, c.HSeq); err != nil {
+				return false, err
+			}
+		}
+	}
+}
+
+func (w *Worker) applyControl(ctx context.Context, c pendingControl) string {
+	r, err := transport.CheckEnvelope(c.Envelope, c.Body)
+	if err != nil {
+		if c.Envelope.V != record.Version {
+			return "unsupported_version"
+		}
+		return "unknown_control"
+	}
+	if !r.Header.Type.IsControl() {
+		return "class_mismatch"
+	}
+	in := store.SignedRecord{HeaderJCS: r.HeaderJCS, BodyJCS: r.BodyJCS, Sigs: c.Envelope.Sigs, AdvisoryID: r.ID}
+	switch r.Header.Type {
+	case record.KindErasure, record.KindRetraction:
+		_, err = w.cfg.Store.ApplyControl(ctx, in)
+	case record.KindPolicy:
+		_, err = w.cfg.Store.Append(ctx, in)
+	case record.KindKeyOp:
+		b, ok := r.Body.(*record.KeyOpBody)
+		switch {
+		case !ok:
+			return "unknown_control"
+		case b.Op == record.OpTenantKey:
+			// Tenant roots are pinned only by an authenticated login.
+			return "tenant_root_requires_login"
+		case b.Subject.Role == record.RoleDevice:
+			_, err = w.cfg.Store.Append(ctx, in)
+		default:
+			err = w.cfg.Store.OfferTenantKeyOperation(ctx, in)
+		}
+	default:
+		return "unsupported_control"
+	}
+	if err != nil {
+		return "store_" + store.Code(err)
+	}
+	return ""
+}
+
+// push reconciles invalidated sources, exports newly selected metadata and
+// drains the outbox one durable operation at a time.
+func (w *Worker) push(ctx context.Context, p Profile, client *nodesync.Client, ob *outbox) error {
+	if pol, err := w.cfg.Store.SyncPushPolicy(ctx); err == nil && pol.CancelOutbox {
+		if err := w.state.cancelAll(ctx, ob.dest, "policy_kill"); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err := w.reconcile(ctx, ob.dest); err != nil {
+		return err
+	}
+	// An export failure does not block draining already sealed operations;
+	// the next round retries the export from current local state.
+	_, _ = w.export(ctx, p, ob)
+	for i := 0; i < maxPushes; i++ {
+		ack, err := client.Push(ctx)
+		if err == nil && ack == nil {
+			return nil
+		}
+		if err == nil {
+			continue
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		switch {
+		case errors.Is(err, nodesync.ErrCancelled):
+			// Authorize cancelled the whole operation durably.
+			continue
+		case errors.Is(err, nodesync.ErrInvalid):
+			if op := ob.lastServed(); op != "" {
+				if e := w.state.rejectOp(ctx, ob.dest, op, "invalid_operation"); e != nil {
+					return e
+				}
+				continue
+			}
+			return err
+		}
+		if status, ok := nodesync.HTTPStatus(err); ok && status >= 400 && status < 500 && status != 401 && status != 403 && status != 429 {
+			if op := ob.lastServed(); op != "" {
+				if e := w.state.rejectOp(ctx, ob.dest, op, "hosted_refused"); e != nil {
+					return e
+				}
+				continue
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+// pullData quarantines every hosted data item to data_head. v1 imports no
+// hosted-origin records; data_cursor advances only with its page transaction.
+func (w *Worker) pullData(ctx context.Context, client *nodesync.Client, dest string, cursor, head int64) error {
+	pos := cursor
+	for i := 0; i < maxPages && pos < head; i++ {
+		page, err := client.Log(ctx, "data", pos, head, nodesync.MaxPageItems)
+		if err != nil {
+			return err
+		}
+		if err = checkPage(page, "data", pos, head); err != nil {
+			return err
+		}
+		if err = w.state.applyData(ctx, dest, page.Items, page.NextAfter); err != nil {
+			return err
+		}
+		pos = page.NextAfter
+		if !page.More {
+			break
+		}
+	}
+	return nil
+}
+
+func publicCode(err error) string {
+	for _, known := range []error{ErrControlBlocked, ErrHostedLog, ErrCredential, ErrProfile, nodesync.ErrForbidden, nodesync.ErrToken, nodesync.ErrReceipt, nodesync.ErrKeystoreUnavailable, nodesync.ErrInvalid, nodesync.ErrLoggedOut, errControlConflict, errStateInvalid} {
+		if errors.Is(err, known) {
+			return known.Error()
+		}
+	}
+	var retry *nodesync.RetryError
+	if errors.As(err, &retry) {
+		return retry.Error()
+	}
+	if status, ok := nodesync.HTTPStatus(err); ok {
+		return "sync_http_" + strconv.Itoa(status)
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "cancelled"
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return "not_configured"
+	}
+	return "sync_error"
+}

@@ -3,10 +3,12 @@ package mcp
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/capture"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/syncnode"
 )
 
 // Runtime is preloaded by installed authority outside SQLite's writer. Neither
@@ -18,6 +20,9 @@ type Runtime struct {
 	Credentials   ProofSource
 	CaptureConfig *capture.Config
 	CaptureKeys   capture.PreloadedKeyMaterial
+	// SyncVault is the installed native vault. Hosted metadata sync runs only
+	// with it and an explicitly enabled, enrolled sync profile.
+	SyncVault disclosure.SecretVault
 }
 
 type RuntimeProvider interface {
@@ -71,5 +76,30 @@ func Open(ctx context.Context, dir string, provider RuntimeProvider) (*Backend, 
 		_ = st.Close()
 		return nil, err
 	}
-	return NewDisclosure(service, source, closeStore), nil
+	return NewDisclosure(service, source, startSync(ctx, dir, st, runtime, closeStore)), nil
+}
+
+// startSync runs the hosted metadata sync worker under this backend. Sync is a
+// separate optional boundary: if its state cannot open, local memory still
+// serves. The worker stops, and its key copy is cleared, before the store closes.
+func startSync(ctx context.Context, dir string, st *store.Store, runtime Runtime, closeStore func() error) func() error {
+	if runtime.SyncVault == nil || runtime.CaptureConfig == nil || runtime.CaptureKeys.KeyID() == "" {
+		return closeStore
+	}
+	signer := new(capture.PreloadedKeyMaterial)
+	*signer = runtime.CaptureKeys
+	worker, err := syncnode.NewWorker(ctx, syncnode.Config{Dir: dir, Store: st, Signer: signer, Vault: runtime.SyncVault})
+	if err != nil {
+		signer.Clear()
+		return closeStore
+	}
+	worker.Start(context.Background())
+	var once sync.Once
+	return func() error {
+		once.Do(func() {
+			_ = worker.Stop()
+			signer.Clear()
+		})
+		return closeStore()
+	}
 }

@@ -281,6 +281,12 @@ func (c *Client) Logout(ctx context.Context) error {
 	return errors.Join(a, b)
 }
 func (c *Client) post(ctx context.Context, path, token, scheme string, body []byte, op *Operation) ([]byte, time.Time, error) {
+	return c.send(ctx, "POST", path, "", token, scheme, body, op, maxResponseBytes)
+}
+
+// send performs one authenticated request. The DPoP htu names the origin and
+// path only; a query never enters the proof. limit bounds the response body.
+func (c *Client) send(ctx context.Context, method, path, query, token, scheme string, body []byte, op *Operation, limit int) ([]byte, time.Time, error) {
 	credentials, err := c.cfg.Keystore.Load(ctx, c.cfg.Scope)
 	if err != nil {
 		return nil, time.Time{}, ErrKeystoreUnavailable
@@ -297,7 +303,7 @@ func (c *Client) post(ctx context.Context, path, token, scheme string, body []by
 	if token == "" || len(token) > 32768 || strings.ContainsAny(token, "\r\n\t ") {
 		return nil, time.Time{}, ErrToken
 	}
-	if path == "/v1/memory/import" { // re-check binding if OS credentials rotated
+	if path != "/v1/mcp/session" { // re-check binding if OS credentials rotated
 		pub, e := credentials.DPoP.PublicJWK().publicKey()
 		if e != nil {
 			return nil, time.Time{}, ErrToken
@@ -310,7 +316,7 @@ func (c *Client) post(ctx context.Context, path, token, scheme string, body []by
 	// Loading and signing can both wait on the OS keystore. Authorize after
 	// all keychain work, then check token and proof freshness before sending.
 	proofAt := c.now()
-	proof, err := proof(ctx, credentials.DPoP, "POST", c.cfg.Scope.Origin+path, token, c.serverNow().Unix())
+	proof, err := proof(ctx, credentials.DPoP, method, c.cfg.Scope.Origin+path, token, c.serverNow().Unix())
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -337,11 +343,21 @@ func (c *Client) post(ctx context.Context, path, token, scheme string, body []by
 		return nil, time.Time{}, ErrLoggedOut
 	}
 
-	r, err := http.NewRequestWithContext(ctx, "POST", c.cfg.Scope.Origin+path, bytes.NewReader(body))
+	target := c.cfg.Scope.Origin + path
+	if query != "" {
+		target += "?" + query
+	}
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	r, err := http.NewRequestWithContext(ctx, method, target, reader)
 	if err != nil {
 		return nil, time.Time{}, ErrInvalid
 	}
-	r.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		r.Header.Set("Content-Type", "application/json")
+	}
 	r.Header.Set("Authorization", scheme+" "+token)
 	r.Header.Set("DPoP", proof)
 	resp, err := c.http.Do(r)
@@ -356,11 +372,11 @@ func (c *Client) post(ctx context.Context, path, token, scheme string, body []by
 	if resp.Header.Get("Content-Encoding") != "" && resp.Header.Get("Content-Encoding") != "identity" {
 		return nil, date, ErrInvalid
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 	if err != nil {
 		return nil, date, errNetwork
 	}
-	if len(raw) > maxResponseBytes {
+	if len(raw) > limit {
 		return nil, date, ErrInvalid
 	}
 	return raw, date, nil

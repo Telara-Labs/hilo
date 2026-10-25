@@ -87,7 +87,7 @@ func (p InstalledRuntimeProvider) loadCaptureRuntime(ctx context.Context) (Runti
 		}
 		cfg.Roots[string(client)] = capture.Root{Client: name, AbsPath: rules.TranscriptRoot}
 	}
-	return Runtime{Config: r.Config, Material: r.Material, Credentials: r.Credentials, CaptureConfig: &cfg, CaptureKeys: vault.keys}, nil
+	return Runtime{Config: r.Config, Material: r.Material, Credentials: r.Credentials, CaptureConfig: &cfg, CaptureKeys: vault.keys, SyncVault: p.Provider.Vault}, nil
 }
 
 func openCapture(ctx context.Context, dir string, st *store.Store, runtime Runtime) (ProofSource, func() error, error) {
