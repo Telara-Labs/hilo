@@ -113,12 +113,20 @@ func TestCollectorPendingDoesNotHideHostilePath(t *testing.T) {
 				h.NativeSession = "11111111-1111-4111-8111-111111111111"
 			}
 			raw, _ := json.Marshal(h)
-			spoolFile(t, c, "new", testSignalULID+".json", raw)
-			if err = c.Drain(context.Background(), "credential"); err == nil {
-				t.Fatal("hostile signal allowed")
-			}
-			if len(fake.observed) != 0 || c.Stats().Done != 0 {
+			p := spoolFile(t, c, "new", testSignalULID+".json", raw)
+			// A hostile hint is never pending identity and never admitted. It is
+			// either refused (no durable gap receipt in this fake) or dropped.
+			err = c.Drain(context.Background(), "credential")
+			if len(fake.observed) != 0 || c.Stats().Done != 0 || len(fake.order) != 0 {
 				t.Fatal("hostile hint processed as pending identity")
+			}
+			if err == nil {
+				if _, e := os.Lstat(p); !os.IsNotExist(e) || c.Stats().Dropped != 1 {
+					t.Fatal("hostile hint neither refused nor dropped", e, c.Stats())
+				}
+			}
+			if records, _ := runtimeSnapshot(t, f.s); len(records) != 1 {
+				t.Fatal("hostile hint admitted output")
 			}
 		})
 	}
@@ -219,18 +227,18 @@ func TestCollectorMutationAtCaptureWriter(t *testing.T) {
 			}
 			h := transport.HookSignal{V: 3, At: 1, Client: "claude", Event: "Stop", NativeSession: syntheticSession, TranscriptPath: f.path, HookPID: os.Getpid()}
 			raw, _ := json.Marshal(h)
-			spoolFile(t, c, "new", testSignalULID+".json", raw)
+			p := spoolFile(t, c, "new", testSignalULID+".json", raw)
 			quietSource()
-			err = c.Drain(context.Background(), "credential")
-			if scenario == "growth" {
-				if err != nil || len(base.observed) != 1 {
-					t.Fatal("live writer refused or not observed", err)
-				}
-			} else if Code(err) != "producer_refused" || len(base.observed) != 0 {
-				t.Fatal("replaced source softened into pending", err)
+			// Growth and replacement at the writer both roll back and leave the
+			// hint pending for a later drain; neither denies the drain.
+			if err = c.Drain(context.Background(), "credential"); err != nil || len(base.observed) != 1 {
+				t.Fatal("mutated source refused the drain or was not observed", err)
 			}
 			if records, _ := runtimeSnapshot(t, f.s); len(records) != 1 || c.Stats().Done != 0 {
 				t.Fatal("unstable source admitted records/ACK")
+			}
+			if _, err = os.Lstat(p); err != nil {
+				t.Fatal("pending hint lost", err)
 			}
 		})
 	}

@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS spool_done(
  client TEXT NOT NULL, ulid TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('identity','capture')),
  receipt BLOB NOT NULL, PRIMARY KEY(client,ulid),
  FOREIGN KEY(client,ulid) REFERENCES spool_announcement(client,ulid));
+CREATE TABLE IF NOT EXISTS spool_gap(
+ client TEXT NOT NULL, ulid TEXT NOT NULL, code TEXT NOT NULL, PRIMARY KEY(client,ulid),
+ FOREIGN KEY(client,ulid) REFERENCES spool_done(client,ulid));
 `
 
 type spoolAdmission struct {
@@ -242,6 +245,54 @@ func (s *Store) SkipSuppressedSignal(ctx context.Context, h transport.HookSignal
 		}
 		return s.persistSpool(ctx, a, CaptureReceipt{Status: "suppressed"})
 	})
+}
+
+// SkipSignalWithGap acknowledges a hint whose capture was refused for a reason
+// that a retry of the same immutable hint cannot change, such as unsupported or
+// over-limit transcript content. One FULL transaction retains the validated hint
+// metadata, a spool_done receipt with status "gap" and the fixed refusal code.
+// Nothing is read or sealed and capture progress does not move, so a later hint
+// for the unit re-reads it through every ordinary gate, suppression first. The
+// code is a fixed capture code, never source text.
+func (s *Store) SkipSignalWithGap(ctx context.Context, h transport.HookSignal, ulid, code string) error {
+	if !gapCode(code) {
+		return failure("invalid_request")
+	}
+	mode := "identity"
+	if h.TranscriptPath != "" {
+		mode = "capture"
+	}
+	a, err := s.prepareSpool(h, ulid, mode, nil)
+	if err != nil {
+		return err
+	}
+	return s.writeMode(ctx, true, func() error {
+		if err := s.checkInstance(ctx); err != nil {
+			return err
+		}
+		if _, found, err := s.spoolReceipt(ctx, a); err != nil || found {
+			return err
+		}
+		if err := s.persistSpool(ctx, a, CaptureReceipt{Status: "gap"}); err != nil {
+			return err
+		}
+		if _, err := s.conn.ExecContext(ctx, "INSERT INTO spool_gap VALUES(?,?,?)", h.Client, ulid, code); err != nil {
+			return failure("storage_error")
+		}
+		return nil
+	})
+}
+
+func gapCode(code string) bool {
+	if code == "" || len(code) > 64 {
+		return false
+	}
+	for _, c := range code {
+		if (c < 'a' || c > 'z') && c != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // AdmitSignal admits only identity-only hints, with no native authority effect.

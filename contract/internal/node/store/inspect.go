@@ -58,6 +58,9 @@ type Diagnostics struct {
 	SigningBacklog int64             `json:"signing_backlog"`
 	Policy         PolicyDiagnostics `json:"policy"`
 	Scrub          ScrubDiagnostics  `json:"scrub"`
+	// SpoolGaps counts hook hints acknowledged as capture gaps, keyed
+	// "client:code". Codes are fixed refusal codes, never source text.
+	SpoolGaps map[string]int64 `json:"spool_gaps"`
 }
 
 // ErrNoDatabase reports that no store has been created in the directory.
@@ -67,7 +70,7 @@ var ErrNoDatabase = failure("no_database")
 // never creates, migrates, checkpoints or writes the database, and it does not
 // require the writer lock, so it works with or without a running daemon.
 func Inspect(ctx context.Context, dir string) (Diagnostics, error) {
-	out := Diagnostics{SignatureState: map[string]int64{}, Scrub: ScrubDiagnostics{Jobs: []ScrubJob{}}}
+	out := Diagnostics{SignatureState: map[string]int64{}, Scrub: ScrubDiagnostics{Jobs: []ScrubJob{}}, SpoolGaps: map[string]int64{}}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return out, failure("unsafe_path")
@@ -155,8 +158,40 @@ func Inspect(ctx context.Context, dir string) (Diagnostics, error) {
 	if err != nil {
 		return out, failure("storage_error")
 	}
+	if err = inspectSpoolGaps(ctx, conn, out.SpoolGaps); err != nil {
+		return out, err
+	}
 	out.Policy = inspectPolicy(ctx, conn, genesis, out.Policy)
 	return out, nil
+}
+
+// inspectSpoolGaps reads gap receipts only. A database created before gap
+// receipts existed has no table and therefore no gaps; Inspect never migrates.
+func inspectSpoolGaps(ctx context.Context, conn *sql.Conn, out map[string]int64) error {
+	var n int
+	if conn.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='spool_gap'").Scan(&n) != nil {
+		return failure("storage_error")
+	}
+	if n == 0 {
+		return nil
+	}
+	rows, err := conn.QueryContext(ctx, "SELECT client,code,count(*) FROM spool_gap GROUP BY client,code ORDER BY client,code LIMIT 256")
+	if err != nil {
+		return failure("storage_error")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var client, code string
+		var count int64
+		if rows.Scan(&client, &code, &count) != nil {
+			return failure("storage_error")
+		}
+		out[client+":"+code] = count
+	}
+	if rows.Err() != nil {
+		return failure("storage_error")
+	}
+	return nil
 }
 
 // inspectPolicy evaluates the installed chain exactly as admission does, with

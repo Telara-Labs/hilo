@@ -246,7 +246,9 @@ func FuzzDecodeAmplified(f *testing.F) {
 		if len(data)*int(repeat) > unitLimit+(64<<10) && Code(err) != "unit_limit" && err != nil && Code(err) == "" {
 			t.Fatalf("expanded input not refused with a hold code: %v", err)
 		}
-		if alloc := after.TotalAlloc - before.TotalAlloc; alloc > uint64(64*unitLimit+(256<<20)) {
+		// The race detector's shadow allocations make this budget meaningless;
+		// every decode check above still runs under -race.
+		if alloc := after.TotalAlloc - before.TotalAlloc; !raceDetector && alloc > uint64(64*unitLimit+(256<<20)) {
 			t.Fatalf("allocated %d bytes for %d bytes read", alloc, r.read)
 		}
 		if elapsed > 20*time.Second {

@@ -160,5 +160,5 @@ func (b *Backend) CaptureStats() map[string]uint64 {
 		return nil
 	}
 	stats := source.collector.Stats()
-	return map[string]uint64{"spool_done": stats.Done, "spool_dropped": stats.Dropped, "spool_abandoned": stats.Abandoned}
+	return map[string]uint64{"spool_done": stats.Done, "spool_dropped": stats.Dropped, "spool_abandoned": stats.Abandoned, "spool_gap": stats.Gap}
 }

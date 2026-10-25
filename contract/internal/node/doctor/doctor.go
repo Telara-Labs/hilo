@@ -81,6 +81,9 @@ type Capture struct {
 	Reasons      []string         `json:"reasons"`
 	PendingSpool int              `json:"pending_spool"`
 	Spool        map[string]Spool `json:"spool"`
+	// SpoolGaps counts hook hints the daemon acknowledged as capture gaps,
+	// keyed "client:code" with the fixed refusal code.
+	SpoolGaps map[string]int64 `json:"spool_gaps"`
 }
 
 type Store struct {
@@ -201,7 +204,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 			r.Problems = append(r.Problems, "hook_trust_review_"+h.Client)
 		}
 	}
-	r.Capture = capture(p.Data, r)
+	r.Capture = capture(p.Data, r, diag.SpoolGaps)
 	if r.Capture.Incomplete {
 		r.Problems = append(r.Problems, "capture_incomplete")
 	}
@@ -300,8 +303,8 @@ func clientCode(err error) string {
 }
 
 // capture counts spool file names only; it never opens a spool file.
-func capture(data string, r Report) Capture {
-	c := Capture{Reasons: []string{}, Spool: map[string]Spool{}}
+func capture(data string, r Report, gaps map[string]int64) Capture {
+	c := Capture{Reasons: []string{}, Spool: map[string]Spool{}, SpoolGaps: map[string]int64{}}
 	for _, client := range allClients {
 		var s Spool
 		s.New = countJSON(filepath.Join(data, "spool", string(client), "new"))
@@ -340,6 +343,18 @@ func capture(data string, r Report) Capture {
 	sort.Strings(keys)
 	for _, k := range keys {
 		c.Reasons = append(c.Reasons, "capture_gap:"+k)
+	}
+	// A durable gap receipt means a transcript hint was not captured.
+	keys = keys[:0]
+	for k, n := range gaps {
+		if n > 0 {
+			c.SpoolGaps[k] = n
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		c.Reasons = append(c.Reasons, "spool_gap:"+k)
 	}
 	c.Incomplete = len(c.Reasons) > 0
 	return c

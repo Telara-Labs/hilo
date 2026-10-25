@@ -65,7 +65,8 @@ func TestCollectorDropsMalformedAndAbandonsOnlyOldTmp(t *testing.T) {
 	if err := os.Chtimes(old, earlier, earlier); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Drain(context.Background(), "credential"); Code(err) != "invalid_signal" {
+	// Malformed files are a skip, not a refusal: deleted, counted, drain succeeds.
+	if err := c.Drain(context.Background(), "credential"); err != nil {
 		t.Fatal(err)
 	}
 	stats := c.Stats()
@@ -304,13 +305,18 @@ func TestCollectorUnitSignalSessionMismatch(t *testing.T) {
 	}
 	h := transport.HookSignal{V: 3, At: 1, Client: "claude", Event: "Stop", NativeSession: "11111111-1111-4111-8111-111111111111", TranscriptPath: f.path, HookPID: os.Getpid()}
 	raw, _ := json.Marshal(h)
-	spoolFile(t, c, "new", testSignalULID+".json", raw)
-	if err := c.Drain(context.Background(), "credential"); Code(err) != "signal_session_mismatch" {
+	p := spoolFile(t, c, "new", testSignalULID+".json", raw)
+	// A hint whose session contradicts its path is dropped, never retained or
+	// captured, and it does not hold the drain.
+	if err := c.Drain(context.Background(), "credential"); err != nil {
 		t.Fatal(err)
 	}
 	records, _ := runtimeSnapshot(t, f.s)
 	if len(records) != 1 {
 		t.Fatal("mismatched signal captured")
+	}
+	if _, err := os.Lstat(p); !os.IsNotExist(err) || c.Stats().Dropped != 1 || c.Stats().Done != 0 {
+		t.Fatal("mismatched signal not dropped", err, c.Stats())
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

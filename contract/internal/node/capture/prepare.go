@@ -27,7 +27,8 @@ const (
 func hold(code string) error { return &Error{code: code} }
 
 // Error never includes transcript text, paths, parser errors or secret material.
-type Error struct{ code string }
+// cause is the fixed local code behind a store producer refusal, when known.
+type Error struct{ code, cause string }
 
 func (e *Error) Error() string { return "capture held: " + e.code }
 func Code(err error) string {

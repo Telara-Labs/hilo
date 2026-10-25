@@ -47,7 +47,7 @@ func TestInstalledCapturePreloadUsesOnlyProvisionedVault(t *testing.T) {
 		t.Fatal("capture preload not wired")
 	}
 	stats := backend.CaptureStats()
-	if len(stats) != 3 || stats["spool_done"] != 0 {
+	if len(stats) != 4 || stats["spool_done"] != 0 || stats["spool_gap"] != 0 {
 		t.Fatal("missing diagnostic counters")
 	}
 	if _, ok := backend.disclosure.source.(captureProofSource); !ok {

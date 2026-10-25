@@ -96,7 +96,8 @@ func storeFailure(err error) error {
 		return hold("outcome_unknown")
 	case "owner_blocked":
 		return hold("owner_blocked")
-	case "stale_progress", "ordinal_limit", "history_limit", "suppressed", "unauthorized_capture", "capture_txn_expired", "invalid_causal_state", "producer_refused":
+	case "stale_progress", "ordinal_limit", "history_limit", "suppressed", "unauthorized_capture", "capture_txn_expired", "invalid_causal_state", "producer_refused",
+		"policy_violation", "policy_unavailable", "signal_conflict", "invalid_signal", "not_suppressed":
 		return hold(store.Code(err))
 	default:
 		return hold("store_refused")
@@ -266,17 +267,20 @@ func (p *Pipeline) capture(ctx context.Context, unit Unit, prepare preparationSt
 			return admission.store.CaptureSignal(ctx, admission.signal, admission.ulid, q, produce)
 		}
 	}
-	var producerErr error
+	var producerErr, planErr error
 	receipt, err := commit(ctx, request, func(tx *store.CaptureTxn) (store.CommitPlan, error) {
 		if ctx.Err() != nil {
 			return store.CommitPlan{}, hold("cancelled")
 		}
 		if producerErr = sourceSettlement(h); producerErr != nil {
+			planErr = producerErr
 			return store.CommitPlan{}, producerErr
 		}
 		plan, e := p.produce(tx, request, batch, events, h)
+		planErr = e
 		if e != nil && Code(e) == "source_changed" {
 			producerErr = sourceSettlement(h)
+			planErr = producerErr
 		}
 		return plan, e
 	})
@@ -292,6 +296,12 @@ func (p *Pipeline) capture(ctx context.Context, unit Unit, prepare preparationSt
 		if err = storeFailure(err); Code(err) == "suppressed" {
 			// Erasure landed between inspection and the writer, which rolled back.
 			return skipSuppressed(ctx, query)
+		}
+		if Code(err) == "producer_refused" {
+			// Keep the public code; retain only the fixed local refusal code.
+			if local, ok := planErr.(*Error); ok && local.cause == "" {
+				err = &Error{code: "producer_refused", cause: local.code}
+			}
 		}
 		return refused(err)
 	}

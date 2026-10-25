@@ -75,7 +75,7 @@ func signalID(s string) bool {
 	return true
 }
 
-type SpoolStats struct{ Done, Dropped, Abandoned uint64 }
+type SpoolStats struct{ Done, Dropped, Abandoned, Gap uint64 }
 type Collector struct {
 	mu                       sync.Mutex
 	pipeline                 *Pipeline
@@ -83,6 +83,7 @@ type Collector struct {
 	rules                    map[string]transport.HookRules
 	rootIDs                  map[string]string
 	done, dropped, abandoned atomic.Uint64
+	gap                      atomic.Uint64
 	closed                   bool
 }
 
@@ -118,7 +119,7 @@ func NewCollector(p *Pipeline, data string) (*Collector, error) {
 }
 
 func (c *Collector) Stats() SpoolStats {
-	return SpoolStats{Done: c.done.Load(), Dropped: c.dropped.Load(), Abandoned: c.abandoned.Load()}
+	return SpoolStats{Done: c.done.Load(), Dropped: c.dropped.Load(), Abandoned: c.abandoned.Load(), Gap: c.gap.Load()}
 }
 func (c *Collector) Close() error {
 	if c == nil {
@@ -130,10 +131,13 @@ func (c *Collector) Close() error {
 	return c.pipeline.Close()
 }
 
-// Drain is synchronous. Snapshot each new directory before processing, then
-// merge-sort globally by ULID. New renames after that snapshot are observed on
-// the next request. A safely processed identity may remain pending until its
-// transcript settles. Store/identity failures never become successful drains.
+// Drain is synchronous. Each client's spool is drained independently, in ULID
+// order, so one client's refusal never holds another client's hints. Every
+// file has one explicit outcome (see drainClasses): pending files stay and are
+// retried, gap and dropped files are acknowledged or deleted and counted, and
+// only a fatal store, spool or configuration failure is returned. A fatal
+// failure stops that client's remaining files only. New renames after a
+// directory snapshot are observed on the next request.
 func (c *Collector) Drain(ctx context.Context, credential string) error {
 	if c == nil || ctx == nil || ctx.Err() != nil || credential == "" {
 		return hold("invalid_signal")
@@ -143,151 +147,175 @@ func (c *Collector) Drain(ctx context.Context, credential string) error {
 	if c.closed {
 		return hold("closed")
 	}
-	if ctx.Err() != nil {
-		return hold("cancelled")
-	}
-	type pending struct {
-		client, name string
-		dir          *signalDirectory
-	}
-	var items []pending
-	var dirs []*signalDirectory
-	defer func() {
-		for _, d := range dirs {
-			d.close()
-		}
-	}()
 	names := make([]string, 0, len(c.rules))
 	for client := range c.rules {
 		names = append(names, client)
 	}
 	sort.Strings(names)
+	var first error
 	for _, client := range names {
-		for _, sub := range []string{"tmp", "new"} {
-			d, err := openSignalDirectory(c.dir, filepath.Join("spool", client, sub))
-			if err != nil {
-				return err
-			}
-			if d == nil {
-				continue
-			}
-			dirs = append(dirs, d)
-			entries, err := d.names()
-			if err != nil {
-				return err
-			}
-			for _, name := range entries {
-				if ctx.Err() != nil {
-					return hold("cancelled")
-				}
-				if sub == "tmp" {
-					removed, err := d.abandon(name, time.Now().Add(-time.Hour))
-					if err != nil {
-						return err
-					}
-					if removed {
-						c.abandoned.Add(1)
-					}
-				} else {
-					if len(items) >= 65536 {
-						return hold("spool_limit")
-					}
-					items = append(items, pending{client, name, d})
-				}
-			}
-		}
-	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].name != items[j].name {
-			return items[i].name < items[j].name
-		}
-		return items[i].client < items[j].client
-	})
-	backend := c.pipeline.signals
-	invalid := false
-	for _, item := range items {
 		if ctx.Err() != nil {
 			return hold("cancelled")
 		}
-		ulid := strings.TrimSuffix(item.name, ".json")
-		validName := strings.HasSuffix(item.name, ".json") && signalID(ulid)
-		// Check durable completion before reading a possibly changed transcript.
-		if validName && backend != nil {
-			done, err := backend.SignalDone(ctx, item.client, ulid)
-			if err != nil {
-				return hold("spool_receipt_failed")
-			}
-			if done {
-				if err = item.dir.remove(item.name); err != nil {
-					return err
-				}
-				c.done.Add(1)
-				continue
-			}
+		if err := c.drainClient(ctx, client); err != nil && first == nil {
+			first = err
 		}
-		raw, err := item.dir.read(item.name)
+	}
+	return first
+}
+
+func (c *Collector) drainClient(ctx context.Context, client string) error {
+	// Announcements come first; abandoned-write cleanup cannot delay them.
+	err := c.drainNew(ctx, client)
+	if e := c.abandonTmp(ctx, client); err == nil {
+		err = e
+	}
+	return err
+}
+
+func (c *Collector) drainNew(ctx context.Context, client string) error {
+	d, err := openSignalDirectory(c.dir, filepath.Join("spool", client, "new"))
+	if err != nil || d == nil {
+		return err
+	}
+	defer d.close()
+	entries, err := d.names()
+	if err != nil {
+		return err
+	}
+	sort.Strings(entries)
+	for _, name := range entries {
+		if ctx.Err() != nil {
+			return hold("cancelled")
+		}
+		if err := c.drainOne(ctx, client, d, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Collector) abandonTmp(ctx context.Context, client string) error {
+	tmp, err := openSignalDirectory(c.dir, filepath.Join("spool", client, "tmp"))
+	if err != nil || tmp == nil {
+		return err
+	}
+	defer tmp.close()
+	entries, err := tmp.names()
+	if err != nil {
+		return err
+	}
+	for _, name := range entries {
+		if ctx.Err() != nil {
+			return hold("cancelled")
+		}
+		removed, err := tmp.abandon(name, time.Now().Add(-time.Hour))
 		if err != nil {
 			return err
 		}
-		var signal *transport.HookSignal
-		parseErr := strictJSON(raw)
-		if parseErr == nil {
-			signal, parseErr = transport.ParseHook(raw, c.rules[item.client])
+		if removed {
+			c.abandoned.Add(1)
 		}
-		clear(raw)
-		if !validName || parseErr != nil || signal.NativeSession == "" {
-			if err = item.dir.remove(item.name); err != nil {
-				return err
-			}
-			c.dropped.Add(1)
-			invalid = true
-			continue
+	}
+	return nil
+}
+
+// drainOne returns an error only for a fatal outcome.
+func (c *Collector) drainOne(ctx context.Context, client string, d *signalDirectory, name string) error {
+	backend := c.pipeline.signals
+	ulid := strings.TrimSuffix(name, ".json")
+	validName := strings.HasSuffix(name, ".json") && signalID(ulid)
+	// Check durable completion before reading a possibly changed transcript.
+	if validName && backend != nil {
+		done, err := backend.SignalDone(ctx, client, ulid)
+		if err != nil {
+			return hold("spool_receipt_failed")
 		}
-		if backend == nil {
-			return hold("spool_receipts_unavailable")
+		if done {
+			return c.finish(d, name, &c.done)
 		}
-		if signal.TranscriptPath == "" {
-			if err = backend.AdmitSignal(ctx, *signal, ulid); err != nil {
-				return hold("spool_admission_failed")
+	}
+	raw, err := d.read(name)
+	if err != nil {
+		return err
+	}
+	var signal *transport.HookSignal
+	parseErr := strictJSON(raw)
+	if parseErr == nil {
+		signal, parseErr = transport.ParseHook(raw, c.rules[client])
+	}
+	clear(raw)
+	if !validName || parseErr != nil || signal.NativeSession == "" {
+		// Malformed files are deleted and counted, never archived (07 7.2).
+		return c.finish(d, name, &c.dropped)
+	}
+	if backend == nil {
+		return hold("spool_receipts_unavailable")
+	}
+	if signal.TranscriptPath == "" {
+		if err = backend.AdmitSignal(ctx, *signal, ulid); err != nil {
+			if _, fatal := classifySpoolStore(err, "spool_admission_failed"); fatal != nil {
+				return fatal
 			}
-		} else {
-			rootID := c.rootIDs[item.client]
-			root := c.pipeline.config.Roots[rootID]
-			relative, err := filepath.Rel(root.AbsPath, signal.TranscriptPath)
-			if err != nil {
-				return hold("unsafe_path")
-			}
-			native, err := resolve(preparationConfig{root: root.AbsPath, home: c.pipeline.config.Home, owner: c.pipeline.config.OwnerGenesis, machine: c.pipeline.config.MachineID}, unitLocator{client: root.Client, relative: relative, source: strings.Repeat("0", 64), session: "sk1:" + strings.Repeat("0", 64)})
-			if err != nil || native != signal.NativeSession {
-				return hold("signal_session_mismatch")
-			}
-			if _, err = c.pipeline.CaptureSignal(ctx, Unit{rootID, relative}, *signal, ulid); err != nil {
-				switch Code(err) {
-				case "source_absent", "source_unsettled", "partial_line", "no_observations":
-					observer, ok := backend.(PendingSignalStore)
-					if !ok {
-						return hold("spool_observation_unavailable")
-					}
-					if err = observer.ObserveSignal(ctx, *signal, ulid); err != nil {
-						return hold("spool_admission_failed")
-					}
-					// No spool_done and no unlink until transcript admission.
-					continue
-				default:
-					return err
-				}
-			}
+			return c.finish(d, name, &c.dropped)
 		}
+		return c.finish(d, name, &c.done)
+	}
+	rootID := c.rootIDs[client]
+	root := c.pipeline.config.Roots[rootID]
+	relative, err := filepath.Rel(root.AbsPath, signal.TranscriptPath)
+	if err != nil {
+		return c.finish(d, name, &c.dropped)
+	}
+	native, err := resolve(preparationConfig{root: root.AbsPath, home: c.pipeline.config.Home, owner: c.pipeline.config.OwnerGenesis, machine: c.pipeline.config.MachineID}, unitLocator{client: root.Client, relative: relative, source: strings.Repeat("0", 64), session: "sk1:" + strings.Repeat("0", 64)})
+	if err != nil || native != signal.NativeSession {
+		// The hint names a session its own path contradicts.
+		return c.finish(d, name, &c.dropped)
+	}
+	if _, err = c.pipeline.CaptureSignal(ctx, Unit{rootID, relative}, *signal, ulid); err == nil {
 		// The backend only returns success after its FULL transaction is durable.
 		// Crash before unlink reuses SignalDone and never reopens erased source text.
-		if err = item.dir.remove(item.name); err != nil {
+		return c.finish(d, name, &c.done)
+	}
+	class, code := classify(err)
+	switch class {
+	case drainPending:
+		observer, ok := backend.(PendingSignalStore)
+		if !ok {
+			return hold("spool_observation_unavailable")
+		}
+		if e := observer.ObserveSignal(ctx, *signal, ulid); e != nil {
+			if _, fatal := classifySpoolStore(e, "spool_admission_failed"); fatal != nil {
+				return fatal
+			}
+			return c.finish(d, name, &c.dropped)
+		}
+		// No spool_done and no unlink until transcript admission.
+		return nil
+	case drainGap:
+		gaps, ok := backend.(GapSignalStore)
+		if !ok {
+			// Without a durable gap receipt the hint cannot be acknowledged.
 			return err
 		}
-		c.done.Add(1)
+		if e := gaps.SkipSignalWithGap(ctx, *signal, ulid, code); e != nil {
+			if _, fatal := classifySpoolStore(e, "spool_gap_failed"); fatal != nil {
+				return fatal
+			}
+			return c.finish(d, name, &c.dropped)
+		}
+		return c.finish(d, name, &c.gap)
+	case drainDrop:
+		return c.finish(d, name, &c.dropped)
 	}
-	if invalid {
-		return hold("invalid_signal")
+	return err
+}
+
+func (c *Collector) finish(d *signalDirectory, name string, counter *atomic.Uint64) error {
+	if err := d.remove(name); err != nil {
+		return err
 	}
+	counter.Add(1)
 	return nil
 }
 
@@ -312,6 +340,8 @@ func (c *Collector) Recover(ctx context.Context) error {
 		clients = append(clients, client)
 	}
 	sort.Strings(clients)
+	// Each client recovers independently; the first failure is reported.
+	var first error
 	for _, client := range clients {
 		if ctx.Err() != nil {
 			return hold("cancelled")
@@ -351,9 +381,9 @@ func (c *Collector) Recover(ctx context.Context) error {
 			}
 			return nil
 		}()
-		if err != nil {
-			return err
+		if err != nil && first == nil {
+			first = err
 		}
 	}
-	return nil
+	return first
 }

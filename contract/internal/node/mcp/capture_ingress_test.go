@@ -379,8 +379,20 @@ func TestCaptureIngressPendingIdentityRefusalsRealDaemonShim(t *testing.T) {
 				}
 			}
 			result := w.session().call("telara_task_list", map[string]any{}, "", "pending-negative")
-			if !result.IsError || textOf(t, result) != "identity_unavailable" {
-				t.Fatal("unsafe identity processing allowed MCP", result)
+			// A malformed hint or a hostile transcript path is dropped, never
+			// processed as identity, and does not cut the client off. Only a
+			// broken store denies the capture proof.
+			if scenario == "store-failure" {
+				if !result.IsError || textOf(t, result) != "identity_unavailable" {
+					t.Fatal("store failure allowed MCP", result)
+				}
+			} else {
+				if result.IsError {
+					t.Fatal("dropped hint denied MCP", result)
+				}
+				if files, err := os.ReadDir(dir); err != nil || len(files) != 0 {
+					t.Fatal("untrusted hint retained in the spool", err)
+				}
 			}
 			if w.count("SELECT count(*) FROM spool_done") != 0 || w.count("SELECT count(*) FROM spool_announcement") != 0 || w.count("SELECT count(*) FROM capture_progress") != 0 {
 				t.Fatal("unsafe pending hint committed")

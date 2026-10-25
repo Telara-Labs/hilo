@@ -30,6 +30,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/vault"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/telara-memory/contract/transport"
 	_ "modernc.org/sqlite"
 )
 
@@ -417,5 +418,28 @@ func TestDoctorTextHasEverySection(t *testing.T) {
 		if !strings.Contains(b.String(), "\n"+want+"\n") {
 			t.Fatalf("missing section %s\n%s", want, b.String())
 		}
+	}
+}
+
+// A hook hint the daemon acknowledged as a capture gap is reported with its
+// fixed code, consistently with the hook capture gaps, and marks capture
+// incomplete. No hint content is printed.
+func TestDoctorReportsSpoolGaps(t *testing.T) {
+	st, dir, _ := standalone(t)
+	ctx := context.Background()
+	h := transport.HookSignal{V: 3, At: 1761150000000, Client: "claude", Event: "SessionStart", NativeSession: "22222222-2222-4222-8222-222222222222", HookPID: 12}
+	if err := st.SkipSignalWithGap(ctx, h, "01K00000000000000000000000", "unsupported_content"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Run(ctx, Config{DataDir: dir, ProbeTimeout: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Capture.SpoolGaps["claude:unsupported_content"] != 1 || !has(r.Capture.Reasons, "spool_gap:claude:unsupported_content") || !r.Capture.Incomplete || !has(r.Problems, "capture_incomplete") {
+		t.Fatalf("spool gap not reported %+v %v", r.Capture, r.Problems)
+	}
+	var text bytes.Buffer
+	if err := WriteText(&text, r); err != nil || !strings.Contains(text.String(), "claude:unsupported_content 1") {
+		t.Fatal("spool gap not rendered", err, text.String())
 	}
 }

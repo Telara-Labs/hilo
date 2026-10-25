@@ -80,6 +80,7 @@ func WriteText(w io.Writer, r Report) error {
 	line("incomplete", yes(r.Capture.Incomplete))
 	line("reasons", list(r.Capture.Reasons))
 	line("pending spool", strconv.Itoa(r.Capture.PendingSpool))
+	line("spool gaps", counts(r.Capture.SpoolGaps))
 	clients := make([]string, 0, len(r.Capture.Spool))
 	for c := range r.Capture.Spool {
 		clients = append(clients, c)
