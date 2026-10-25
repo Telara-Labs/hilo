@@ -7,11 +7,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
+	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/telara-memory/contract/sig"
 	"github.com/Telara-Labs/telara-memory/contract/transport"
 )
 
@@ -319,5 +322,154 @@ func TestCollectorUnitSignalSessionMismatch(t *testing.T) {
 	}
 	if err := c.Recover(context.Background()); Code(err) != "closed" {
 		t.Fatal(err)
+	}
+}
+
+// eraseRuntimeCapture erases every captured chunk and event of the fixture.
+func eraseRuntimeCapture(t *testing.T, f *runtimeFixture) {
+	t.Helper()
+	records, _ := runtimeSnapshot(t, f.s)
+	ids := []string{}
+	for id, r := range records {
+		if r.Header.Type == record.KindChunk || r.Header.Type == record.KindSession {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	lid, _ := record.ControlLID(record.KindErasure, f.c.OwnerGenesis, strings.Repeat("d", 32))
+	control, err := record.Build(record.Header{Type: record.KindErasure, LID: lid, Author: record.Author{KeyID: f.c.OwnerGenesis, MachineID: f.c.MachineID}, At: time.Now().UnixMilli(), Prov: record.ProvUser, Red: record.Redact{Profile: record.ProfileLocal}}, &record.ErasureBody{EventCoverage: "complete", Selectors: record.Selectors{IDs: ids, Events: runtimeErasureEvents(f.c.OwnerGenesis, records)}, Reason: "user_request"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, err := sig.SignRecord(f.key, control.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.s.Append(context.Background(), store.SignedRecord{HeaderJCS: control.HeaderJCS, BodyJCS: control.BodyJCS, Sigs: []record.Signature{signature}, AdvisoryID: control.ID}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runtimeBodiesContain(t *testing.T, s *store.Store, marker string) bool {
+	t.Helper()
+	snap, err := s.Snapshot(context.Background(), store.ReadRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range snap.Entries {
+		if strings.Contains(string(e.BodyJCS), marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// A hook signal for an erased unit is skipped: acknowledged and unlinked with
+// no recapture, including content appended to that unit, while a new unit in
+// the same drain is captured and later drains keep succeeding.
+func TestCollectorSkipsSuppressedUnitWithoutRecapture(t *testing.T) {
+	const erased, appended, fresh = "erasedunitcanaryquillon", "appendedunitcanaryvesper", "freshunitcanarymarlowe"
+	f := runtimeWorld(t, sourceMessages(t, 1, 0, erased))
+	c, err := NewCollector(f.p, filepath.Join(f.c.Home, "synthetic-node"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hint := func(native, path string) []byte {
+		raw, _ := json.Marshal(transport.HookSignal{V: 3, At: 1, Client: "claude", Event: "Stop", NativeSession: native, TranscriptPath: path, HookPID: os.Getpid()})
+		return raw
+	}
+	pending := func() int {
+		names, err := os.ReadDir(filepath.Join(c.dir, "spool", "claude", "new"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(names)
+	}
+	quietSource()
+	spoolFile(t, c, "new", testSignalULID[:25]+"1.json", hint(syntheticSession, f.path))
+	if err = c.Drain(context.Background(), "credential"); err != nil || !runtimeBodiesContain(t, f.s, erased) {
+		t.Fatal("initial capture", err)
+	}
+	eraseRuntimeCapture(t, f)
+	if runtimeBodiesContain(t, f.s, erased) {
+		t.Fatal("erasure left content")
+	}
+	before, _ := runtimeSnapshot(t, f.s)
+	// Unchanged erased unit, the same unit after growth, and a new unit.
+	spoolFile(t, c, "new", testSignalULID[:25]+"2.json", hint(syntheticSession, f.path))
+	grown, err := os.OpenFile(f.path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = grown.Write(sourceMessages(t, 2, 1, appended)[len(sourceMessages(t, 1, -1, "")):]); err != nil {
+		t.Fatal(err)
+	}
+	grown.Close()
+	const freshSession = "01990000-0000-4000-8000-000000000002"
+	freshPath := filepath.Join(filepath.Dir(f.path), freshSession+".jsonl")
+	if err = os.WriteFile(freshPath, sourceMessages(t, 1, 0, fresh), 0600); err != nil {
+		t.Fatal(err)
+	}
+	quietSource()
+	spoolFile(t, c, "new", testSignalULID[:25]+"3.json", hint(syntheticSession, f.path))
+	spoolFile(t, c, "new", testSignalULID[:25]+"4.json", hint(freshSession, freshPath))
+	if err = c.Drain(context.Background(), "credential"); err != nil {
+		t.Fatal("suppressed unit held the drain", err)
+	}
+	if pending() != 0 || c.Stats().Done != 4 {
+		t.Fatal("skipped hint not acknowledged and removed", pending(), c.Stats())
+	}
+	for _, id := range []string{"2", "3"} {
+		if done, err := f.s.SignalDone(context.Background(), "claude", testSignalULID[:25]+id); err != nil || !done {
+			t.Fatal("skip receipt missing", id, done, err)
+		}
+	}
+	if runtimeBodiesContain(t, f.s, erased) || runtimeBodiesContain(t, f.s, appended) {
+		t.Fatal("erased unit recaptured")
+	}
+	if !runtimeBodiesContain(t, f.s, fresh) {
+		t.Fatal("new unit outside the suppressed scope not captured")
+	}
+	after, _ := runtimeSnapshot(t, f.s)
+	for id, r := range after {
+		if before[id] == nil && r.Header.Subj.SessionKey != "" {
+			if sk, _ := record.SessionKey("claude-code", "local", record.NativeGlobal, syntheticSession, f.c.MachineID); r.Header.Subj.SessionKey == sk {
+				t.Fatal("new record minted for the erased session", id)
+			}
+		}
+	}
+	// A crash before unlink replays the durable skip receipt without a read.
+	spoolFile(t, c, "new", testSignalULID[:25]+"3.json", hint(syntheticSession, f.path))
+	if err = c.Recover(context.Background()); err != nil || pending() != 0 {
+		t.Fatal("skip receipt not recovered", pending(), err)
+	}
+	spoolFile(t, c, "new", testSignalULID[:25]+"5.json", hint(syntheticSession, f.path))
+	if err = c.Drain(context.Background(), "credential"); err != nil || pending() != 0 {
+		t.Fatal("later skip", pending(), err)
+	}
+	// Direct capture keeps reporting the hold; only signals are acknowledged.
+	if r, err := f.p.Capture(context.Background(), f.unit); Code(err) != "suppressed" || len(r.CommittedRecordIDs) != 0 {
+		t.Fatal("direct capture of erased unit", r, err)
+	}
+}
+
+// A backend that cannot durably acknowledge a skip leaves the hint pending.
+func TestCollectorSuppressedWithoutSkipSupportStaysPending(t *testing.T) {
+	f := runtimeWorld(t, sourceMessages(t, 1, -1, ""))
+	quietSource()
+	requireCaptured(t, f)
+	eraseRuntimeCapture(t, f)
+	f.p.signals = &unitSignalStore{st: f.s, done: map[string]bool{}}
+	c, err := NewCollector(f.p, filepath.Join(f.c.Home, "synthetic-node"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(transport.HookSignal{V: 3, At: 1, Client: "claude", Event: "Stop", NativeSession: syntheticSession, TranscriptPath: f.path, HookPID: os.Getpid()})
+	p := spoolFile(t, c, "new", testSignalULID+".json", raw)
+	if err = c.Drain(context.Background(), "credential"); Code(err) != "suppressed" {
+		t.Fatal(err)
+	}
+	if _, err = os.Lstat(p); err != nil || c.Stats().Done != 0 {
+		t.Fatal("unacknowledged skip removed", err)
 	}
 }

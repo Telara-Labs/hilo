@@ -33,6 +33,14 @@ type PendingSignalStore interface {
 	ObserveSignal(context.Context, transport.HookSignal, string) error
 }
 
+// SuppressedSignalStore acknowledges a transcript hint whose unit erasure has
+// suppressed. It must recheck suppression under its writer and record the hint
+// as done in one durable transaction, without reading, sealing or advancing
+// capture progress. A suppressed unit is skipped; it never holds the drain.
+type SuppressedSignalStore interface {
+	SkipSuppressedSignal(context.Context, transport.HookSignal, string, store.SourceOccurrence) error
+}
+
 type signalAdmission struct {
 	signal transport.HookSignal
 	ulid   string
@@ -41,7 +49,9 @@ type signalAdmission struct {
 type signalAdmissionKey struct{}
 
 // CaptureSignal retains the ordinary source/policy/erasure gates while binding
-// the atomically committed output to one immutable spool identity.
+// the atomically committed output to one immutable spool identity. A unit that
+// erasure suppressed is skipped: when the backend durably acknowledges the
+// hint, the result is Status "suppressed" with no error and no records.
 func (p *Pipeline) CaptureSignal(ctx context.Context, unit Unit, signal transport.HookSignal, ulid string) (Result, error) {
 	if p == nil || ctx == nil || ctx.Err() != nil || !signalID(ulid) {
 		return refused(hold("invalid_signal"))

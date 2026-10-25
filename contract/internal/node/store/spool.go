@@ -200,6 +200,50 @@ func (s *Store) CaptureSignal(ctx context.Context, h transport.HookSignal, ulid 
 	return s.capture(ctx, q, producer, &a)
 }
 
+// SkipSuppressedSignal acknowledges a transcript hint whose unit erasure has
+// suppressed. A suppressed unit is skipped, not held: the hint is retained and
+// marked done in one FULL transaction, and no source is read, no progress moves
+// and nothing is sealed. Suppression is rechecked under the writer, so a unit
+// that is not suppressed can never be acknowledged without its capture. An
+// owner block still refuses, since it is not a skip.
+func (s *Store) SkipSuppressedSignal(ctx context.Context, h transport.HookSignal, ulid string, q SourceOccurrence) error {
+	if !validOccurrence(s.opts, q) {
+		return failure("invalid_request")
+	}
+	a, err := s.prepareSpool(h, ulid, "capture", nil)
+	if err != nil {
+		return err
+	}
+	sk, err := record.SessionKey(signalReader(h.Client), "local", record.NativeGlobal, h.NativeSession, s.opts.LocalMachineID)
+	if err != nil || sk != q.SessionKey {
+		return failure("signal_conflict")
+	}
+	return s.writeMode(ctx, true, func() error {
+		if err := s.checkInstance(ctx); err != nil {
+			return err
+		}
+		if _, found, err := s.spoolReceipt(ctx, a); err != nil || found {
+			return err
+		}
+		d, err := s.load(ctx)
+		if err != nil {
+			if _, settled := err.(*postCommitRefusal); settled {
+				return err
+			}
+			s.poisoned = true
+			return failure("outcome_unknown")
+		}
+		g := suppression(d, q)
+		if g.OwnerBlocked {
+			return ownerBlocked()
+		}
+		if !g.Suppressed {
+			return failure("not_suppressed")
+		}
+		return s.persistSpool(ctx, a, CaptureReceipt{Status: "suppressed"})
+	})
+}
+
 // AdmitSignal admits only identity-only hints, with no native authority effect.
 func (s *Store) AdmitSignal(ctx context.Context, h transport.HookSignal, ulid string) error {
 	a, err := s.prepareSpool(h, ulid, "identity", nil)

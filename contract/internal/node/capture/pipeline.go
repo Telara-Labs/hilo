@@ -115,6 +115,29 @@ func refused(err error) (Result, error) {
 	return Result{Status: status, OwnerBlocked: blocked}, err
 }
 
+// skipSuppressed reports a unit that erasure suppressed. An ordinary capture is
+// held with "suppressed". A hook signal is acknowledged by its backend, which
+// rechecks suppression and records the hint as done without reading or sealing
+// anything, so the drain continues with other units and sources.
+func skipSuppressed(ctx context.Context, q store.SourceOccurrence) (Result, error) {
+	empty := Result{Status: "held"}
+	admission, ok := ctx.Value(signalAdmissionKey{}).(signalAdmission)
+	if !ok {
+		return empty, hold("suppressed")
+	}
+	backend, ok := admission.store.(SuppressedSignalStore)
+	if !ok {
+		return empty, hold("suppressed")
+	}
+	if ctx.Err() != nil {
+		return empty, hold("cancelled")
+	}
+	if err := backend.SkipSuppressedSignal(ctx, admission.signal, admission.ulid, q); err != nil {
+		return refused(storeFailure(err))
+	}
+	return Result{Status: "suppressed"}, nil
+}
+
 func (p *Pipeline) Close() error {
 	if p == nil {
 		return nil
@@ -209,12 +232,15 @@ func (p *Pipeline) capture(ctx context.Context, unit Unit, prepare preparationSt
 		return refused(hold("owner_blocked"))
 	}
 	if inspection.Suppression.Suppressed {
-		return empty, hold("suppressed")
+		return skipSuppressed(ctx, query)
 	}
 	batch, h, err := prepare(ctx, c, u, func(ctx context.Context, _ sourceOccurrence) (gateState, error) {
 		gate, e := p.store.Suppressed(ctx, query)
 		return gateState{suppressed: gate.Suppressed, ownerBlocked: gate.OwnerBlocked}, e
 	})
+	if Code(err) == "suppressed" {
+		return skipSuppressed(ctx, query)
+	}
 	if err != nil {
 		return refused(err)
 	}
@@ -263,7 +289,11 @@ func (p *Pipeline) capture(ctx context.Context, unit Unit, prepare preparationSt
 		if Code(err) != "capture_failure" {
 			return empty, err
 		}
-		return refused(storeFailure(err))
+		if err = storeFailure(err); Code(err) == "suppressed" {
+			// Erasure landed between inspection and the writer, which rolled back.
+			return skipSuppressed(ctx, query)
+		}
+		return refused(err)
 	}
 	if receipt.Status != "committed" && receipt.Status != "no_change" && receipt.Status != "prior_transition_committed" {
 		return Result{Status: "outcome_unknown"}, hold("outcome_unknown")

@@ -382,3 +382,68 @@ func TestSpoolInputBoundsAndIdentityFailClosed(t *testing.T) {
 		t.Fatal("instance replacement admitted", done, err)
 	}
 }
+
+// A suppressed unit is skipped, not held. The hint is acknowledged in one
+// transaction with no capture progress, transition or record, only when the
+// writer still sees the unit as suppressed, and the acknowledgement is stable.
+func TestSpoolSkipSuppressedAcknowledgesWithoutCapture(t *testing.T) {
+	ctx := context.Background()
+	f := newProducer(t, "erased transcript text must never return")
+	h := spoolTestHint()
+	if err := f.w.s.SkipSuppressedSignal(ctx, h, spoolTestID, f.q.Occurrence); Code(err) != "not_suppressed" {
+		t.Fatal("live unit acknowledged without capture", err)
+	}
+	if spoolCount(t, f.w.s, "spool_announcement") != 0 || spoolCount(t, f.w.s, "spool_done") != 0 {
+		t.Fatal("refused skip wrote a receipt")
+	}
+	original := f.commit()
+	f.w.append(f.w.control(18201, record.KindErasure, f.plan.NewRecords[0].AdvisoryID))
+	before := f.w.snapshot()
+	progress, transitions := spoolCount(t, f.w.s, "capture_progress"), spoolCount(t, f.w.s, "capture_transition")
+	second := spoolTestID[:25] + "2"
+	if err := f.w.s.ObserveSignal(ctx, h, second); err != nil {
+		t.Fatal(err)
+	}
+	other := f.q.Occurrence
+	other.SessionKey = "sk1:" + strings.Repeat("c", 64)
+	if err := f.w.s.SkipSuppressedSignal(ctx, h, second, other); Code(err) != "signal_conflict" {
+		t.Fatal("hint bound to a different session", err)
+	}
+	for _, id := range []string{spoolTestID, second} {
+		if err := f.w.s.SkipSuppressedSignal(ctx, h, id, f.q.Occurrence); err != nil {
+			t.Fatal("suppressed unit held", err)
+		}
+		if done, err := f.w.s.SignalDone(ctx, h.Client, id); err != nil || !done {
+			t.Fatal("skip not acknowledged", done, err)
+		}
+	}
+	spoolReopen(t, f.w)
+	if err := f.w.s.SkipSuppressedSignal(ctx, h, spoolTestID, f.q.Occurrence); err != nil {
+		t.Fatal("acknowledged skip replay", err)
+	}
+	for _, id := range []string{spoolTestID, second} {
+		if done, err := f.w.s.SignalDone(ctx, h.Client, id); err != nil || !done {
+			t.Fatal("skip acknowledgement lost on reopen", done, err)
+		}
+	}
+	if !reflect.DeepEqual(before, f.w.snapshot()) || spoolCount(t, f.w.s, "capture_progress") != progress || spoolCount(t, f.w.s, "capture_transition") != transitions {
+		t.Fatal("skip changed capture state")
+	}
+	if spoolCount(t, f.w.s, "spool_announcement") != 2 || spoolCount(t, f.w.s, "spool_done") != 2 {
+		t.Fatal("skip receipts")
+	}
+	var raw []byte
+	if err := f.w.s.conn.QueryRowContext(ctx, "SELECT receipt FROM spool_done WHERE ulid=?", spoolTestID).Scan(&raw); err != nil || strings.Contains(string(raw), "erased transcript") || !strings.Contains(string(raw), `"suppressed"`) {
+		t.Fatal("skip receipt", string(raw), err)
+	}
+	// The producer never runs again for the erased unit, even with a fresh hint.
+	third := spoolTestID[:25] + "3"
+	q := f.q
+	q.ExpectedVersion = original.ResultingProgress.Version
+	if _, err := f.w.s.CaptureSignal(ctx, h, third, q, spoolNoCallback(t)); Code(err) != "suppressed" {
+		t.Fatal("erased unit admitted capture", err)
+	}
+	if done, err := f.w.s.SignalDone(ctx, h.Client, third); err != nil || done {
+		t.Fatal("refused capture acknowledged", done, err)
+	}
+}

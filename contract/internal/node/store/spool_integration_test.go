@@ -223,3 +223,171 @@ func TestSpoolRealCollectorRecoveryAfterErasure(t *testing.T) {
 		t.Fatal("restart recaptured", len(final.Entries), c.Stats(), err)
 	}
 }
+
+// Re-signalling an erased transcript is a skip: the real collector drains
+// without error, acknowledges and unlinks every hint, never recaptures the
+// erased unit (including bytes appended to it later) and still captures a new
+// unit signalled in the same drain.
+func TestSpoolRealCollectorSkipsSuppressedUnitAndCapturesNewUnit(t *testing.T) {
+	f := newCaptureFixture(t, "unused source")
+	ctx := context.Background()
+	home := filepath.Dir(f.opts.Dir)
+	loc, err := clients.Locations(clients.Options{Client: clients.Claude, Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.MkdirAll(loc.Transcripts, 0700); err != nil {
+		t.Fatal(err)
+	}
+	const erasedNative = "01990000-0000-4000-8000-000000000001"
+	const freshNative = "01990000-0000-4000-8000-000000000002"
+	const erasedMarker = "SPOOL_SKIP_ERASED_8d41f0c2a7"
+	const appendedMarker = "SPOOL_SKIP_APPENDED_3b9e6d15f4"
+	const freshMarker = "SPOOL_SKIP_FRESH_c07a52e8b1"
+	line := func(native, id, text string) []byte {
+		return []byte(`{"type":"user","uuid":"` + id + `","sessionId":"` + native + `","message":{"role":"user","content":[{"type":"text","text":"` + text + `"}]}}` + "\n")
+	}
+	erasedPath := filepath.Join(loc.Transcripts, erasedNative+".jsonl")
+	if err = os.WriteFile(erasedPath, line(erasedNative, "u1", erasedMarker), 0600); err != nil {
+		t.Fatal(err)
+	}
+	signal := func(native, path string) {
+		t.Helper()
+		input, _ := json.Marshal(map[string]string{"hook_event_name": "Stop", "session_id": native, "transcript_path": path})
+		if res := clients.RunHook(ctx, clients.Options{Client: clients.Claude, Home: home, StateDir: f.opts.Dir}, bytes.NewReader(input)); !res.Published {
+			t.Fatal(res.Code)
+		}
+	}
+	pending := func() int {
+		t.Helper()
+		names, err := os.ReadDir(filepath.Join(f.opts.Dir, "spool", "claude", "new"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(names)
+	}
+	signal(erasedNative, erasedPath)
+	cfg := capture.Config{Home: home, OwnerGenesis: f.opts.PinnedGenesisID, MachineID: f.opts.LocalMachineID, CaptureEnabled: true, Roots: map[string]capture.Root{"claude": {Client: "claude-code", AbsPath: loc.Transcripts}}}
+	keys, err := capture.PreloadKeys(make([]byte, 32), f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := capture.NewPipeline(ctx, f.s, cfg, keys)
+	keys.Clear()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	c, err := capture.NewCollector(p, f.opts.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	time.Sleep(2100 * time.Millisecond)
+	if err = c.Drain(ctx, "synthetic-credential"); err != nil || c.Stats().Done != 1 {
+		t.Fatal("first capture", c.Stats(), err)
+	}
+	snap, err := f.s.Snapshot(ctx, store.ReadRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectors := record.Selectors{}
+	for _, entry := range snap.Entries {
+		r, err := record.Parse(entry.HeaderJCS, entry.BodyJCS, entry.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Header.Type == record.KindChunk || r.Header.Type == record.KindSession {
+			selectors.IDs = append(selectors.IDs, r.ID)
+		}
+		if b, ok := r.Body.(*record.ChunkBody); ok {
+			for _, e := range b.Events {
+				selectors.Events = append(selectors.Events, record.EventSelector{Owner: f.opts.PinnedGenesisID, SessionKey: r.Header.Subj.SessionKey, EventID: e.ID})
+			}
+		}
+	}
+	if len(selectors.IDs) != 2 || len(selectors.Events) != 1 {
+		t.Fatal("capture output missing", selectors)
+	}
+	sort.Strings(selectors.IDs)
+	lid, err := record.ControlLID(record.KindErasure, f.opts.PinnedGenesisID, "b3333333333333333333333333333333")
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := record.Build(record.Header{Type: record.KindErasure, LID: lid, At: 1761150000002, Prov: record.ProvUser, Author: record.Author{KeyID: f.opts.PinnedGenesisID, MachineID: f.opts.LocalMachineID}, Red: record.Redact{Profile: record.ProfileLocal}}, &record.ErasureBody{EventCoverage: "complete", Selectors: selectors, Reason: "user_request"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.s.ApplyControl(ctx, extensionInput(t, control, f.key)); err != nil {
+		t.Fatal(err)
+	}
+	if scrub, err := f.s.Scrub(ctx, control.ID); err != nil || scrub.State != "complete" {
+		t.Fatal(scrub, err)
+	}
+	erasedEntries, err := f.s.Snapshot(ctx, store.ReadRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The unchanged transcript is signalled first, then grows inside the same
+	// erased unit; a separate session is a new unit outside that scope.
+	signal(erasedNative, erasedPath)
+	appended, err := os.OpenFile(erasedPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = appended.Write(line(erasedNative, "u2", appendedMarker)); err != nil {
+		t.Fatal(err)
+	}
+	if err = appended.Close(); err != nil {
+		t.Fatal(err)
+	}
+	freshPath := filepath.Join(loc.Transcripts, freshNative+".jsonl")
+	if err = os.WriteFile(freshPath, line(freshNative, "u3", freshMarker), 0600); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2100 * time.Millisecond)
+	signal(erasedNative, erasedPath)
+	signal(freshNative, freshPath)
+	if pending() != 3 {
+		t.Fatal("hints not published")
+	}
+	if err = c.Drain(ctx, "synthetic-credential"); err != nil {
+		t.Fatal("suppressed unit held the drain", err)
+	}
+	if pending() != 0 || c.Stats().Done != 4 {
+		t.Fatal("skipped hints left pending", pending(), c.Stats())
+	}
+	final, err := f.s.Snapshot(ctx, store.ReadRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshFound := false
+	for _, entry := range final.Entries {
+		if bytes.Contains(entry.BodyJCS, []byte(erasedMarker)) || bytes.Contains(entry.BodyJCS, []byte(appendedMarker)) {
+			t.Fatal("erased unit recaptured")
+		}
+		freshFound = freshFound || bytes.Contains(entry.BodyJCS, []byte(freshMarker))
+	}
+	if !freshFound || len(final.Entries) != len(erasedEntries.Entries)+2 {
+		t.Fatal("new unit not captured", freshFound, len(final.Entries), len(erasedEntries.Entries))
+	}
+	// Later signals keep skipping, with no further capture.
+	signal(erasedNative, erasedPath)
+	if err = c.Drain(ctx, "synthetic-credential"); err != nil || pending() != 0 || c.Stats().Done != 5 {
+		t.Fatal("later skip", pending(), c.Stats(), err)
+	}
+	if later, err := f.s.Snapshot(ctx, store.ReadRequest{}); err != nil || len(later.Entries) != len(final.Entries) {
+		t.Fatal("later signal recaptured", err)
+	}
+	if err = c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertNoManagedCanary(t, f.opts.Dir, erasedMarker)
+	assertNoManagedCanary(t, f.opts.Dir, appendedMarker)
+	if f.s, err = store.Open(ctx, f.opts); err != nil {
+		t.Fatal(err)
+	}
+}

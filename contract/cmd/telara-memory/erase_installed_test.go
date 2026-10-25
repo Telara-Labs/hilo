@@ -519,15 +519,23 @@ func TestInstalledEraseCapturedTranscriptBytes(t *testing.T) {
 	if hits := n.ftsShadowHits(canary); len(hits) != 0 {
 		t.Fatal("captured bytes remain in FTS", hits)
 	}
-	// Re-signal the unchanged transcript: the erased events stay banned. The
-	// drain refuses the suppressed source and the request fails closed; either
-	// way nothing may be recaptured.
+	// Re-signal the unchanged transcript: the erased unit is suppressed, so the
+	// drain skips it. The signal is acknowledged, nothing is recaptured and MCP
+	// keeps working, on this call and on later ones.
 	signal()
-	if r := n.callToolResult("telara_task_list", map[string]any{}); r.IsError && (len(r.Content) != 1 || r.Content[0].Text != "identity_unavailable") {
-		t.Fatalf("unexpected refusal %+v", r)
+	for i := 0; i < 3; i++ {
+		if r := n.callToolResult("telara_task_list", map[string]any{}); r.IsError {
+			t.Fatalf("call %d after re-signal refused %+v", i, r)
+		}
+		if hits := n.filesContaining(canary); len(hits) != 0 {
+			t.Fatal("erased transcript content was recaptured into", hits)
+		}
+		if i == 0 {
+			signal()
+		}
 	}
-	if hits := n.filesContaining(canary); len(hits) != 0 {
-		t.Fatal("erased transcript content was recaptured into", hits)
+	if names, err := os.ReadDir(filepath.Join(n.paths.Data, "spool", "claude", "new")); err != nil || len(names) != 0 {
+		t.Fatal("suppressed signals left pending", len(names), err)
 	}
 	n.stop()
 	if hits := n.filesContaining(canary); len(hits) != 0 {
