@@ -232,12 +232,18 @@
         {
           "package": "./invalidate",
           "run": "^TestV3MissingMembership(SessionBanRecovery|AllNamespacesRequired)$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestNodeV11TwoDeviceEventControlPendingOwnerAndSupplementalCoverage$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestV3(LateSessionMembershipSurvivesPurgeAndCrash|MembershipFailurePreventsLateChunkAndPurge|ScrubReconcilesRecoveredMembershipBeforeCleanReceipt)$"
         }
       ],
       "fixtures": [],
-      "adapter_required": [
-        "Real two-device event control with unknown issuer chunk, durable membership/pending-owner blocks, supplemental controls and invalid late-body no-side-effect admission under the erasure fence, restart and no early ACK."
-      ]
+      "adapter_required": []
     },
     {
       "id": "V12",
@@ -258,11 +264,19 @@
         {
           "package": "./invalidate",
           "run": "^TestErasureChainEveryOrder$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestNodeV13ConcurrentAdmissionAndEraseLeaveNoLiveLateRecord$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestWriterAcquisition(RetriesOnlyBusyBeforeCallback|DoesNotRetryNonBusy|CancellationAndFiniteExhaustion)$"
         }
       ],
       "fixtures": [],
       "adapter_required": [
-        "Concurrent node SQLite and hosted Postgres admission/erase transactions must share the prescribed locks and demonstrate no live late record. Pure sequential arrival permutations are not concurrent storage proof."
+        "Hosted Postgres admission/erase transactions must share the prescribed locks and demonstrate no live late record. Pure sequential arrival permutations are not concurrent storage proof."
       ]
     },
     {
@@ -474,12 +488,26 @@
     {
       "id": "V23",
       "title": "Physical FTS scrub pinned SQLite",
-      "tests": [],
+      "tests": [
+        {
+          "package": "./internal/node/store",
+          "run": "^TestNodeV23SecureDeleteAtOpenAndNoSecretSurvivesScrub$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^Test(PhysicalScrubActualBytesAndBusyReader|EraseExactPurgesClosureAndScrubsPhysicalBytes)$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestV3TenantReplacementAndLogoutScrubPhysicalPolicySecrets$"
+        },
+        {
+          "package": "./cmd/telara-memory",
+          "run": "^TestInstalledErase(RemovesPlantedBytesFromEveryFile|CapturedTranscriptBytes)$"
+        }
+      ],
       "fixtures": [],
-      "adapter_required": [
-        "Node modernc.org/sqlite v1.60.1 must verify FTS5 secure-delete config1 at open and planted token absence in DB WAL and shadow tables after FULL-synchronous erasure. Contract module has no database.",
-        "Contract3 independent body/event/call/policy salts and commitment intermediates must be absent from every persisted equality workspace, cache, diagnostic and erased event copy; recapture tombs apply before sealing."
-      ]
+      "adapter_required": []
     },
     {
       "id": "V24",
@@ -508,13 +536,30 @@
         {
           "package": "./record",
           "run": "^TestV3OperationSnapshotRejectsInvalidState$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestNodeV24AtomicOperationTokenAndUniformKeylessRetry$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestV3(ErasureDestroysOriginalComparatorAndFreshSameLIDCannotMatch|IssuedTokensAndEphemeralScopeQuotaRetirement)$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestDisclosureTransactionPhaseFailuresNeverReleasePartialAuthority$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestDisclosurePublic(ReplayReopenKeepsSignedMutation|VisibleACKAndPageReplayAcrossReopen)$"
+        },
+        {
+          "package": "./internal/node/syncnode",
+          "run": "^TestV24LostReplyRetriesSameBytesAcrossRestart$"
         }
       ],
       "fixtures": [],
-      "adapter_required": [
-        "Node must atomically persist mutation, original tool/args, exposure, render version, dedup generation and confirmation with actual store transactions.",
-        "Credential-bound initialize token issuance and consumption persisted atomically with mutation/CallBody/key/deps/outcome, competing retries/restart, uniform keyless result after actual secret scrub; no fallback for unknown supplied token."
-      ]
+      "adapter_required": []
     },
     {
       "id": "V25",
@@ -575,12 +620,22 @@
         {
           "package": "./transport",
           "run": "^TestBundleCuts$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestNodeV28LateExposureHoldsAcrossTransferCompactionAndErasure$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestBundle(SelectionNeverAutoSelectsRootsAndCarriesControls|ImportOtherDeviceThenExactRootErasure)$"
+        },
+        {
+          "package": "./internal/node/bundle",
+          "run": "^TestFixtureFactsTravelSignedEncryptedAndHoldLaterArrivals$"
         }
       ],
       "fixtures": [],
-      "adapter_required": [
-        "Node bundle transfer/restore must persist late binding and selector identities, exclude incomplete roots without auto-selecting private records, and retain exposure facts after compaction and body erasure."
-      ]
+      "adapter_required": []
     },
     {
       "id": "V29",
