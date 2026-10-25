@@ -1,0 +1,4 @@
+go test fuzz v1
+[]byte("{\"at\":0,\"author\":{\"key_id\":\"0\"},\"body\":{\"digest\":\"\",\"size\":0},\"lid\":\"0\",\"prov\":\"\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"\"},\"subj\":{},\"trust\":{},\"type\":\"call\",\"v\":3}")
+[]byte("")
+bool(true)

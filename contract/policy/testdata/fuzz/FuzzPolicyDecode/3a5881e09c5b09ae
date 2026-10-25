@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"applies\":{\"ucdrs\":[\"(\"]},\"issued_at\":1,\"not_after\":0,\"salt\":\"\",\"seq\":-1,\"tenant\":\"\"}")

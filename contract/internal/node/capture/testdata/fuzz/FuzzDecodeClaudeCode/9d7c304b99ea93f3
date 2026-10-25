@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"0\",\"name\":\"0\",\"input\":{\"00\":{\"8\":7,\"00\":true}}}]}}\n1")

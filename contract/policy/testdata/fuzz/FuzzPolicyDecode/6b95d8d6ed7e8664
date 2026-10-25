@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"applies\":{\"users\":[\"#\"]},\"blocked_repos\":[{\"effect\":\"no-push\",\"remote_glob\":\"a8th7b.cox/acmz/seca1t\"}],\"issued_at\":1761150000000,\"not_after\":1761754800000,\"push\":{\"allow_repos\":[\"github.com/OcmC/*\"],\"max_profile\":\"push-metadata\"},\"refresh_after\":1761236400000,\"salt\":\"y1P9YGcajTB0D1cAXbdU7g\",\"seq\":2,\"tenant\":\"9780\"}")

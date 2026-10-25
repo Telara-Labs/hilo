@@ -162,6 +162,12 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	if r.KeyStore.Backend == "unavailable" {
 		r.Problems = append(r.Problems, "key_store_unavailable")
 	}
+	if r.KeyStore.CustodyRecord == "unreadable" || r.KeyStore.CustodyRecord == "unsafe" {
+		r.Problems = append(r.Problems, "key_store_custody_record_"+r.KeyStore.CustodyRecord)
+	}
+	if r.KeyStore.InstalledProfile == "unreadable" {
+		r.Problems = append(r.Problems, "key_store_installed_identity_unreadable")
+	}
 	diag, err := store.Inspect(ctx, p.Data)
 	switch {
 	case errors.Is(err, store.ErrNoDatabase):
@@ -392,6 +398,10 @@ func syncState(ctx context.Context, data string, pol store.PolicyDiagnostics, no
 	}
 	if s.Configured && pol.Installed && pol.FailClosed {
 		s.Blockers = append(s.Blockers, "policy_"+pol.Freshness)
+	}
+	// A policy that cannot be evaluated fails closed exactly like an expired one.
+	if s.Configured && pol.EvaluationCode != "" {
+		s.Blockers = append(s.Blockers, "policy_"+pol.EvaluationCode)
 	}
 	return s
 }

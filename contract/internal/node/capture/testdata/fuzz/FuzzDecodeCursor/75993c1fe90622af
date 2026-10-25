@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"type\":\"turn_ended\",\"status\":\"error\",\"error\":\"AuthorizItion: Bearer cursor-synthetic-token\"}\n")

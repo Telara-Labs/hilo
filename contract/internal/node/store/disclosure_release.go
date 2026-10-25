@@ -263,11 +263,11 @@ func (e *DisclosureEngine) prepareRender(ctx context.Context, d *databaseState, 
 		for _, id := range currentDeps {
 			r.deps[id] = true
 		}
-		trust := d.trust[x.rec.ID]
-		if !view.Eligible(view.ReadContext{Channel: "S", Kind: x.rec.Header.Type, Verified: true, OwnGenesis: true, GrantAllowed: true, Trust: trust}) {
-			return nil, failure("label_unavailable")
+		labels, err := releaseLabels(d, x)
+		if err != nil {
+			return nil, err
 		}
-		item := disclosuretext.RenderItem{LID: x.rec.Header.LID, ID: x.rec.ID, Labels: disclosuretext.Labels{Source: "local", Kind: string(x.rec.Header.Type), Signature: "verified", Coverage: trust.Coverage, Trust: strings.Join(trust.Effective(), ","), Evidence: "agent-declared"}}
+		item := disclosuretext.RenderItem{LID: x.rec.Header.LID, ID: x.rec.ID, Labels: labels}
 		item.TaskID = x.rec.Header.Subj.TaskID
 		if o.lookup && o.recordKind != "" && x.rec.Header.Type != o.recordKind {
 			return nil, failure("unavailable")
@@ -690,4 +690,18 @@ func (e *DisclosureEngine) Acknowledge(ctx context.Context, h ClientHandle, ack 
 		return ACKReceipt{}, err
 	}
 	return out, nil
+}
+
+// releaseLabels computes the effective label of one released record. A
+// record whose trust was not computed, or whose computed coverage is not a
+// known value, refuses the release instead of rendering without a label.
+func releaseLabels(d *databaseState, x *stored) (disclosuretext.Labels, error) {
+	trust, ok := d.trust[x.rec.ID]
+	if !ok || (trust.Coverage != "complete" && trust.Coverage != "incomplete") {
+		return disclosuretext.Labels{}, failure("label_unavailable")
+	}
+	if !view.Eligible(view.ReadContext{Channel: "S", Kind: x.rec.Header.Type, Verified: true, OwnGenesis: true, GrantAllowed: true, Trust: trust}) {
+		return disclosuretext.Labels{}, failure("label_unavailable")
+	}
+	return disclosuretext.Labels{Source: "local", Kind: string(x.rec.Header.Type), Signature: "verified", Coverage: trust.Coverage, Trust: strings.Join(trust.Effective(), ","), Evidence: "agent-declared"}, nil
 }

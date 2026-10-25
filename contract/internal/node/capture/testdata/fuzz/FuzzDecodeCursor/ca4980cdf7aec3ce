@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"role\":\"user\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Yaaaaaaaa Caaaaa xaaaaaa\"}]}}\n0000000000000000000000000\xed\xed\n")

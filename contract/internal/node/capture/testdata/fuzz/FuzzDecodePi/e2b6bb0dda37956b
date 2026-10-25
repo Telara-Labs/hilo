@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"type\":\"session\",\"version\":3,\"id\":\"01990000-0000-4000-8000-000000000001\",\"timestamp\":\"7000#10#11A21:00:07 710A\",\"cwd\":\" yaaabaxaa bbaaaaa\"}\n")

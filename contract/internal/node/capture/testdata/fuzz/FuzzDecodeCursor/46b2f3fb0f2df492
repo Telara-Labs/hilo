@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"role\":\"user\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Suest\"}]}}\n{\"role\":\"assistant\"rd\"Y\"cursor-synthetic-secret\"}},{\"type\":\"tool_usb\",\"name\":\"text\",\"text\":\"Surn_ended\",\"status\"\"0error\",\"erro}\n")

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"applies\":{\"users\":[\"A\"]},\"issued_at\":1000000000000,\"kill\":{\"sync\":true,\"withdraw_pulled\":true},\"not_after\":1010000000001,\"salt\":\"A000A0AAAAAAAAA0AAAA0A\",\"seq\":1,\"tenant\":\"A00a\"}")

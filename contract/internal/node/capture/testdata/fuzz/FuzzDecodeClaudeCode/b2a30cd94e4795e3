@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"type\":\"user\",\"sessionId\":\"01990000-0000-4000-8000-000000000001\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"/synthetic/project\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Read the synthetic guide.\"},{\"type\":\"text\",\"text\":\"Keep both 5locks.\"}]}}\n")

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"applies\":{\"users\":[\"\"]},\"b0\":[{\"021a1\":\"B881\",\"08Cb112\":\"9b90918120020X1A0\"}],\"issued_at\":7,\"not_after\":2,\"salt\":\"\",\"seq\":1,\"tenant\":\"\"}")
