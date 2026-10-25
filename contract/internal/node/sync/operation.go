@@ -237,12 +237,16 @@ func rawZstd(body []byte) []byte {
 	}
 	return out
 }
-func readRawZstd(raw []byte) ([]byte, error) {
+func readRawZstd(raw []byte) ([]byte, error) { return readRawZstdLimit(raw, record.MaxBodyBytes) }
+
+// readRawZstdLimit checks the declared content size against limit before it
+// allocates the output.
+func readRawZstdLimit(raw []byte, limit int) ([]byte, error) {
 	if len(raw) < 12 || !bytes.Equal(raw[:5], []byte{0x28, 0xb5, 0x2f, 0xfd, 0xa0}) {
 		return nil, ErrInvalid
 	}
 	size := int(binary.LittleEndian.Uint32(raw[5:9]))
-	if size < 1 || size > record.MaxBodyBytes {
+	if size < 1 || size > limit {
 		return nil, ErrInvalid
 	}
 	raw = raw[9:]

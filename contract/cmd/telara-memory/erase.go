@@ -35,6 +35,7 @@ var notReachable = []string{
 	"a hosted embedding provider",
 	"devices that have not synced this erasure",
 	"a node restored from a backup older than this erasure, until it pulls the control",
+	"bundle and backup files exported before this erasure, until they are deleted",
 }
 
 // profilePaths uses explicit paths, else the verified installation receipt.

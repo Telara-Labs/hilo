@@ -10,6 +10,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/invalidate"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/telara-memory/contract/transport"
 	"github.com/Telara-Labs/telara-memory/contract/view"
 )
 
@@ -45,6 +46,8 @@ type databaseState struct {
 	nonceLookups                        int
 	blocked                             bool
 	projectionBlocked                   bool
+	restoreFenced                       bool
+	importedFacts                       []transport.ExposureFact
 	attrs                               map[string]attributionFact
 	exposures                           []*exposureFact
 	semantic                            map[string]map[string]bool
@@ -170,6 +173,9 @@ func (s *Store) load(ctx context.Context) (*databaseState, error) {
 	if err = s.loadFences(ctx, d); err != nil {
 		return nil, err
 	}
+	if d.restoreFenced, err = s.restoreFenced(ctx); err != nil {
+		return nil, err
+	}
 	// Reconstruct every signed edge before a call key or copied body can be
 	// used. Missing local indexes never turn declared ancestry into empty [].
 	for _, x := range d.records {
@@ -205,6 +211,12 @@ func (s *Store) load(ctx context.Context) (*databaseState, error) {
 		return nil, err
 	}
 	if err = s.loadDisclosureFacts(ctx, d); err != nil {
+		if _, ok := err.(*projectionLimit); ok {
+			return nil, s.commitProjectionHold(ctx)
+		}
+		return nil, err
+	}
+	if err = s.loadImportedFacts(ctx, d); err != nil {
 		if _, ok := err.(*projectionLimit); ok {
 			return nil, s.commitProjectionHold(ctx)
 		}
@@ -314,6 +326,9 @@ func (d *databaseState) rebuild(o Options) error {
 	if err := d.semanticFacts(o); err != nil {
 		return err
 	}
+	if err := d.importedSemanticFacts(); err != nil {
+		return err
+	}
 	d.eval = d.model.Evaluate()
 	if d.eval.OwnerPending[o.PinnedGenesisID] {
 		d.blocked = true
@@ -384,6 +399,15 @@ func (d *databaseState) rebuild(o Options) error {
 	if d.blocked {
 		for _, x := range d.records {
 			if !x.rec.Header.Type.IsControl() && x.state != "invalidated" {
+				x.state = "privacy-hold"
+			}
+		}
+	}
+	// Data restored from another device is not served until a hosted-enrolled
+	// node has completed PULL(control)+ENFORCE after the restore.
+	if d.restoreFenced {
+		for _, x := range d.records {
+			if !x.rec.Header.Type.IsControl() && x.state != "invalidated" && x.rec.Header.Author.MachineID != o.LocalMachineID {
 				x.state = "privacy-hold"
 			}
 		}

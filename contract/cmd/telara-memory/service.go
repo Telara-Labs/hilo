@@ -210,7 +210,7 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 		}
 		var r install.Report
 		var installErr error
-		if err = ipc.WriteFrame(out, map[string]string{"credential_store": vault.Location()}); err != nil {
+		if err = ipc.WriteFrame(out, map[string]string{"credential_store": vault.Location(), "identity_recovery": noSurvivingDeviceLimit}); err != nil {
 			return err
 		}
 		err = provisionAuthority(ctx, p.Data, installationVault{vault.New(), dir, p.Data}, func() error {

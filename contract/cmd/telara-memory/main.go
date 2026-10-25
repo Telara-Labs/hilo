@@ -31,6 +31,8 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 		return runSync(ctx, args[1:], in, out)
 	case "erase":
 		return runErase(ctx, args[1:], in, out)
+	case "bundle":
+		return runBundle(ctx, args[1:], in, out)
 	case "doctor":
 		return runDoctor(ctx, args[1:], out)
 	case "daemon", "managed-daemon", "shim", "install", "uninstall", "status", "register", "start", "stop", "upgrade":

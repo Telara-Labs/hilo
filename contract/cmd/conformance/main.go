@@ -53,7 +53,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	allowed := map[string]bool{".": true, "./jcs": true, "./record": true, "./sig": true, "./heads": true, "./invalidate": true, "./policy": true, "./view": true, "./transport": true, "./replay": true}
+	allowed := map[string]bool{".": true, "./jcs": true, "./record": true, "./sig": true, "./heads": true, "./invalidate": true, "./policy": true, "./view": true, "./transport": true, "./replay": true,
+		// Node adapter tests run the actual SQLite store and the installed command.
+		"./internal/node/bundle": true, "./internal/node/store": true, "./internal/node/syncnode": true, "./cmd/telara-memory": true}
 	out := []result{}
 	failed, pending, matched := false, false, false
 	for _, v := range r.Vectors {

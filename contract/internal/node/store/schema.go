@@ -65,6 +65,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.conn.ExecContext(ctx, tenantSchema); err != nil {
 		return failure("storage_error")
 	}
+	if _, err := s.conn.ExecContext(ctx, bundleSchema); err != nil {
+		return failure("storage_error")
+	}
 	if schemaVersion == 1 {
 		// Old index rows have no trusted positive field-completeness facts.
 		if err := s.clearSearch(ctx); err != nil {

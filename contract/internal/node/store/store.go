@@ -97,6 +97,10 @@ type Store struct {
 	opts           Options
 	path           string
 	closed         bool
+
+	// bundleImport is set only inside ImportBundle's writer transaction. It
+	// admits records of another enrolled device of the pinned genesis.
+	bundleImport bool
 }
 
 // Open refuses unsupported privacy, incompatible identities and SQLite settings.

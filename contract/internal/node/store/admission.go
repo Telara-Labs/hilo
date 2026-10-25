@@ -312,7 +312,7 @@ func (s *Store) enrichBody(ctx context.Context, d *databaseState, x *stored, r *
 		return AdmissionResult{}, err
 	}
 	res := sig.VerifyRecord(r, x.sigs, d.kr.State(), sig.Context{Route: record.RouteLocal, AdmittedSeq: x.seq})
-	if res.Status != sig.StatusVerified || res.Owner != x.owner || r.Header.Author.MachineID != s.opts.LocalMachineID {
+	if res.Status != sig.StatusVerified || res.Owner != x.owner || !s.authorMachineAllowed(r, res) {
 		return AdmissionResult{}, failure("unauthorized_record")
 	}
 	x.rec = r
@@ -429,7 +429,7 @@ func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures [
 		}
 	} else {
 		res := sig.VerifyRecord(r, signatures, st, sig.Context{Route: record.RouteLocal})
-		if res.Status != sig.StatusVerified || res.Owner != s.opts.PinnedGenesisID || r.Header.Author.MachineID != s.opts.LocalMachineID {
+		if res.Status != sig.StatusVerified || res.Owner != s.opts.PinnedGenesisID || !s.authorMachineAllowed(r, res) {
 			return failure("unauthorized_record")
 		}
 		if r.Header.Type == record.KindErasure || r.Header.Type == record.KindRetraction {
@@ -445,4 +445,14 @@ func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures [
 	}
 
 	return nil
+}
+
+// authorMachineAllowed admits only this device's stream, except inside a
+// verified bundle import, which may carry another device of the same pinned
+// genesis whose key binds the author machine.
+func (s *Store) authorMachineAllowed(r *record.Record, res sig.Result) bool {
+	if r.Header.Author.MachineID == s.opts.LocalMachineID {
+		return true
+	}
+	return s.bundleImport && res.Key != nil && res.Key.Role == record.RoleDevice && res.Key.Genesis == s.opts.PinnedGenesisID && res.Key.MachineID == r.Header.Author.MachineID
 }

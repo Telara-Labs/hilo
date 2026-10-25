@@ -236,6 +236,13 @@ func (w *Worker) round(ctx context.Context, p Profile, client *nodesync.Client, 
 	if err != nil {
 		return err
 	}
+	// Every control to the HELLO head is now enforced, which is the
+	// reconciliation a restored node needs before serving restored data.
+	if r, ok := w.cfg.Store.(restoreReconciler); ok && !blocked {
+		if err = r.CompleteRestoreReconciliation(ctx); err != nil {
+			return err
+		}
+	}
 	var pushErr error
 	if !blocked {
 		pushErr = w.push(ctx, p, client, ob)
@@ -461,4 +468,10 @@ func publicCode(err error) string {
 		return "not_configured"
 	}
 	return "sync_error"
+}
+
+// restoreReconciler is implemented by the node store, which fences data
+// restored from another device until a complete control enforcement pass.
+type restoreReconciler interface {
+	CompleteRestoreReconciliation(context.Context) error
 }

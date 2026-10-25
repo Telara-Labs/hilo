@@ -422,15 +422,28 @@
         {
           "package": "./replay",
           "run": "^TestV3ReplayTransferredRenderRootErasure$"
+        },
+        {
+          "package": "./internal/node/store",
+          "run": "^TestBundle(SelectionNeverAutoSelectsRootsAndCarriesControls|ImportOtherDeviceThenExactRootErasure|RestoreFenceHoldsOtherDeviceDataUntilReconciled)$"
+        },
+        {
+          "package": "./internal/node/bundle",
+          "run": "^TestFixture(FactsTravelSignedEncryptedAndHoldLaterArrivals|NegativesRefuseWhole)$"
+        },
+        {
+          "package": "./internal/node/syncnode",
+          "run": "^TestRestoreFenceReleasedOnlyByCompleteControlEnforcement$"
+        },
+        {
+          "package": "./cmd/telara-memory",
+          "run": "^TestV20(TransferRestoreAfterDeviceAddAndExactErasure|PhysicalBundleInspectionHasNoKeysOrGrantedData|RefusalsCannotClearHolds)$"
         }
       ],
       "fixtures": [
         "v20-exposures.json"
       ],
-      "adapter_required": [
-        "Node age transfer must use verified device EKs; backup must use sole scrypt recipient. Restore after co-signed device_add and verify signed manifest before atomic exposure union and data admission.",
-        "Actual signed encrypted no-event checkpoint plus CallBody full recursive dependency transfer/restore, all managed unopened bundle/staging indexes rebuilt and scrubbed before erasure ACK, current policy rechecked independently on export/import."
-      ]
+      "adapter_required": []
     },
     {
       "id": "V21",
