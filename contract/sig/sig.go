@@ -30,6 +30,17 @@ const AlgEd25519 = "ed25519"
 
 var b64 = base64.RawURLEncoding.Strict()
 
+// decodeCanonical decodes base64url without padding and accepts only the one
+// canonical spelling. The standard decoder skips CR and LF even in strict mode,
+// so a decoded value must re-encode to exactly the input.
+func decodeCanonical(s string) ([]byte, bool) {
+	b, err := b64.DecodeString(s)
+	if err != nil || b64.EncodeToString(b) != s {
+		return nil, false
+	}
+	return b, true
+}
+
 // KeyID returns hex(sha256(raw32 pub))[:32].
 func KeyID(pub ed25519.PublicKey) string {
 	sum := sha256.Sum256(pub)
@@ -41,8 +52,8 @@ func EncodePub(pub ed25519.PublicKey) string { return b64.EncodeToString(pub) }
 
 // DecodePub parses a base64url public key of exactly 32 bytes.
 func DecodePub(s string) (ed25519.PublicKey, error) {
-	b, err := b64.DecodeString(s)
-	if err != nil || len(b) != ed25519.PublicKeySize {
+	b, ok := decodeCanonical(s)
+	if !ok || len(b) != ed25519.PublicKeySize {
 		return nil, fmt.Errorf("public key must be 32 bytes of base64url without padding")
 	}
 	return ed25519.PublicKey(b), nil
@@ -133,8 +144,8 @@ func Verify(pub ed25519.PublicKey, ctx string, msg []byte, s record.Signature) e
 	if s.KeyID != KeyID(pub) {
 		return ErrKeyID
 	}
-	v, err := b64.DecodeString(s.Value)
-	if err != nil || len(v) != ed25519.SignatureSize {
+	v, ok := decodeCanonical(s.Value)
+	if !ok || len(v) != ed25519.SignatureSize {
 		return ErrEncoding
 	}
 	if !ed25519.Verify(pub, msg, v) {
