@@ -15,7 +15,7 @@ func Location() string {
 	case "darwin":
 		return "user default Keychain via Security.framework"
 	case "linux":
-		return "Secret Service collection alias telara-memory on the existing session bus"
+		return "Secret Service telara-memory alias collection, else the default collection, on the existing session bus"
 	case "windows":
 		return "current user Windows Credential Manager"
 	}

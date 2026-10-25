@@ -55,11 +55,76 @@ to provide forensic memory erasure.
 
 Windows uses per-user Credential Manager with durable local-machine persistence
 and an owner-only native mutex to prevent duplicate replacement. Linux uses the
-existing session bus and org.freedesktop.Secret.Service through godbus, with an
-explicit telara-memory collection alias. No session-bus autolaunch, interactive
-unlock or prompt is attempted. Missing, locked or prompting custody refuses
-explicitly. Plain Secret Service transport runs only over the authenticated local
-session bus; same-user bus inspection is outside the stated containment boundary.
+existing session bus and org.freedesktop.Secret.Service through godbus. No
+session-bus autolaunch, interactive unlock or prompt is attempted. Missing, locked
+or prompting custody refuses explicitly. Plain Secret Service transport runs only
+over the authenticated local session bus; same-user bus inspection is outside the
+stated containment boundary.
+
+## Linux collection selection and deletion proof
+
+Selection happens once per profile, before any handle exists, and is persisted
+in the owner-only custody record. Later reads, writes and deletes use the
+recorded collection path and never resolve an alias again.
+
+1. If the `telara-memory` alias resolves, that dedicated collection is used.
+2. Otherwise CreateCollection is asked for it. A reply without a prompt selects
+   the new dedicated collection.
+3. If the service refuses with a D-Bus error reply, or the creation needs a
+   prompt, the default collection (`ReadAlias("default")`) is selected. The
+   prompt is dismissed, never shown. GNOME Keyring takes this path, because it
+   answers "Only the 'default' alias is supported".
+4. A transport failure or deadline refuses, so an unanswered creation is never
+   mistaken for a refusal. No default collection also refuses; custody never
+   creates one, since that needs a prompt.
+
+The record keeps `alias` (`telara-memory` or `default`; empty in records written
+before this path, which always used the dedicated alias) for diagnosis.
+
+Each provisioning generation writes a random 128-bit `creation` value into the
+record, in state `creating`, before CreateItem. The item carries the exact
+attributes `service`, `handle` and `creation`. After CreateItem the assigned
+object path is persisted (`bound`) before SetSecret sends any authority.
+
+- Never adopt. Put refuses with secret_vault_handle_exists if any item with the
+  same service and handle exists, whoever made it. Recovery of a lost
+  CreateItem reply binds only the single item carrying the recorded `creation`
+  value. No item without it is adopted, overwritten or deleted.
+- Exact identity. Reads and deletes use the recorded item path. A search result
+  at another path refuses as a relocated or ambiguous item.
+- Crash recovery. A crash before CreateItem leaves `selected` or `creating` with
+  no matching item, so retry or delete proves no creation on the same service
+  owner. A lost CreateItem reply is resolved by the `creation` attribute. A lost
+  SetSecret reply leaves `bound` with the exact path. After a service or bus
+  restart, absence never proves deletion or no creation, and cleanup refuses.
+- Deletion proof. Absence of the recorded item needs three observations of the
+  same live collection, on the recorded service owner. The exact attribute search
+  is empty. The collection's `Items` property is readable and does not list the
+  recorded path. GetSecret on the recorded path returns an object-missing error.
+  GNOME reports a missing path as `org.freedesktop.DBus.Error.UnknownMethod`
+  ("Object does not exist at path"). A live object without the method returns
+  the same name, so UnknownMethod is accepted only with the other two
+  observations. UnknownObject and NoSuchObject get no weaker treatment. Any
+  failed observation refuses and leaves the record unchanged.
+
+Trade-offs of the default collection.
+
+- Isolation. The Secret Service has no per-application access control. Any
+  same-user client on the session bus can read any item in an unlocked
+  collection, whichever collection holds it. The dedicated collection therefore
+  never isolated access; it separated names. In the default collection, the
+  item is separated by its exact attributes, the 128-bit random handle and the
+  creation value. A generic client that searches or clears by its own
+  attributes does not match it. A user who deletes it by hand in a keyring
+  manager removes custody; the next read reports the handle missing or refuses.
+- Lock scope. The item locks and unlocks with the login keyring, rather than
+  under a separate collection policy. A locked default collection refuses;
+  nothing unlocks it.
+- Visibility. The item is listed with the user's other login secrets, under the
+  label "Telara Memory runtime authority".
+- Compatibility. Records written before this change stay readable. A legacy
+  `creating` record has no creation value, so it refuses instead of guessing.
+  An older build rejects a record with the new fields, and so fails closed.
 
 Installation explicitly grants the registered local shim read access to local
 repositories through search, prime and explicit retrieval, plus task create,
@@ -99,3 +164,10 @@ Its receipt publication fixture does not prove service-manager replacement. The
 signed two-build test additionally requires custody-signing-identity. A skipped
 test is not upgrade acceptance. Native Windows and Linux runtime tests are
 separate from cross-compilation.
+
+Linux private-bus tests run a Go Secret Service double on a real dbus-daemon.
+Each crash and identity fixture runs twice: against a service that supports the
+dedicated alias, and in a GNOME mode that refuses non-default aliases and
+answers UnknownMethod for deleted paths. The double is not GNOME Keyring;
+`TestSecretServiceNativeLifecycle` and `TestSecretServiceNativeForeignItemRefused`
+run against the real service on the session bus.

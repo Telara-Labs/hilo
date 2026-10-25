@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"github.com/godbus/dbus/v5"
 	"os"
 	"testing"
 	"time"
@@ -27,6 +28,11 @@ func TestSecretServiceNativeLifecycle(t *testing.T) {
 		t.Fatal("Secret Service absent, locked, or prompting", e)
 	}
 	defer v.Delete(ctx, h)
+	m := *v.secretService
+	t.Logf("selected alias=%s collection=%s item=%s", m.Alias, m.Collection, m.Item)
+	if m.State != "ready" || m.Creation == "" || (m.Alias != collectionAlias && m.Alias != defaultAlias) {
+		t.Fatal("custody identity not recorded", m.State, m.Alias)
+	}
 	if e := v.Put(ctx, h, []byte("replacement")); !errors.Is(e, ErrExists) {
 		t.Fatal(e)
 	}
@@ -40,6 +46,51 @@ func TestSecretServiceNativeLifecycle(t *testing.T) {
 	}
 	if b, e = v.Get(ctx, h); b != nil || !errors.Is(e, ErrNotFound) {
 		t.Fatal(e)
+	}
+	if v.secretService.State != "deleted" || v.secretService.Item != m.Item {
+		t.Fatal("deletion not recorded against the exact item")
+	}
+}
+
+// A real service must never let custody adopt an item another client made
+// with the same handle. The test removes only the item it planted.
+func TestSecretServiceNativeForeignItemRefused(t *testing.T) {
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+		t.Skip("no session bus; native Secret Service foreign item refusal UNVERIFIED")
+	}
+	ctx, c := context.WithTimeout(context.Background(), 20*time.Second)
+	defer c()
+	var id [16]byte
+	rand.Read(id[:])
+	h := hex.EncodeToString(id[:])
+	s, e := openSession(ctx, true, "")
+	if e != nil {
+		t.Fatal("Secret Service absent, locked, or prompting", e)
+	}
+	defer s.close()
+	props := map[string]dbus.Variant{"org.freedesktop.Secret.Item.Label": dbus.MakeVariant("foreign test item"), "org.freedesktop.Secret.Item.Attributes": dbus.MakeVariant(map[string]string{"service": service, "handle": h})}
+	var item, prompt dbus.ObjectPath
+	if e = s.call(s.collection, "Collection.CreateItem", props, wireSecret{s.session, []byte{}, []byte("foreign"), "text/plain"}, false).Store(&item, &prompt); e != nil || prompt != "/" {
+		t.Fatal(e)
+	}
+	defer s.call(item, "Item.Delete")
+	v := New()
+	if e = v.Put(ctx, h, []byte("isolated synthetic native test")); !errors.Is(e, ErrExists) {
+		t.Fatal("foreign item adopted", e)
+	}
+	if e = v.Delete(ctx, h); !errors.Is(e, ErrUnavailable) {
+		t.Fatal("foreign item deleted", e)
+	}
+	var secret wireSecret
+	if e = s.call(item, "Item.GetSecret", s.session).Store(&secret); e != nil || string(secret.Value) != "foreign" {
+		t.Fatal("foreign item changed", e)
+	}
+	var prompt2 dbus.ObjectPath
+	if e = s.call(item, "Item.Delete").Store(&prompt2); e != nil || prompt2 != "/" {
+		t.Fatal(e)
+	}
+	if !s.itemAbsent(item, map[string]string{"service": service, "handle": h}) {
+		t.Fatal("real service deletion not proven")
 	}
 }
 func TestSecretServiceNoBusRefuses(t *testing.T) {

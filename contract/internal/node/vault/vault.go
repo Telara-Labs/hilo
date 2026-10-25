@@ -25,11 +25,18 @@ const maxSecret = 2560
 type secretServiceLocation struct {
 	Version    int    `json:"version"`
 	Collection string `json:"collection"`
-	Item       string `json:"item"`
-	Handle     string `json:"handle"`
-	Bus        string `json:"bus"`
-	Owner      string `json:"owner"`
-	State      string `json:"state"`
+	// Alias names how the collection was selected. Empty means a record
+	// written before the default-collection path, which always used the
+	// dedicated alias.
+	Alias  string `json:"alias,omitempty"`
+	Item   string `json:"item"`
+	Handle string `json:"handle"`
+	// Creation is a random per-generation attribute known only to this
+	// record. It proves that a recovered item was created by this profile.
+	Creation string `json:"creation,omitempty"`
+	Bus      string `json:"bus"`
+	Owner    string `json:"owner"`
+	State    string `json:"state"`
 }
 
 type Vault struct {

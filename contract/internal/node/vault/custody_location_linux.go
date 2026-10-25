@@ -55,11 +55,18 @@ func validLinuxLocation(m secretServiceLocation) bool {
 	if m.Version != 1 || !dbus.ObjectPath(m.Collection).IsValid() || m.Collection == "/" || len(m.Collection) > 4096 || len(m.Item) > 4096 || len(m.Bus) != 32 || !strings.HasPrefix(m.Owner, ":") || len(m.Owner) > 255 {
 		return false
 	}
+	if m.Alias != "" && m.Alias != collectionAlias && m.Alias != defaultAlias {
+		return false
+	}
+	if m.Creation != "" && valid(context.Background(), m.Creation) != nil {
+		return false
+	}
 	switch m.State {
 	case "selected":
-		return m.Handle == "" && m.Item == ""
+		return m.Handle == "" && m.Item == "" && m.Creation == ""
 	case "creating":
-		return valid(context.Background(), m.Handle) == nil && m.Item == ""
+		// Recovery adopts only an item carrying this record's creation value.
+		return valid(context.Background(), m.Handle) == nil && m.Item == "" && m.Creation != ""
 	case "deleted":
 		return valid(context.Background(), m.Handle) == nil && (m.Item == "" || (dbus.ObjectPath(m.Item).IsValid() && m.Item != "/"))
 	case "bound", "ready":
@@ -82,7 +89,7 @@ func (v *Vault) bindCustody(ctx context.Context, data string, create bool) error
 			return e
 		}
 		defer s.close()
-		m = &secretServiceLocation{Version: 1, Collection: string(s.collection), Bus: s.bus, Owner: s.owner, State: "selected"}
+		m = &secretServiceLocation{Version: 1, Collection: string(s.collection), Alias: s.alias, Bus: s.bus, Owner: s.owner, State: "selected"}
 		if e = writeLinuxLocation(data, *m); e != nil {
 			return e
 		}
@@ -93,7 +100,7 @@ func (v *Vault) bindCustody(ctx context.Context, data string, create bool) error
 	// before the caller publishes its new handle, so a pre-Put crash is provably
 	// a no-creation state rather than an unexplained handle mismatch.
 	if create && m.State == "deleted" {
-		m.Handle, m.Item, m.State = "", "", "selected"
+		m.Handle, m.Item, m.Creation, m.State = "", "", "", "selected"
 		if e = writeLinuxLocation(data, *m); e != nil {
 			return e
 		}

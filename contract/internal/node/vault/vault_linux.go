@@ -4,6 +4,9 @@ package vault
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"github.com/godbus/dbus/v5"
 	"net"
@@ -14,12 +17,17 @@ import (
 
 const secretService = "org.freedesktop.secrets"
 const secretRoot dbus.ObjectPath = "/org/freedesktop/secrets"
+
+// collectionAlias is preferred. Services that refuse non-default aliases, such
+// as GNOME Keyring, select the default collection instead.
 const collectionAlias = "telara-memory"
+const defaultAlias = "default"
 
 type linuxSession struct {
 	conn                *dbus.Conn
 	owner               string
 	bus                 string
+	alias               string
 	session, collection dbus.ObjectPath
 	ctx                 context.Context
 }
@@ -32,6 +40,26 @@ type wireSecret struct {
 func (s *linuxSession) call(path dbus.ObjectPath, method string, args ...any) *dbus.Call {
 	return s.conn.Object(s.owner, path).CallWithContext(s.ctx, "org.freedesktop.Secret."+method, 0, args...)
 }
+func (s *linuxSession) property(path dbus.ObjectPath, iface, name string) (dbus.Variant, error) {
+	var value dbus.Variant
+	e := s.conn.Object(s.owner, path).CallWithContext(s.ctx, "org.freedesktop.DBus.Properties.Get", 0, iface, name).Store(&value)
+	return value, e
+}
+
+// dbusErrorName reports whether e is an error reply sent by the service, as
+// opposed to a transport, context or decoding failure.
+func dbusErrorName(e error) (string, bool) {
+	var value dbus.Error
+	if errors.As(e, &value) {
+		return value.Name, true
+	}
+	var pointer *dbus.Error
+	if errors.As(e, &pointer) && pointer != nil {
+		return pointer.Name, true
+	}
+	return "", false
+}
+
 func openSession(ctx context.Context, create bool, collection dbus.ObjectPath) (*linuxSession, error) {
 	// No autolaunch or prompt. A service must already own its session-bus name.
 	address := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
@@ -55,31 +83,69 @@ func openSession(ctx context.Context, create bool, collection dbus.ObjectPath) (
 		return fail()
 	}
 	s.collection = collection
-	if collection == "" {
-		if s.call(secretRoot, "Service.ReadAlias", collectionAlias).Store(&s.collection) != nil {
-			return fail()
-		}
-	}
-	if s.collection == "/" && create {
-		var prompt dbus.ObjectPath
-		props := map[string]dbus.Variant{"org.freedesktop.Secret.Collection.Label": dbus.MakeVariant("Telara Memory")}
-		if s.call(secretRoot, "Service.CreateCollection", props, collectionAlias).Store(&s.collection, &prompt) != nil || prompt != "/" {
-			return fail()
-		}
+	if collection == "" && s.selectCollection(create) != nil {
+		return fail()
 	}
 	if !s.collection.IsValid() || s.collection == "/" {
 		return fail()
 	}
-	var locked dbus.Variant
-	if conn.Object(s.owner, s.collection).CallWithContext(ctx, "org.freedesktop.DBus.Properties.Get", 0, "org.freedesktop.Secret.Collection", "Locked").Store(&locked) != nil || locked.Value() != false {
+	locked, e := s.property(s.collection, "org.freedesktop.Secret.Collection", "Locked")
+	if e != nil || locked.Value() != false {
 		return fail()
 	}
 	return s, nil
 }
+
+// selectCollection runs once per profile, before any handle exists. It prefers
+// the dedicated alias and creates it only without a prompt. An explicit service
+// refusal or a required prompt selects the default collection; the prompt is
+// dismissed, never shown. A transport failure refuses instead of guessing.
+func (s *linuxSession) selectCollection(create bool) error {
+	var path dbus.ObjectPath
+	if s.call(secretRoot, "Service.ReadAlias", collectionAlias).Store(&path) != nil {
+		return ErrUnavailable
+	}
+	if path != "/" {
+		s.collection, s.alias = path, collectionAlias
+		return nil
+	}
+	if !create {
+		return ErrUnavailable
+	}
+	var prompt dbus.ObjectPath
+	props := map[string]dbus.Variant{"org.freedesktop.Secret.Collection.Label": dbus.MakeVariant("Telara Memory")}
+	e := s.call(secretRoot, "Service.CreateCollection", props, collectionAlias).Store(&path, &prompt)
+	if e == nil && prompt == "/" {
+		s.collection, s.alias = path, collectionAlias
+		return nil
+	}
+	if e == nil {
+		if prompt.IsValid() {
+			_ = s.call(prompt, "Prompt.Dismiss").Err
+		}
+	} else if _, replied := dbusErrorName(e); !replied {
+		return ErrUnavailable
+	}
+	path = ""
+	if s.call(secretRoot, "Service.ReadAlias", defaultAlias).Store(&path) != nil {
+		return ErrUnavailable
+	}
+	s.collection, s.alias = path, defaultAlias
+	return nil
+}
 func (s *linuxSession) close() { _ = s.call(s.session, "Session.Close").Err; s.conn.Close() }
-func (s *linuxSession) find(h string) (dbus.ObjectPath, error) {
+
+// attributes are the exact item attributes of the recorded generation.
+func (m secretServiceLocation) attributes() map[string]string {
+	a := map[string]string{"service": service, "handle": m.Handle}
+	if m.Creation != "" {
+		a["creation"] = m.Creation
+	}
+	return a
+}
+func (s *linuxSession) find(attrs map[string]string) (dbus.ObjectPath, error) {
 	var items []dbus.ObjectPath
-	if s.call(s.collection, "Collection.SearchItems", map[string]string{"service": service, "handle": h}).Store(&items) != nil {
+	if s.call(s.collection, "Collection.SearchItems", attrs).Store(&items) != nil {
 		return "", ErrUnavailable
 	}
 	if len(items) == 0 {
@@ -91,22 +157,38 @@ func (s *linuxSession) find(h string) (dbus.ObjectPath, error) {
 	return items[0], nil
 }
 
-// Search absence alone cannot retire a recorded item. A retained/moved item
-// or an ambiguous backend error must preserve custody evidence.
-func (s *linuxSession) itemAbsent(item dbus.ObjectPath) bool {
-	var secret wireSecret
-	e := s.call(item, "Item.GetSecret", s.session).Store(&secret)
-	clear(secret.Value)
-	var name string
-	switch typed := e.(type) {
-	case dbus.Error:
-		name = typed.Name
-	case *dbus.Error:
-		if typed != nil {
-			name = typed.Name
+// itemAbsent proves deletion of the exact recorded item from three independent
+// observations of the same live collection. The exact attribute search is
+// empty. The collection's Items property lists neither the recorded path nor
+// is it unreadable. The recorded path itself answers GetSecret with an
+// object-missing error. GNOME Keyring reports a missing path as UnknownMethod,
+// which a live object with a missing method also returns. That error is never
+// proof alone, only together with the search and the item listing.
+func (s *linuxSession) itemAbsent(item dbus.ObjectPath, attrs map[string]string) bool {
+	if _, e := s.find(attrs); e != ErrNotFound {
+		return false
+	}
+	listed, e := s.property(s.collection, "org.freedesktop.Secret.Collection", "Items")
+	if e != nil {
+		return false
+	}
+	paths, ok := listed.Value().([]dbus.ObjectPath)
+	if !ok {
+		return false
+	}
+	for _, path := range paths {
+		if path == item {
+			return false
 		}
 	}
-	return name == "org.freedesktop.DBus.Error.UnknownObject" || name == "org.freedesktop.DBus.Error.NoSuchObject" || name == "org.freedesktop.Secret.Error.NoSuchObject"
+	var secret wireSecret
+	e = s.call(item, "Item.GetSecret", s.session).Store(&secret)
+	clear(secret.Value)
+	switch name, _ := dbusErrorName(e); name {
+	case "org.freedesktop.DBus.Error.UnknownObject", "org.freedesktop.DBus.Error.NoSuchObject", "org.freedesktop.Secret.Error.NoSuchObject", "org.freedesktop.DBus.Error.UnknownMethod":
+		return true
+	}
+	return false
 }
 
 func linuxLock(ctx context.Context, h string) (*net.UnixListener, error) {
@@ -138,12 +220,13 @@ func (v *Vault) selectedSession(ctx context.Context, create bool) (*linuxSession
 		return nil, e
 	}
 	if v.secretService == nil {
-		v.secretService = &secretServiceLocation{Version: 1, Collection: string(s.collection), Bus: s.bus, Owner: s.owner, State: "selected"}
+		v.secretService = &secretServiceLocation{Version: 1, Collection: string(s.collection), Alias: s.alias, Bus: s.bus, Owner: s.owner, State: "selected"}
 	}
 	return s, nil
 }
 
-// Resolve an interrupted CreateItem only in the originally recorded collection.
+// Resolve an interrupted CreateItem only in the originally recorded collection
+// and only for an item carrying this record's creation value.
 // After a service/bus restart, absence cannot establish deletion or no creation.
 func (v *Vault) locateLinux(s *linuxSession, h string) (dbus.ObjectPath, error) {
 	m := *v.secretService
@@ -153,12 +236,13 @@ func (v *Vault) locateLinux(s *linuxSession, h string) (dbus.ObjectPath, error) 
 	if m.State == "deleted" {
 		return "", ErrNotFound
 	}
-	item, e := s.find(h)
+	attrs := m.attributes()
+	item, e := s.find(attrs)
 	if e == ErrNotFound {
 		if m.Bus != s.bus || m.Owner != s.owner {
 			return "", ErrUnavailable
 		}
-		if m.Item != "" && !s.itemAbsent(dbus.ObjectPath(m.Item)) {
+		if m.Item != "" && !s.itemAbsent(dbus.ObjectPath(m.Item), attrs) {
 			return "", ErrUnavailable
 		}
 	}
@@ -195,7 +279,7 @@ func (v *Vault) put(ctx context.Context, h string, b []byte) error {
 	defer s.close()
 	m := *v.secretService
 	if m.State == "deleted" {
-		m.Handle, m.Item, m.State = "", "", "selected"
+		m.Handle, m.Item, m.Creation, m.State = "", "", "", "selected"
 	}
 	if m.State != "selected" {
 		if _, e = v.locateLinux(s, h); e == nil {
@@ -203,23 +287,28 @@ func (v *Vault) put(ctx context.Context, h string, b []byte) error {
 		} else if e != ErrNotFound {
 			return e
 		}
-	} else {
-		if _, e = s.find(h); e == nil {
-			return ErrExists
-		} else if e != ErrNotFound {
-			return e
-		}
 	}
-	m.Handle, m.Item, m.State, m.Bus, m.Owner = h, "", "creating", s.bus, s.owner
+	// Never adopt or overwrite an item this generation did not create, even
+	// one that merely shares the handle in a shared default collection.
+	if _, e = s.find(map[string]string{"service": service, "handle": h}); e == nil {
+		return ErrExists
+	} else if e != ErrNotFound {
+		return e
+	}
+	var creation [16]byte
+	if _, e = rand.Read(creation[:]); e != nil {
+		return ErrUnavailable
+	}
+	m.Handle, m.Item, m.Creation, m.State, m.Bus, m.Owner = h, "", hex.EncodeToString(creation[:]), "creating", s.bus, s.owner
 	if e = v.saveLinuxLocation(m); e != nil {
 		return e
 	}
-	props := map[string]dbus.Variant{"org.freedesktop.Secret.Item.Label": dbus.MakeVariant("Telara Memory runtime authority"), "org.freedesktop.Secret.Item.Attributes": dbus.MakeVariant(map[string]string{"service": service, "handle": h})}
+	props := map[string]dbus.Variant{"org.freedesktop.Secret.Item.Label": dbus.MakeVariant("Telara Memory runtime authority"), "org.freedesktop.Secret.Item.Attributes": dbus.MakeVariant(m.attributes())}
 	var item, prompt dbus.ObjectPath
 	if s.call(s.collection, "Collection.CreateItem", props, wireSecret{s.session, []byte{}, []byte{}, "application/octet-stream"}, false).Store(&item, &prompt) != nil || prompt != "/" || !item.IsValid() || item == "/" {
 		return ErrUnavailable
 	}
-	found, e := s.find(h)
+	found, e := s.find(m.attributes())
 	if e != nil || found != item {
 		return ErrUnavailable
 	}
@@ -274,7 +363,7 @@ func (v *Vault) delete(ctx context.Context, h string) error {
 		// Selection precedes handle publication and every native creation intent.
 		// No CreateItem was attempted in this generation. Refuse any unexplained
 		// item instead of deleting it by guessing its identity.
-		if _, e = s.find(h); e != ErrNotFound {
+		if _, e = s.find(map[string]string{"service": service, "handle": h}); e != ErrNotFound {
 			return ErrUnavailable
 		}
 		m := *v.secretService
@@ -290,7 +379,7 @@ func (v *Vault) delete(ctx context.Context, h string) error {
 		if s.call(item, "Item.Delete").Store(&prompt) != nil || prompt != "/" {
 			return ErrUnavailable
 		}
-		if _, e = s.find(h); e != ErrNotFound || !s.itemAbsent(item) {
+		if !s.itemAbsent(item, v.secretService.attributes()) {
 			return ErrUnavailable
 		}
 	}
