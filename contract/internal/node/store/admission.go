@@ -378,6 +378,16 @@ func (s *Store) prepareNew(d *databaseState, r *record.Record, signatures []reco
 	if err := d.rebuild(s.opts); err != nil {
 		return nil, s.refuseVerified(d.ctx, d, err)
 	}
+	// While the owner is blocked, durable authority must stay evaluable so a
+	// supplement, revocation or barrier recovery can still be verified. A key
+	// operation whose parents are absent would make every authority load
+	// refuse, so it is refused without a write, as guarded admission refuses
+	// it; the caller keeps it pending outside durable authority until its
+	// parents arrive. The evaluation-only block and the barrier row are one
+	// owner block.
+	if r.Header.Type == record.KindKeyOp && d.blocked && d.kr.State().Status[r.ID] == sig.OpHeldParents {
+		return nil, failure("authority_evaluation_required")
+	}
 	return x, nil
 }
 func (s *Store) persistPrepared(ctx context.Context, d *databaseState, added []*stored) error {

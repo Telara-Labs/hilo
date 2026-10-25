@@ -65,6 +65,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.conn.ExecContext(ctx, tenantSchema); err != nil {
 		return failure("storage_error")
 	}
+	if _, err := s.conn.ExecContext(ctx, policyOverlaySchema); err != nil {
+		return failure("storage_error")
+	}
 	if _, err := s.conn.ExecContext(ctx, bundleSchema); err != nil {
 		return failure("storage_error")
 	}

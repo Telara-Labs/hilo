@@ -36,6 +36,9 @@ type tenantState struct {
 	chain                *policy.Chain
 	freshness            policy.Freshness
 	effects              policy.Effects
+	// overlay is the effective policy while staged candidates restrict the
+	// head: their intersection. It is never signed and never the head.
+	overlay *record.PolicyBody
 }
 
 func (s *Store) InstallTenantPolicyContext(ctx context.Context, c TenantPolicyContext) error {
@@ -184,11 +187,22 @@ func (s *Store) tenantWith(ctx context.Context, clockOf func(context.Context) (*
 			}
 		}
 	}
+	if err = s.loadPolicyOverlay(ctx, t); err != nil {
+		return nil, err
+	}
 	clock, err := clockOf(ctx)
 	if err != nil {
 		return nil, err
 	}
-	t.freshness = policy.Evaluate(t.chain, clock, clock.Floor(), true)
+	// Freshness and effects follow the effective policy; the chain the
+	// next offer is checked against keeps the committed head.
+	effective := t.chain
+	if t.overlay != nil {
+		c := *t.chain
+		c.Head = &policy.Policy{ID: t.chain.Head.ID, Body: t.overlay}
+		effective = &c
+	}
+	t.freshness = policy.Evaluate(effective, clock, clock.Floor(), true)
 	var rollback bool
 	if s.conn.QueryRowContext(ctx, "SELECT rollback FROM trusted_time WHERE singleton=1").Scan(&rollback) != nil {
 		return nil, failure("storage_error")
@@ -196,7 +210,7 @@ func (s *Store) tenantWith(ctx context.Context, clockOf func(context.Context) (*
 	if rollback && t.freshness != policy.TamperedHead {
 		t.freshness = policy.RolledBack
 	}
-	t.effects = policy.EffectsOf(t.chain, t.freshness)
+	t.effects = policy.EffectsOf(effective, t.freshness)
 	return t, nil
 }
 
@@ -254,6 +268,11 @@ func (s *Store) OfferTenantPolicy(ctx context.Context, in SignedRecord) (Admissi
 			if _, err = s.conn.ExecContext(ctx, "INSERT INTO tenant_policy VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body", r.ID, t.tenant, p.Body.Seq, r.HeaderJCS, r.BodyJCS, signatures); err != nil {
 				return failure("storage_error")
 			}
+		}
+		// A staged candidate the committed chain has reached is no longer an
+		// overlay: it is the head, or a later head superseded it.
+		if err = s.clearPolicyOverlays(ctx, t.tenant, t.chain.HighestSeq); err != nil {
+			return err
 		}
 		if _, err = s.conn.ExecContext(ctx, "UPDATE tenant_context SET highest_seq=?,highest_id=?,tampered=? WHERE tenant=?", t.chain.HighestSeq, t.chain.HighestID, boolInt(t.chain.Tampered), t.tenant); err != nil {
 			return failure("storage_error")
@@ -320,6 +339,9 @@ func (s *Store) LogoutTenant(ctx context.Context) error {
 			return failure("storage_error")
 		}
 		if _, err := s.conn.ExecContext(ctx, "UPDATE tenant_policy SET body=NULL WHERE tenant IN(SELECT tenant FROM tenant_context WHERE active=1)"); err != nil {
+			return failure("storage_error")
+		}
+		if _, err := s.conn.ExecContext(ctx, "DELETE FROM policy_overlay WHERE tenant IN(SELECT tenant FROM tenant_context WHERE active=1)"); err != nil {
 			return failure("storage_error")
 		}
 		if _, err := s.conn.ExecContext(ctx, "UPDATE tenant_context SET active=0 WHERE active=1"); err != nil {
@@ -416,14 +438,19 @@ func (d *databaseState) policyReadAllowed(x *stored) bool {
 	return bodyPolicyAllowed(x.rec.Body, overlay)
 }
 
+// body is the effective policy: the committed head, intersected with any
+// staged candidate's restrictions.
 func (t *tenantState) body() *record.PolicyBody {
 	if t == nil || t.chain.Head == nil {
 		return nil
 	}
+	if t.overlay != nil {
+		return t.overlay
+	}
 	return t.chain.Head.Body
 }
 func (t *tenantState) readAllowed() bool {
-	return t != nil && t.effects.TenantReadback && t.chain.Head != nil && policy.AppliesTo(t.chain.Head.Body, t.user)
+	return t != nil && t.effects.TenantReadback && t.chain.Head != nil && policy.AppliesTo(t.body(), t.user)
 }
 func (t *tenantState) sealAllowed(remote string, epoch int) bool {
 	b := t.body()

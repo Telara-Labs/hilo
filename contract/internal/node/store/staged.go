@@ -120,8 +120,22 @@ func (s *Store) VerifyStaged(ctx context.Context, staged []SignedRecord) error {
 // committing it would relax current durable authority in any respect. Only a
 // policy that is at least as restrictive everywhere reports false. Rollback and
 // equal-sequence offers report false: their durable effect is a refusal or the
-// equivocation latch, never a relaxation.
+// equivocation latch, never a relaxation. Durable authority is the effective
+// policy, including restrictions already staged. It writes nothing.
 func (s *Store) PolicyRelaxes(ctx context.Context, in SignedRecord, staged []SignedRecord) (bool, error) {
+	return s.stagePolicy(ctx, in, staged, false)
+}
+
+// StagePolicy is PolicyRelaxes for a policy about to be staged. A relaxing
+// policy's restrictions apply at once and durably: in the same writer
+// transaction it joins the effective-policy overlay, so disclosure, capture,
+// push and pull enforce the intersection of the committed head and every
+// staged candidate. Its relaxations stay staged until it commits normally.
+func (s *Store) StagePolicy(ctx context.Context, in SignedRecord, staged []SignedRecord) (bool, error) {
+	return s.stagePolicy(ctx, in, staged, true)
+}
+
+func (s *Store) stagePolicy(ctx context.Context, in SignedRecord, staged []SignedRecord, persist bool) (bool, error) {
 	var relaxes bool
 	err := s.write(ctx, func() error {
 		d, err := s.authorityState(ctx)
@@ -153,7 +167,10 @@ func (s *Store) PolicyRelaxes(ctx context.Context, in SignedRecord, staged []Sig
 			// A stale head supplies no authority; a fresh successor restores it.
 			relaxes = true
 		default:
-			relaxes = policyRelaxes(t.chain.Head.Body, p.Body, t.user)
+			relaxes = policyRelaxes(t.body(), p.Body, t.user)
+		}
+		if relaxes && persist {
+			return s.recordPolicyOverlay(ctx, t, p)
 		}
 		return nil
 	})

@@ -410,7 +410,7 @@ func (w *Worker) enforcementIncomplete(ctx context.Context, id string) (bool, er
 type stagedAuthority interface {
 	ApplySupplement(context.Context, store.SignedRecord, []store.SignedRecord) (store.AdmissionResult, error)
 	VerifyStaged(context.Context, []store.SignedRecord) error
-	PolicyRelaxes(context.Context, store.SignedRecord, []store.SignedRecord) (bool, error)
+	StagePolicy(context.Context, store.SignedRecord, []store.SignedRecord) (bool, error)
 }
 
 // checkControl decodes a fetched control. A non-empty reason is a barrier.
@@ -480,8 +480,9 @@ func (w *Worker) applyControl(ctx context.Context, c pendingControl, device stri
 // lookahead handles a control that follows a coverage-pending erasure. Erasures
 // and retractions, revocations and policies that relax nothing are applied
 // durably now. Key activation and relaxing policies are verified against the
-// staged view and returned for staging; they are not applied. Anything invalid
-// in that view is a barrier.
+// staged view and returned for staging; they are not applied, though a staged
+// policy's restrictions apply at once as the intersection with the committed
+// head. Anything invalid in that view is a barrier.
 func (w *Worker) lookahead(ctx context.Context, c pendingControl, device string, view []store.SignedRecord) (string, *store.SignedRecord) {
 	r, in, reason := checkControl(c)
 	if reason != "" {
@@ -495,7 +496,9 @@ func (w *Worker) lookahead(ctx context.Context, c pendingControl, device string,
 	case record.KindErasure, record.KindRetraction:
 		return storeReason(w.applyErasure(ctx, r, in, device, view)), nil
 	case record.KindPolicy:
-		relaxes, err := sa.PolicyRelaxes(ctx, in, view)
+		// A relaxing policy's restrictions join the store's effective-policy
+		// overlay durably before it is staged, so a mixed policy tightens now.
+		relaxes, err := sa.StagePolicy(ctx, in, view)
 		if err != nil {
 			return storeReason(err), nil
 		}
