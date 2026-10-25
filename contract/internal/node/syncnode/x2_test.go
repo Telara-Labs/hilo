@@ -137,6 +137,20 @@ func entryState(t *testing.T, st *store.Store, id string) (string, bool) {
 	return "", false
 }
 
+func inKeyring(t *testing.T, st *store.Store, id string) bool {
+	t.Helper()
+	kr, err := st.Keyring(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range kr {
+		if r.AdvisoryID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func ownerBlocked(st *store.Store) bool {
 	_, err := st.Snapshot(context.Background(), store.ReadRequest{})
 	var e *store.Error
@@ -346,12 +360,29 @@ func TestX2CrossDeviceErasureSignersPagesAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	hk := h.addControl(envelopeOf(cAdd.Rec, cAdd.Sigs))
+	// While c1 is coverage-pending the enrollment is staged: it stays an exact
+	// pending envelope usable only to verify a supplement, and A's durable
+	// keyring does not hold it, across restart.
+	stagedOnly := func(stage string) {
+		t.Helper()
+		if n := count(t, wa, "SELECT count(*) FROM ctl_pending WHERE hseq=? AND reason='staged'", hk); n != 1 {
+			t.Fatalf("%s: device_add not staged: %d", stage, n)
+		}
+		if inKeyring(t, a.st, cAdd.Rec.ID) {
+			t.Fatalf("%s: device_add applied durably while c1 is coverage-pending", stage)
+		}
+	}
 	wa = a.restart(wa)
 	round(wa, ErrControlBlocked)
 	heldBelowC1("page 2")
 	if n := count(t, wa, "SELECT count(*) FROM ctl_pending WHERE hseq IN (?,?)", hc1, hk); n != 2 {
 		t.Fatalf("page 2: c1 and the key_op not both held pending: %d", n)
 	}
+	stagedOnly("page 2")
+	wa = a.restart(wa)
+	round(wa, ErrControlBlocked)
+	heldBelowC1("page 2 after restart")
+	stagedOnly("page 2 after restart")
 	wa = a.restart(wa)
 
 	// Page 3: newly enrolled C supplies the signed event coverage. The ACK
@@ -374,6 +405,9 @@ func TestX2CrossDeviceErasureSignersPagesAndRestart(t *testing.T) {
 	round(wa, nil)
 	if c := cursorsOf(t, wa, pa); c.Ctl != hc2 || c.BarrierHSeq != 0 {
 		t.Fatalf("supplement did not complete the contiguous prefix: %+v", c)
+	}
+	if !inKeyring(t, a.st, cAdd.Rec.ID) {
+		t.Fatal("staged device_add not applied after c1 completed")
 	}
 	if ack := lastAck(testMachine); ack.CtlEnforcedThrough != hc2 {
 		t.Fatalf("A final ack %+v", ack)

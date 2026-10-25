@@ -430,6 +430,17 @@ func (s *State) completeControl(ctx context.Context, dest string, hseq int64) er
 	})
 }
 
+// stageControl marks a fetched control as held in the verification-only view.
+// Its exact envelope stays in ctl_pending; the cursor and barrier do not move.
+func (s *State) stageControl(ctx context.Context, dest string, hseq int64) error {
+	return s.tx(ctx, func(q querier) error {
+		if _, err := q.ExecContext(ctx, "UPDATE ctl_pending SET reason='staged' WHERE destination=? AND hseq=?", dest, hseq); err != nil {
+			return errStateInvalid
+		}
+		return nil
+	})
+}
+
 func (s *State) blockControl(ctx context.Context, dest string, hseq int64, reason string) error {
 	return s.tx(ctx, func(q querier) error {
 		if _, err := q.ExecContext(ctx, "UPDATE ctl_pending SET reason=? WHERE destination=? AND hseq=?", reason, dest, hseq); err != nil {

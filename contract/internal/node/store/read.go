@@ -90,6 +90,9 @@ func (s *Store) Suppressed(ctx context.Context, q SourceOccurrence) (Suppression
 				}
 			}
 		}
+		if q.SessionKey != "" && signedSessionBan(d, q.Owner, q.SessionKey) {
+			out.Suppressed = true
+		}
 		if q.SessionKey != "" {
 			var n int
 			if s.conn.QueryRowContext(ctx, "SELECT count(*) FROM event_ban WHERE owner=? AND session=?", q.Owner, q.SessionKey).Scan(&n) != nil {

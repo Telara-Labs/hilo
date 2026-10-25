@@ -120,7 +120,32 @@ func suppression(d *databaseState, q SourceOccurrence) Suppression {
 			out.Suppressed = true
 		}
 	}
+	if q.SessionKey != "" && signedSessionBan(d, q.Owner, q.SessionKey) {
+		out.Suppressed = true
+	}
 	return out
+}
+
+// signedSessionBan reports whether an admitted erasure names the session, or an
+// event of it, by a signed selector. Persisted occurrence bans are derived
+// only from records this node holds; a selector holds even when this node
+// never saw the issuer's record, so capture is suppressed before any read.
+func signedSessionBan(d *databaseState, owner, session string) bool {
+	for _, x := range d.records {
+		b, ok := x.rec.Body.(*record.ErasureBody)
+		if !ok || x.owner != owner {
+			continue
+		}
+		if containsID(b.Selectors.Sessions, session) {
+			return true
+		}
+		for _, e := range b.Selectors.Events {
+			if e.Owner == owner && e.SessionKey == session {
+				return true
+			}
+		}
+	}
+	return false
 }
 func (s *Store) makeCaptureTxn(ctx context.Context, d *databaseState, q CaptureRequest, p CaptureProgress) (*CaptureTxn, error) {
 	t := &CaptureTxn{progress: p, events: map[string]CaptureEventHistory{}}

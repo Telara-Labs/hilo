@@ -313,11 +313,19 @@ func checkPage(page transport.Page, class string, pos, head int64) error {
 //
 // A control the store admitted while it still reports the owner blocked, such
 // as an erasure whose event coverage is pending, is not yet enforced. Later
-// recognized controls are still applied, so a supplement can complete it, but
-// ctl_cursor advances only through the contiguous prefix that is complete.
+// recognized controls are scanned in a verification-only recovery so a
+// supplement can complete it: restrictions apply durably at once, while key
+// activation and policy relaxation are staged. A staged control stays in
+// ctl_pending, marked staged, and is usable only to verify a supplemental
+// erasure. Once the earlier control completes, staged controls are applied in
+// log order with revalidation, and ctl_cursor advances only through the
+// contiguous prefix that is complete. Restart rebuilds the view from the exact
+// pending envelopes; nothing staged is ever live before that.
 func (w *Worker) enforce(ctx context.Context, dest, device string) (bool, error) {
 	var after, held int64
 	var applied []int64
+	staged := map[int64]pendingControl{}
+	var view []store.SignedRecord
 	for {
 		pending, err := w.state.pendingControls(ctx, dest, after, 64)
 		if err != nil {
@@ -328,7 +336,19 @@ func (w *Worker) enforce(ctx context.Context, dest, device string) (bool, error)
 		}
 		for _, c := range pending {
 			after = c.HSeq
-			reason := w.applyControl(ctx, c, device)
+			var reason string
+			if held == 0 {
+				reason = w.applyControl(ctx, c, device)
+			} else {
+				var in *store.SignedRecord
+				if reason, in = w.lookahead(ctx, c, device, view); in != nil {
+					if err = w.state.stageControl(ctx, dest, c.HSeq); err != nil {
+						return false, err
+					}
+					staged[c.HSeq] = c
+					view = append(view, *in)
+				}
+			}
 			if ctx.Err() != nil {
 				return false, ctx.Err()
 			}
@@ -350,11 +370,16 @@ func (w *Worker) enforce(ctx context.Context, dest, device string) (bool, error)
 				continue
 			}
 			for _, h := range applied {
+				if sc, ok := staged[h]; ok {
+					if reason := w.commitStaged(ctx, sc, device); reason != "" {
+						return true, w.state.blockControl(ctx, dest, h, reason)
+					}
+				}
 				if err = w.state.completeControl(ctx, dest, h); err != nil {
 					return false, err
 				}
 			}
-			applied, held = nil, 0
+			applied, held, staged, view = nil, 0, map[int64]pendingControl{}, nil
 		}
 	}
 	if held != 0 {
@@ -378,33 +403,59 @@ func (w *Worker) enforcementIncomplete(ctx context.Context, id string) (bool, er
 	return false, err
 }
 
-// controlImporter is implemented by the node store. It admits erasure and
-// retraction controls signed by another enrolled device of the pinned
-// genesis, which ordinary local admission refuses by author machine.
-type controlImporter interface {
-	ImportBundle(context.Context, store.BundleImport) (store.BundleImportReport, error)
+// stagedAuthority is implemented by the node store. It admits erasure and
+// retraction controls signed by any enrolled device of the pinned genesis
+// without a local private key, and verifies controls against a
+// verification-only view of completed authority plus staged controls.
+type stagedAuthority interface {
+	ApplySupplement(context.Context, store.SignedRecord, []store.SignedRecord) (store.AdmissionResult, error)
+	VerifyStaged(context.Context, []store.SignedRecord) error
+	PolicyRelaxes(context.Context, store.SignedRecord, []store.SignedRecord) (bool, error)
 }
 
-func (w *Worker) applyControl(ctx context.Context, c pendingControl, device string) string {
+// checkControl decodes a fetched control. A non-empty reason is a barrier.
+func checkControl(c pendingControl) (*record.Record, store.SignedRecord, string) {
 	r, err := transport.CheckEnvelope(c.Envelope, c.Body)
 	if err != nil {
 		if c.Envelope.V != record.Version {
-			return "unsupported_version"
+			return nil, store.SignedRecord{}, "unsupported_version"
 		}
-		return "unknown_control"
+		return nil, store.SignedRecord{}, "unknown_control"
 	}
 	if !r.Header.Type.IsControl() {
-		return "class_mismatch"
+		return nil, store.SignedRecord{}, "class_mismatch"
 	}
-	in := store.SignedRecord{HeaderJCS: r.HeaderJCS, BodyJCS: r.BodyJCS, Sigs: c.Envelope.Sigs, AdvisoryID: r.ID}
+	return r, store.SignedRecord{HeaderJCS: r.HeaderJCS, BodyJCS: r.BodyJCS, Sigs: c.Envelope.Sigs, AdvisoryID: r.ID}, ""
+}
+
+func storeReason(err error) string {
+	if err != nil {
+		return "store_" + store.Code(err)
+	}
+	return ""
+}
+
+// applyErasure admits an erasure or retraction. Another device's control goes
+// through the store's supplement path, which needs no local signing key; view
+// is the staged authority an erasure may be verified against.
+func (w *Worker) applyErasure(ctx context.Context, r *record.Record, in store.SignedRecord, device string, view []store.SignedRecord) error {
+	if sa, ok := w.cfg.Store.(stagedAuthority); ok && r.Header.Author.MachineID != device {
+		_, err := sa.ApplySupplement(ctx, in, view)
+		return err
+	}
+	_, err := w.cfg.Store.ApplyControl(ctx, in)
+	return err
+}
+
+func (w *Worker) applyControl(ctx context.Context, c pendingControl, device string) string {
+	r, in, reason := checkControl(c)
+	if reason != "" {
+		return reason
+	}
+	var err error
 	switch r.Header.Type {
 	case record.KindErasure, record.KindRetraction:
-		imp, ok := w.cfg.Store.(controlImporter)
-		if r.Header.Author.MachineID != device && ok && w.cfg.Signer != nil {
-			_, err = imp.ImportBundle(ctx, store.BundleImport{LocalKeyID: w.cfg.Signer.KeyID(), Controls: []store.SignedRecord{in}})
-		} else {
-			_, err = w.cfg.Store.ApplyControl(ctx, in)
-		}
+		err = w.applyErasure(ctx, r, in, device, nil)
 	case record.KindPolicy:
 		_, err = w.cfg.Store.Append(ctx, in)
 	case record.KindKeyOp:
@@ -423,10 +474,67 @@ func (w *Worker) applyControl(ctx context.Context, c pendingControl, device stri
 	default:
 		return "unsupported_control"
 	}
-	if err != nil {
-		return "store_" + store.Code(err)
+	return storeReason(err)
+}
+
+// lookahead handles a control that follows a coverage-pending erasure. Erasures
+// and retractions, revocations and policies that relax nothing are applied
+// durably now. Key activation and relaxing policies are verified against the
+// staged view and returned for staging; they are not applied. Anything invalid
+// in that view is a barrier.
+func (w *Worker) lookahead(ctx context.Context, c pendingControl, device string, view []store.SignedRecord) (string, *store.SignedRecord) {
+	r, in, reason := checkControl(c)
+	if reason != "" {
+		return reason, nil
 	}
-	return ""
+	sa, ok := w.cfg.Store.(stagedAuthority)
+	if !ok {
+		return "staging_unavailable", nil
+	}
+	switch r.Header.Type {
+	case record.KindErasure, record.KindRetraction:
+		return storeReason(w.applyErasure(ctx, r, in, device, view)), nil
+	case record.KindPolicy:
+		relaxes, err := sa.PolicyRelaxes(ctx, in, view)
+		if err != nil {
+			return storeReason(err), nil
+		}
+		if relaxes {
+			return "", &in
+		}
+		_, err = w.cfg.Store.Append(ctx, in)
+		return storeReason(err), nil
+	case record.KindKeyOp:
+		b, ok := r.Body.(*record.KeyOpBody)
+		switch {
+		case !ok:
+			return "unknown_control", nil
+		case b.Op == record.OpTenantKey:
+			return "tenant_root_requires_login", nil
+		case b.Op == record.OpDeviceRevoke && sa.VerifyStaged(ctx, []store.SignedRecord{in}) == nil:
+			// A revocation authorized by completed authority alone is a
+			// restriction and applies durably at once. One whose subject or
+			// parents are only staged applies within the view until then.
+			_, err := w.cfg.Store.Append(ctx, in)
+			return storeReason(err), nil
+		}
+		if err := sa.VerifyStaged(ctx, append(append([]store.SignedRecord(nil), view...), in)); err != nil {
+			return storeReason(err), nil
+		}
+		return "", &in
+	}
+	return "unsupported_control", nil
+}
+
+// commitStaged applies a staged control durably once the erasure before it
+// completed, revalidating it under current authority. A staged policy that a
+// later, already committed policy superseded is complete.
+func (w *Worker) commitStaged(ctx context.Context, c pendingControl, device string) string {
+	reason := w.applyControl(ctx, c, device)
+	if reason == "store_policy_rollback" {
+		return ""
+	}
+	return reason
 }
 
 // push reconciles invalidated sources, exports newly selected metadata and

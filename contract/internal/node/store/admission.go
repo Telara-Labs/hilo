@@ -428,6 +428,9 @@ func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures [
 			return failure("invalid_record")
 		}
 	} else {
+		if s.verifyView != nil && r.Header.Type == record.KindErasure {
+			st = s.verifyView
+		}
 		res := sig.VerifyRecord(r, signatures, st, sig.Context{Route: record.RouteLocal})
 		if res.Status != sig.StatusVerified || res.Owner != s.opts.PinnedGenesisID || !s.authorMachineAllowed(r, res) {
 			return failure("unauthorized_record")

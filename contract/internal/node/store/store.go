@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/telara-memory/contract/sig"
 	"modernc.org/sqlite"
 )
 
@@ -101,6 +102,9 @@ type Store struct {
 	// bundleImport is set only inside ImportBundle's writer transaction. It
 	// admits records of another enrolled device of the pinned genesis.
 	bundleImport bool
+	// verifyView is set only inside ApplySupplement's writer transaction. It
+	// is the verification-only authority an erasure is checked against.
+	verifyView *sig.State
 }
 
 // Open refuses unsupported privacy, incompatible identities and SQLite settings.
