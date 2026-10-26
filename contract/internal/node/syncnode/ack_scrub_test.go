@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -24,7 +23,7 @@ import (
 // truncated, and the bytes a deletion superseded stay on disk.
 func pinReader(t *testing.T, path, query string) (release func()) {
 	t.Helper()
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String())
+	db, err := sql.Open("sqlite", store.SQLiteURI(path, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

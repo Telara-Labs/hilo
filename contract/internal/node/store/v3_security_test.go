@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -386,7 +385,7 @@ func TestV3TenantReplacementAndLogoutScrubPhysicalPolicySecrets(t *testing.T) {
 	if _, err = k.s.Append(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	reader, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: k.s.path}).String())
+	reader, err := sql.Open("sqlite", SQLiteURI(k.s.path, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

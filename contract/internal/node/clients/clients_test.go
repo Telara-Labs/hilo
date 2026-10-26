@@ -58,6 +58,12 @@ func TestMain(m *testing.M) {
 func options(t *testing.T, c Client) Options {
 	t.Helper()
 	home := t.TempDir()
+	if runtime.GOOS == "windows" {
+		home = filepath.Join(home, "private")
+		if err := ipc.ValidateDir(home, true); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// testing.TempDir leaves use 0777 masked by the invoking process umask.
 	// This fixture represents an owner-private home independently of that mask.
 	if runtime.GOOS != "windows" {

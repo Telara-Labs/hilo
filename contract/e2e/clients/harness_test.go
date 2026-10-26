@@ -29,6 +29,9 @@ var dryRun = flag.Bool("e2e-dry-run", false, "Exercise native node lifecycle wit
 var childTimeout = flag.Duration("e2e-child-timeout", 90*time.Second, "Deadline for every child process")
 var rawChildOutput = flag.String("e2e-raw-child-output", "", "Operator-only: existing private directory that receives raw child output files for debugging")
 var resultsDir = flag.String("e2e-results-dir", "", "Existing status directory for private JSON receipts; required for lifecycle tests")
+var prebuiltNativeHelper = flag.String("e2e-native-helper", "", "Explicit CI-built private native utility")
+var prebuiltNativeHelperSHA = flag.String("e2e-native-helper-sha256", "", "Authenticated CI artifact SHA256 for native utility")
+
 var tempParent = flag.String("e2e-temp-parent", "", "Optional existing private temporary parent; paths must stay short enough for a macOS Unix socket")
 
 type clientSpec struct {
@@ -159,10 +162,16 @@ func copyAuth(source, dest string) error {
 // An allowlist prevents inherited tokens, client homes, shell startup hooks,
 // SDK overrides and nested-session settings from entering disposable clients.
 func isolatedEnv(home, config string, s clientSpec) []string {
-	return []string{"PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + home,
+	env := []string{"PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + home,
 		"TMPDIR=" + filepath.Join(home, "tmp"), "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
 		"XDG_CACHE_HOME=" + filepath.Join(home, ".cache"), "XDG_DATA_HOME=" + filepath.Join(home, ".local/share"),
 		s.configVariable + "=" + config, "LANG=en_US.UTF-8"}
+	// Luis approved this existing Cursor vendor option for the disposable test
+	// only. The real native keychain remains denied by the sandbox.
+	if s.name == "cursor" {
+		env = append(env, "AGENT_CLI_CREDENTIAL_STORE=file")
+	}
+	return env
 }
 
 type cappedBuffer struct {

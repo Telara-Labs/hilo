@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/transport"
 )
@@ -91,7 +90,7 @@ func OpenState(ctx context.Context, dir string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = db.ExecContext(ctx, stateSchema); err != nil {
+	if _, err = db.ExecContext(ctx, stateSchema+fenceSchema); err != nil {
 		db.Close()
 		return nil, errStateInvalid
 	}
@@ -140,85 +139,6 @@ func (s *State) fetchedThrough(ctx context.Context, dest string, cursor int64) (
 		return 0, err
 	}
 	return max(cursor, top.Int64), nil
-}
-
-// dropQuarantined deletes every quarantined hosted envelope an erasure or
-// retraction may select. v1 imports no hosted data, so a quarantined copy is
-// never needed; one that cannot be decoded, or whose relation to a selector
-// cannot be decided from the envelope alone, is dropped too.
-func (s *State) dropQuarantined(ctx context.Context, dest string, ctl *record.Record) error {
-	return s.tx(ctx, func(q querier) error {
-		rows, err := q.QueryContext(ctx, "SELECT hseq,envelope FROM data_quarantine WHERE destination=?", dest)
-		if err != nil {
-			return errStateInvalid
-		}
-		var drop []int64
-		for rows.Next() {
-			var hseq int64
-			var raw []byte
-			if rows.Scan(&hseq, &raw) != nil {
-				rows.Close()
-				return errStateInvalid
-			}
-			var env record.Envelope
-			if json.Unmarshal(raw, &env) != nil || mayInvalidate(ctl, env) {
-				drop = append(drop, hseq)
-			}
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return errStateInvalid
-		}
-		for _, hseq := range drop {
-			if _, err := q.ExecContext(ctx, "DELETE FROM data_quarantine WHERE destination=? AND hseq=?", dest, hseq); err != nil {
-				return errStateInvalid
-			}
-		}
-		return nil
-	})
-}
-
-// mayInvalidate reports whether ctl can select the record in env. It decides
-// only from fields the envelope carries and errs toward selecting.
-func mayInvalidate(ctl *record.Record, env record.Envelope) bool {
-	r, err := nodesync.OpenEnvelope(env)
-	if err != nil {
-		return true
-	}
-	switch b := ctl.Body.(type) {
-	case *record.RetractionBody:
-		return contains(b.IDs, r.ID)
-	case *record.ErasureBody:
-		sel := b.Selectors
-		h := r.Header
-		if contains(sel.IDs, r.ID) || contains(sel.LIDs, h.LID) || h.Subj.SessionKey != "" && contains(sel.Sessions, h.Subj.SessionKey) || h.Subj.Source != "" && contains(sel.Sources, h.Subj.Source) {
-			return true
-		}
-		for _, t := range sel.Tasks {
-			if h.Subj.TaskID != "" && t.TaskID == h.Subj.TaskID {
-				return true
-			}
-		}
-		if len(sel.Events) == 0 {
-			return false
-		}
-		chunk, ok := r.Body.(*record.ChunkBody)
-		if !ok {
-			// Only a chunk carries events; a bodyless or other record that
-			// links to one is decided by the store's own closure on import.
-			return r.Body == nil && h.Type == record.KindChunk
-		}
-		for _, e := range chunk.Events {
-			for _, es := range sel.Events {
-				if es.EventID == e.ID {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return true
 }
 
 func (s *State) Close() error { return s.db.Close() }
@@ -582,8 +502,14 @@ func (s *State) blockControl(ctx context.Context, dest string, hseq int64, reaso
 
 // applyData quarantines a page of hosted data and advances data_cursor to the
 // page watermark in the same transaction. v1 imports no hosted-origin data.
-func (s *State) applyData(ctx context.Context, dest string, items []transport.LogItem, next int64) error {
-	return s.tx(ctx, func(q querier) error {
+// An item at or below the cursor is a replay and is never stored again; every
+// other item is stored only when no persistent fence and no store tomb or ban
+// invalidates it or anything it depends on. A dropped item becomes a fence,
+// and any quarantined copy that depends on it is deleted in the same
+// transaction. It reports how many already quarantined copies were deleted.
+func (s *State) applyData(ctx context.Context, dest string, items []transport.LogItem, next int64, check storeCheck) (int, error) {
+	purged := 0
+	err := s.tx(ctx, func(q querier) error {
 		var cursor int64
 		if q.QueryRowContext(ctx, "SELECT data_cursor FROM sync_state WHERE destination=?", dest).Scan(&cursor) != nil {
 			return errStateInvalid
@@ -591,20 +517,44 @@ func (s *State) applyData(ctx context.Context, dest string, items []transport.Lo
 		if next < cursor {
 			return errStateInvalid
 		}
+		dropped := false
 		for _, x := range items {
+			if x.HSeq <= cursor {
+				continue
+			}
 			env, err := json.Marshal(x.Envelope)
 			if err != nil {
 				return errStateInvalid
 			}
+			keep, err := admit(ctx, q, x.Envelope, check)
+			if err != nil {
+				return err
+			}
+			if !keep {
+				dropped = true
+				continue
+			}
 			if _, err = q.ExecContext(ctx, "INSERT OR IGNORE INTO data_quarantine VALUES(?,?,?)", dest, x.HSeq, env); err != nil {
 				return errStateInvalid
 			}
+		}
+		if dropped {
+			// A dropped item may be the ancestor of a copy stored earlier.
+			n, err := sweepQuarantine(ctx, q, check)
+			if err != nil {
+				return err
+			}
+			purged = n
 		}
 		if _, err := q.ExecContext(ctx, "UPDATE sync_state SET data_cursor=? WHERE destination=?", next, dest); err != nil {
 			return errStateInvalid
 		}
 		return nil
 	})
+	if err != nil {
+		return 0, err
+	}
+	return purged, nil
 }
 
 func (s *State) recordAck(ctx context.Context, dest string, a transport.Ack) error {
@@ -687,7 +637,8 @@ func pendingOps(ctx context.Context, q querier, dest string) ([]string, error) {
 }
 
 // purgeDestination cancels the queue and removes cursors, fetched controls and
-// quarantined data for one destination. Verified receipts are retained.
+// quarantined data for one destination. Verified receipts and the persistent
+// quarantine fences are retained.
 func (s *State) purgeDestination(ctx context.Context, dest string) error {
 	return s.tx(ctx, func(q querier) error {
 		ops, err := pendingOps(ctx, q, dest)
@@ -697,7 +648,7 @@ func (s *State) purgeDestination(ctx context.Context, dest string) error {
 		if err = cancelOps(ctx, q, ops, "logout"); err != nil {
 			return err
 		}
-		for _, stmt := range []string{"DELETE FROM ctl_pending WHERE destination=?", "DELETE FROM data_quarantine WHERE destination=?", "DELETE FROM sync_state WHERE destination=?", "UPDATE outbox SET header=NULL,body=NULL,sigs=NULL WHERE destination=?"} {
+		for _, stmt := range []string{"DELETE FROM ctl_pending WHERE destination=?", "DELETE FROM data_quarantine WHERE destination=?", "DELETE FROM quarantine_scrub WHERE destination=?", "DELETE FROM sync_state WHERE destination=?", "UPDATE outbox SET header=NULL,body=NULL,sigs=NULL WHERE destination=?"} {
 			if _, err = q.ExecContext(ctx, stmt, dest); err != nil {
 				return errStateInvalid
 			}

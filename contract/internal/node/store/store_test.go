@@ -39,7 +39,7 @@ func TestOpenPrivacySettingsAndIdentity(t *testing.T) {
 		s.Close()
 		t.Fatal("accepted wrong pin")
 	}
-	if e = os.Chmod(o.Dir, 0755); e != nil {
+	if e = testPrivacyMode(o.Dir, 0755); e != nil {
 		t.Fatal(e)
 	}
 	if s, e = Open(ctx, o); e == nil {
@@ -61,7 +61,7 @@ func TestOpenRefusesWritableAncestorAndHardlink(t *testing.T) {
 	ctx := context.Background()
 	o := testOptions(t)
 	ancestor := filepath.Dir(o.Dir)
-	if e := os.Chmod(ancestor, 0777); e != nil {
+	if e := testPrivacyMode(ancestor, 0777); e != nil {
 		t.Fatal(e)
 	}
 	if s, e := Open(ctx, o); Code(e) != "unsafe_path" {
@@ -70,7 +70,7 @@ func TestOpenRefusesWritableAncestorAndHardlink(t *testing.T) {
 		}
 		t.Fatal("writable ancestor accepted", e)
 	}
-	os.Chmod(ancestor, 0700)
+	testPrivacyMode(ancestor, 0700)
 	s, e := Open(ctx, o)
 	if e != nil {
 		t.Fatal(e)
