@@ -252,7 +252,7 @@ func extract(data []byte, dir string) error {
 		}
 		name := filepath.FromSlash(h.Name)
 		path := filepath.Join(dir, name)
-		if !inside(dir, path) || filepath.IsAbs(name) || filepath.VolumeName(name) != "" || strings.Contains(h.Name, "\\") || h.Size < 0 || h.Size > 64<<20 {
+		if strings.HasPrefix(h.Name, "/") || strings.Contains(strings.SplitN(h.Name, "/", 2)[0], ":") || !inside(dir, path) || filepath.IsAbs(name) || filepath.VolumeName(name) != "" || strings.Contains(h.Name, "\\") || h.Size < 0 || h.Size > 64<<20 {
 			return errors.New("unsafe source archive")
 		}
 		total += h.Size

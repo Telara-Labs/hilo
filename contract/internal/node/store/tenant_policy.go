@@ -558,7 +558,7 @@ func (s *Store) CapturePolicy(ctx context.Context) (string, *record.PolicyBody, 
 // authorization, capture restrictions and body overlays still apply separately.
 func (d *databaseState) validateAdmittedBody(r *record.Record) error {
 	h := r.Header
-	if !d.store.bundleImport || d.tenant == nil || h.Red.Profile != record.ProfilePushMetadata || (h.Type != record.KindSession && h.Type != record.KindTask) {
+	if d.tenant == nil || d.store == nil || !d.store.bundleImport || h.Red.Profile != record.ProfilePushMetadata || (h.Type != record.KindSession && h.Type != record.KindTask) {
 		return d.tenant.validateBody(r)
 	}
 	if h.Pol == "" || d.policyTenants[h.Pol] != d.tenant.tenant || d.policyLogout[h.Pol] {

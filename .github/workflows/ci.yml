@@ -2,6 +2,7 @@ name: ci
 
 on:
   push:
+    branches-ignore: [ci-native-cross]
   pull_request:
 
 permissions:
@@ -18,7 +19,7 @@ jobs:
           cache-dependency-path: contract/go.sum
       - name: repaired security invariants and release authentication
         working-directory: contract
-        run: go test -p 2 -v -count=1 -timeout 15m -run 'Test(NativeCodexDefaultModesRequirePrivateContainment|RedactBeforeBoundaryAndActualGolden|QuarantineRecallClosureAllArrivalOrders|LocalUnseenErasureFencesHostedQuarantine|LocalErasureScrubsSidecarWithoutHostedRound|LocalScrubDoesNotDeadlockSidecarWriter|LocalScrubFencesStalePreparedExport|HostedServiceKeyRotationVerifiesNewReceipts|TransferredMetadataKeepsPolicyProvenance|RepositoryProofRequiresCurrentVerifiedIdentity|GovernedTaskBundleUsesSignedRepositoryProof|NodeLocalAdapterUsesSharedCorpus|NodeExportAdapterUsesEverySharedCorpusCase|AuthenticatedTarget|HostedEnrollment|Release)' ./record ./internal/node/capture ./internal/node/store ./internal/node/syncnode ./internal/node/localpolicy ./releaseauth ./cmd/telara-memory
+        run: go test -p 2 -v -count=1 -timeout 15m -run 'Test(LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|RedactBeforeBoundaryAndActualGolden|QuarantineRecallClosureAllArrivalOrders|LocalUnseenErasureFencesHostedQuarantine|LocalErasureScrubsSidecarWithoutHostedRound|LocalScrubDoesNotDeadlockSidecarWriter|LocalScrubFencesStalePreparedExport|HostedServiceKeyRotationVerifiesNewReceipts|TransferredMetadataKeepsPolicyProvenance|RepositoryProofRequiresCurrentVerifiedIdentity|GovernedTaskBundleUsesSignedRepositoryProof|NodeLocalAdapterUsesSharedCorpus|NodeExportAdapterUsesEverySharedCorpusCase|AuthenticatedTarget|HostedEnrollment|Release)' ./record ./internal/node/capture ./internal/node/store ./internal/node/syncnode ./internal/node/localpolicy ./releaseauth ./cmd/telara-memory
 
   linux-security:
     runs-on: ubuntu-latest
@@ -36,7 +37,7 @@ jobs:
       - name: Linux native custody and current security invariants
         run: |
           cd /ci-source/contract
-          go test -p 2 -v -count=1 -timeout 15m -run 'Test(NativeCodexDefaultModesRequirePrivateContainment|HostedEnrollment|HostedServiceKeyRotation|TransferredMetadataKeepsPolicyProvenance|RepositoryProof|TenantKeyOutsideLoginRefused|GovernedTaskBundle|LocalErasureScrubs|LocalScrub|SecretServiceProfileHoldsIndependentSecrets|SecretServiceInstalledAuthorityReassignmentBeforeAndAfterLoad|InstalledStuckClientHintDoesNotBlockOtherClient)' ./internal/node/capture ./internal/node/store ./internal/node/syncnode ./internal/node/vault ./cmd/telara-memory
+          go test -p 2 -v -count=1 -timeout 15m -run 'Test(LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|HostedEnrollment|HostedServiceKeyRotation|TransferredMetadataKeepsPolicyProvenance|RepositoryProof|TenantKeyOutsideLoginRefused|GovernedTaskBundle|LocalErasureScrubs|LocalScrub|SecretServiceProfileHoldsIndependentSecrets|SecretServiceInstalledAuthorityReassignmentBeforeAndAfterLoad|InstalledStuckClientHintDoesNotBlockOtherClient)' ./internal/node/capture ./internal/node/store ./internal/node/syncnode ./internal/node/vault ./cmd/telara-memory
 
   windows-security:
     runs-on: windows-latest
