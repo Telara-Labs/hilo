@@ -1,0 +1,114 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  security-regressions:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: contract/go.sum
+      - name: repaired security invariants and release authentication
+        working-directory: contract
+        run: go test -p 2 -v -count=1 -timeout 15m -run 'Test(RedactBeforeBoundaryAndActualGolden|QuarantineRecallClosureAllArrivalOrders|LocalUnseenErasureFencesHostedQuarantine|LocalErasureScrubsSidecarWithoutHostedRound|LocalScrubDoesNotDeadlockSidecarWriter|LocalScrubFencesStalePreparedExport|HostedServiceKeyRotationVerifiesNewReceipts|RepositoryProofRequiresCurrentVerifiedIdentity|GovernedTaskBundleUsesSignedRepositoryProof|NodeLocalAdapterUsesSharedCorpus|NodeExportAdapterUsesEverySharedCorpusCase|AuthenticatedTarget|HostedEnrollment|Release)' ./record ./internal/node/store ./internal/node/syncnode ./internal/node/localpolicy ./releaseauth ./cmd/telara-memory
+
+  windows-security:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: contract/go.sum
+      - name: native owner ACL and read-only diagnostics
+        working-directory: contract
+        shell: bash
+        run: go test -p 2 -v -count=1 -timeout 15m -run 'Test(Windows|SQLiteURIUsesNativeAbsolutePath|DoctorMainStoreInspectionSidecars|DoctorSyncInspectionWritesNothing|ReleaseDirectory)' ./internal/node/store ./internal/node/ipc ./internal/node/doctor ./cmd/telara-memory
+
+  native-client-driver:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: contract/go.sum
+      - name: isolated client authentication and environment checks
+        working-directory: contract
+        run: go test -p 2 -tags e2e -v -count=1 -run '^TestHarness(AuthIsolation|EnvironmentAndArguments)$' ./e2e/clients
+      - name: build native acceptance driver
+        working-directory: contract
+        run: go test -p 2 -tags e2e -c -o ../clients.test ./e2e/clients
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-client-driver
+          path: clients.test
+          retention-days: 3
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: contract
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: contract/go.sum
+      - name: private temp root
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          # The installer refuses directories below the sticky, world-writable /tmp.
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /ci-tmp
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /ci-source
+          cp -R contract /ci-source/contract
+          echo "TMPDIR=/ci-tmp" >> "$GITHUB_ENV"
+      - name: vet
+        shell: bash
+        run: |
+          if [ "$(uname)" = Linux ]; then cd /ci-source/contract; fi
+          go vet ./...
+      - name: test
+        shell: bash
+        run: |
+          if [ "$(uname)" = Linux ]; then cd /ci-source/contract; fi
+          go test -p 2 -count=1 -timeout 60m ./...
+
+  race:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contract
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: contract/go.sum
+      - name: private temp root
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          # The installer refuses directories below the sticky, world-writable /tmp.
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /ci-tmp
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /ci-source
+          cp -R contract /ci-source/contract
+          echo "TMPDIR=/ci-tmp" >> "$GITHUB_ENV"
+      - name: race
+        run: |
+          cd /ci-source/contract
+          go test -race -p 2 -count=1 -timeout 90m ./...

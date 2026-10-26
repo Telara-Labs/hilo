@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -409,7 +408,7 @@ func TestNodeV23SecureDeleteAtOpenAndNoSecretSurvivesScrub(t *testing.T) {
 	// Open refuses a database whose FTS secure-delete was turned off.
 	k.e.Close()
 	k.s.Close()
-	raw, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: filepath.Join(k.o.Dir, "memory.sqlite")}).String())
+	raw, err := sql.Open("sqlite", SQLiteURI(filepath.Join(k.o.Dir, "memory.sqlite"), ""))
 	if err != nil {
 		t.Fatal(err)
 	}

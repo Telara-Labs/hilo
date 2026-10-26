@@ -26,7 +26,7 @@ func ownerSecurity() (*windows.SECURITY_DESCRIPTOR, error) {
 	if e != nil {
 		return nil, e
 	}
-	return windows.SecurityDescriptorFromString("O:" + sid.String() + "D:P(A;;FA;;;" + sid.String() + ")")
+	return windows.SecurityDescriptorFromString("O:" + sid.String() + "D:P(A;OICI;FA;;;" + sid.String() + ")")
 }
 func attributes(sd *windows.SECURITY_DESCRIPTOR) *windows.SecurityAttributes {
 	return &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
@@ -128,7 +128,7 @@ func relativeOpen(parent windows.Handle, name string, directory, create bool, sd
 		return 0, unsafePath("NTUnicodeString", name, "valid Windows string required", e)
 	}
 	oa := windows.OBJECT_ATTRIBUTES{Length: uint32(unsafe.Sizeof(windows.OBJECT_ATTRIBUTES{})), RootDirectory: parent, ObjectName: u, Attributes: windows.OBJ_CASE_INSENSITIVE | windows.OBJ_DONT_REPARSE, SecurityDescriptor: sd}
-	access := uint32(windows.READ_CONTROL | windows.SYNCHRONIZE)
+	access := uint32(windows.READ_CONTROL | windows.SYNCHRONIZE | windows.FILE_READ_ATTRIBUTES)
 	options := uint32(windows.FILE_OPEN_REPARSE_POINT | windows.FILE_SYNCHRONOUS_IO_NONALERT)
 	if directory {
 		options |= windows.FILE_DIRECTORY_FILE
@@ -173,7 +173,7 @@ func openDirs(path string, create bool) (hs []windows.Handle, err error) {
 	if e != nil {
 		return nil, unsafePath("UTF16 root", root, "valid Windows string required", e)
 	}
-	h, e := windows.CreateFile(u, windows.READ_CONTROL|windows.FILE_LIST_DIRECTORY, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	h, e := windows.CreateFile(u, windows.READ_CONTROL|windows.FILE_LIST_DIRECTORY|windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if e != nil {
 		return nil, unsafePath("CreateFile root", root, "root directory open required", e)
 	}
@@ -228,6 +228,37 @@ func ValidateDir(path string, create bool) error {
 	hs, e := openDirs(path, create)
 	closeDirs(hs)
 	return e
+}
+
+// ValidatePrivateFile checks a regular owner-only, single-link file beneath
+// protected ancestors. Reparse points are opened without following them and
+// rejected. Retained no-delete-sharing ancestor handles protect the walk.
+func ValidatePrivateFile(path string) error {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.HasPrefix(path, `\\`) || strings.Contains(strings.TrimPrefix(path, filepath.VolumeName(path)), ":") {
+		return unsafePath("ValidatePrivateFile", path, "absolute clean local path without alternate streams required", nil)
+	}
+	hs, e := openDirs(filepath.Dir(path), false)
+	if e != nil {
+		return e
+	}
+	defer closeDirs(hs)
+	u, e := windows.UTF16PtrFromString(path)
+	if e != nil {
+		return e
+	}
+	h, e := windows.CreateFile(u, windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if e != nil {
+		return unsafePath("ValidatePrivateFile", path, "metadata handle required", e)
+	}
+	defer windows.CloseHandle(h)
+	var info windows.ByHandleFileInformation
+	if e = windows.GetFileInformationByHandle(h, &info); e != nil {
+		return unsafePath("ValidatePrivateFile", path, "metadata query required", e)
+	}
+	if info.FileAttributes&(windows.FILE_ATTRIBUTE_DIRECTORY|windows.FILE_ATTRIBUTE_REPARSE_POINT) != 0 || info.NumberOfLinks != 1 {
+		return unsafePath("ValidatePrivateFile", path, "regular non-reparse single-link private file required", nil)
+	}
+	return checkSecurity(h)
 }
 
 type lockedFile struct {

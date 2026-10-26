@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
@@ -17,6 +18,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/peer"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/shim"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/vault"
+	"github.com/Telara-Labs/telara-memory/contract/releaseauth"
 )
 
 // Installed key custody and per-client proofs come from the native vault and
@@ -69,6 +71,7 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 	source := fs.String("source", "", "Release executable authenticated by the caller")
 	digest := fs.String("sha256", "", "SHA256 from an independently authenticated release manifest")
 	version := fs.String("version", "", "Version from the authenticated release manifest")
+	releaseDir := fs.String("release-dir", "", "Release directory authenticated by the compiled project signing key")
 	if fs.Parse(args[1:]) != nil || fs.NArg() != 0 {
 		return errors.New("invalid_arguments")
 	}
@@ -79,11 +82,11 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 	case "managed-daemon":
 		allowed["install-dir"] = true
 	case "install":
-		for _, key := range []string{"data-dir", "run-dir", "install-dir", "source", "sha256", "version"} {
+		for _, key := range []string{"data-dir", "run-dir", "install-dir", "source", "sha256", "version", "release-dir"} {
 			allowed[key] = true
 		}
 	case "upgrade":
-		for _, key := range []string{"install-dir", "source", "sha256", "version"} {
+		for _, key := range []string{"install-dir", "source", "sha256", "version", "release-dir"} {
 			allowed[key] = true
 		}
 	case "status":
@@ -101,6 +104,16 @@ func runService(ctx context.Context, args []string, out io.Writer, in io.Reader)
 	})
 	if !valid {
 		return errors.New("invalid_arguments")
+	}
+	if *releaseDir != "" {
+		if *source != "" || *digest != "" || *version != "" {
+			return errors.New("invalid_arguments")
+		}
+		var err error
+		*source, *digest, *version, err = releaseauth.Target(*releaseDir, runtime.GOOS, runtime.GOARCH)
+		if err != nil {
+			return publicError("release_verification_failed")
+		}
 	}
 	if args[0] == "managed-daemon" {
 		if !filepath.IsAbs(*installDir) || filepath.Clean(*installDir) != *installDir {
