@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches-ignore: [ci-native-cross, ci-native-macos15]
+    branches-ignore: [ci-native-cross, ci-native-macos15, ci-release-prep, ci-macos15-unit]
   pull_request:
 
 permissions:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   security-regressions:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -19,7 +19,7 @@ jobs:
           cache-dependency-path: contract/go.sum
       - name: repaired security invariants and release authentication
         working-directory: contract
-        run: go test -p 2 -v -count=1 -timeout 15m -run 'Test(LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|RedactBeforeBoundaryAndActualGolden|QuarantineRecallClosureAllArrivalOrders|LocalUnseenErasureFencesHostedQuarantine|LocalErasureScrubsSidecarWithoutHostedRound|LocalScrubDoesNotDeadlockSidecarWriter|LocalScrubFencesStalePreparedExport|HostedServiceKeyRotationVerifiesNewReceipts|TransferredMetadataKeepsPolicyProvenance|RepositoryProofRequiresCurrentVerifiedIdentity|GovernedTaskBundleUsesSignedRepositoryProof|NodeLocalAdapterUsesSharedCorpus|NodeExportAdapterUsesEverySharedCorpusCase|AuthenticatedTarget|HostedEnrollment|Release)' ./record ./internal/node/capture ./internal/node/store ./internal/node/syncnode ./internal/node/localpolicy ./releaseauth ./cmd/telara-memory
+        run: go test -p 2 -v -count=1 -timeout 15m -run 'Test(PiCompositeCallIdentity|LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|RedactBeforeBoundaryAndActualGolden|QuarantineRecallClosureAllArrivalOrders|LocalUnseenErasureFencesHostedQuarantine|LocalErasureScrubsSidecarWithoutHostedRound|LocalScrubDoesNotDeadlockSidecarWriter|LocalScrubFencesStalePreparedExport|HostedServiceKeyRotationVerifiesNewReceipts|TransferredMetadataKeepsPolicyProvenance|RepositoryProofRequiresCurrentVerifiedIdentity|GovernedTaskBundleUsesSignedRepositoryProof|NodeLocalAdapterUsesSharedCorpus|NodeExportAdapterUsesEverySharedCorpusCase|AuthenticatedTarget|HostedEnrollment|Release)' ./record ./internal/node/capture ./internal/node/store ./internal/node/syncnode ./internal/node/localpolicy ./releaseauth ./cmd/telara-memory
 
   linux-security:
     runs-on: ubuntu-latest
@@ -37,7 +37,7 @@ jobs:
       - name: Linux native custody and current security invariants
         run: |
           cd /ci-source/contract
-          go test -p 2 -v -count=1 -timeout 15m -run 'Test(LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|HostedEnrollment|HostedServiceKeyRotation|TransferredMetadataKeepsPolicyProvenance|RepositoryProof|TenantKeyOutsideLoginRefused|GovernedTaskBundle|LocalErasureScrubs|LocalScrub|SecretServiceProfileHoldsIndependentSecrets|SecretServiceInstalledAuthorityReassignmentBeforeAndAfterLoad|InstalledStuckClientHintDoesNotBlockOtherClient)' ./internal/node/capture ./internal/node/store ./internal/node/syncnode ./internal/node/vault ./cmd/telara-memory
+          go test -p 2 -v -count=1 -timeout 15m -run 'Test(PiCompositeCallIdentity|LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|HostedEnrollment|HostedServiceKeyRotation|TransferredMetadataKeepsPolicyProvenance|RepositoryProof|TenantKeyOutsideLoginRefused|GovernedTaskBundle|LocalErasureScrubs|LocalScrub|SecretServiceProfileHoldsIndependentSecrets|SecretServiceInstalledAuthorityReassignmentBeforeAndAfterLoad|InstalledStuckClientHintDoesNotBlockOtherClient)' ./internal/node/capture ./internal/node/store ./internal/node/syncnode ./internal/node/vault ./cmd/telara-memory
 
   windows-security:
     runs-on: windows-latest
@@ -53,7 +53,7 @@ jobs:
         run: go test -p 2 -v -count=1 -timeout 15m -run 'Test(Windows|SQLiteURIUsesNativeAbsolutePath|DoctorMainStoreInspectionSidecars|DoctorSyncInspectionWritesNothing|ReleaseDirectory)' ./internal/node/store ./internal/node/ipc ./internal/node/doctor ./cmd/telara-memory
 
   native-client-driver:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -88,7 +88,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:

@@ -174,6 +174,33 @@ func isolatedEnv(home, config string, s clientSpec) []string {
 	return env
 }
 
+// Only the disposable Cursor client receives the operator-approved vendor API
+// key setting. Installed node/helper processes keep the ordinary isolated env.
+func isolatedClientEnv(home, config string, s clientSpec) ([]string, error) {
+	env := isolatedEnv(home, config, s)
+	if s.name != "cursor" {
+		return env, nil
+	}
+	raw, err := privateRead(filepath.Join(config, "auth.json"), 1<<20)
+	if err != nil {
+		return nil, errors.New("explicit Cursor auth file unavailable")
+	}
+	defer clear(raw)
+	var auth struct {
+		APIKey string `json:"apiKey"`
+	}
+	if json.Unmarshal(raw, &auth) != nil {
+		return nil, errors.New("explicit Cursor auth file invalid")
+	}
+	if auth.APIKey == "" {
+		return env, nil
+	}
+	if len(auth.APIKey) < 16 || len(auth.APIKey) > 4096 || strings.ContainsAny(auth.APIKey, " \t\r\n\x00") {
+		return nil, errors.New("explicit Cursor API key invalid")
+	}
+	return append(env, "CURSOR_API_KEY="+auth.APIKey), nil
+}
+
 type cappedBuffer struct {
 	buffer   bytes.Buffer
 	overflow bool

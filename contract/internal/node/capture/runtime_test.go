@@ -41,6 +41,11 @@ func runtimeWorldClient(t *testing.T, data []byte, client string) *runtimeFixtur
 	if err != nil {
 		t.Fatal(err)
 	}
+	// testing.TempDir's numbered child uses 0777 before umask. This fixture
+	// supplies Home itself as the configured private containment ancestor.
+	if err = os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	root := filepath.Join(home, "synthetic-"+client)
 	if err = os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)

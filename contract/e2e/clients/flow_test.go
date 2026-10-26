@@ -257,8 +257,12 @@ func runClient(t *testing.T, s clientSpec) {
 		t.Fatal(err)
 	}
 	r.Checks["client_sandbox"] = "PASS synthetic denied read, protected state writes and explicit isolated keychain refusal"
+	clientEnv, err := isolatedClientEnv(cfg.Home, cfg.ClientConfig, s)
+	if err != nil {
+		t.Fatal(err)
+	}
 	launch := func(phaseName string, args []string) ([]byte, error) {
-		return run(ctx, filepath.Join(cfg.Home, "work-"+strings.ToLower(phaseName)), env, nil, "/usr/bin/sandbox-exec", append([]string{"-f", profile, binary}, args...)...)
+		return run(ctx, filepath.Join(cfg.Home, "work-"+strings.ToLower(phaseName)), clientEnv, nil, "/usr/bin/sandbox-exec", append([]string{"-f", profile, binary}, args...)...)
 	}
 	if out, err = launch("A", []string{"--version"}); err != nil {
 		recordFailureCodes(t, &r, err)

@@ -7,7 +7,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
 
-const runtimeReaderVersion = "native-jsonl-runtime.2"
+const runtimeReaderVersion = "native-jsonl-runtime.3"
 
 func observationKind(s string) (string, error) {
 	switch s {
@@ -26,6 +26,9 @@ func observationKind(s string) (string, error) {
 // The preparation inner ordinal names a text-content part, not an exec call.
 // Nested execution is unsupported, so the wire Anchor.Inner is always zero.
 func sourceAnchor(o preparedObservation, path string) (record.Anchor, string, error) {
+	return sourceAnchorForClient(o, path, "")
+}
+func sourceAnchorForClient(o preparedObservation, path, client string) (record.Anchor, string, error) {
 	var empty record.Anchor
 	if o.position.line < 1 || o.position.block < -1 || o.position.block > 4095 {
 		return empty, "", hold("source_position")
@@ -48,7 +51,7 @@ func sourceAnchor(o preparedObservation, path string) (record.Anchor, string, er
 		native = o.callID
 	}
 	if native != "" {
-		if !identifier(native) {
+		if !identifier(native) && !(client == "pi" && o.kind == "tool_call" && native == o.callID && piCallIdentifier(native)) {
 			return empty, "", hold("unsafe_native_id")
 		}
 		return record.Anchor{NativeItemID: native, Inner: 0, Part: block*4096 + part}, native, nil
@@ -72,7 +75,7 @@ func normalize(batch preparedBatch, rs record.Ruleset) ([]record.Event, error) {
 		if err != nil {
 			return nil, err
 		}
-		anchor, native, err := sourceAnchor(o, batch.homeRelativeUnit)
+		anchor, native, err := sourceAnchorForClient(o, batch.homeRelativeUnit, batch.client)
 		if err != nil {
 			return nil, err
 		}

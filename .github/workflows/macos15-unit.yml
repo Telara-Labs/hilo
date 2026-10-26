@@ -1,0 +1,22 @@
+name: macos15-unit
+on:
+  push:
+    branches: [ci-macos15-unit]
+permissions:
+  contents: read
+jobs:
+  macos-full:
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: contract/go.sum
+      - name: native macOS full vet and unit suite
+        working-directory: contract
+        run: |
+          test "$(go env CGO_ENABLED)" = 1
+          go vet ./...
+          go test -p 2 -count=1 -timeout 60m ./...

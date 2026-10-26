@@ -282,3 +282,7 @@ probes, installation, capture and MCP behavior remain native runtime checks.
 The Cursor driver explicitly trusts only the fresh synthetic workspace it creates.
 The native sandbox still denies the real home and Keychain. This is required by
 Cursor Agent 2026.10.22 before a headless run starts.
+
+For Cursor only, an `apiKey` in the explicitly supplied private auth JSON is
+passed through `CURSOR_API_KEY` to the disposable client process. Node and helper
+processes keep their isolated environment. No inherited API key is used.

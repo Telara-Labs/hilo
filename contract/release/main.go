@@ -294,6 +294,37 @@ func extract(data []byte, dir string) error {
 // Go configuration. Updating this pin requires a release-source review.
 const releaseToolchain = "go1.26.1"
 
+var ErrNativeReleaseUnavailable = errors.New("native_darwin_release_unavailable")
+
+// Native custody requires Security.framework. A static Darwin build correctly
+// refuses custody and must never be emitted as a functional release target.
+// Use the system-selected native developer tools with an isolated environment;
+// caller CC, SDKROOT and DEVELOPER_DIR cannot select another compiler or SDK.
+func requireNativeCompiler(ctx context.Context, host string) error {
+	if host != "darwin" {
+		return ErrNativeReleaseUnavailable
+	}
+	for _, args := range [][]string{{"--sdk", "macosx", "--find", "clang"}, {"--sdk", "macosx", "--show-sdk-path"}} {
+		cmd := exec.CommandContext(ctx, "/usr/bin/xcrun", args...)
+		cmd.Env = []string{"PATH=/usr/bin:/bin"}
+		b, err := cmd.Output()
+		path := strings.TrimSpace(string(b))
+		if err != nil || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\r\n\x00") {
+			return ErrNativeReleaseUnavailable
+		}
+		info, err := os.Stat(path)
+		if err != nil || args[2] == "--find" && !info.Mode().IsRegular() || args[2] == "--show-sdk-path" && !info.IsDir() {
+			return ErrNativeReleaseUnavailable
+		}
+	}
+	cmd := exec.CommandContext(ctx, "/usr/bin/clang", "--version")
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	if b, err := cmd.Output(); err != nil || !bytes.Contains(b, []byte("Apple clang version")) {
+		return ErrNativeReleaseUnavailable
+	}
+	return nil
+}
+
 func compilerRoot() string {
 	if runtime.GOOS == "windows" {
 		return `C:\Program Files\Go`
@@ -316,6 +347,11 @@ func goEnv(platform, arch, inputs string) []string {
 		if v, ok := os.LookupEnv(k); ok {
 			env = append(env, k+"="+v)
 		}
+	}
+	if platform == "darwin" {
+		// Go supplies the architecture flags from GOARCH to the native compiler.
+		// No caller-selected compiler/SDK variables enter the allowlist.
+		vars["CGO_ENABLED"] = "1"
 	}
 	vars["PATH"] = filepath.Join(compilerRoot(), "bin") + string(os.PathListSeparator) + "/usr/bin" + string(os.PathListSeparator) + "/bin"
 	keys := []string{}
@@ -441,6 +477,11 @@ func build(ctx context.Context, c config) error {
 		if len(words) > 0 && (words[0] == "replace" || strings.HasPrefix(words[0], "replace(")) {
 			return errors.New("module replacements forbidden")
 		}
+	}
+	// All releases include both Darwin architectures. Refuse before creating an
+	// output directory or downloading modules when native custody cannot build.
+	if e = requireNativeCompiler(ctx, runtime.GOOS); e != nil {
+		return e
 	}
 	if _, e = os.Lstat(c.Out); !os.IsNotExist(e) {
 		return errors.New("output directory must not exist")

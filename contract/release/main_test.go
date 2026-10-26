@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"io"
 	"os"
@@ -326,5 +327,55 @@ func TestRemovePrivateReadOnlyModuleCache(t *testing.T) {
 	}
 	if st, e := os.Stat(marker); e != nil || st.Mode().Perm()&0200 != 0 {
 		t.Fatal("followed cache symlink", e)
+	}
+}
+
+func TestReleaseTargetNativeCustodyEnvironment(t *testing.T) {
+	for _, platform := range []string{"darwin", "linux", "windows"} {
+		for _, arch := range []string{"amd64", "arm64"} {
+			env := map[string]string{}
+			for _, item := range goEnv(platform, arch, t.TempDir()) {
+				k, v, _ := strings.Cut(item, "=")
+				env[k] = v
+			}
+			want := "0"
+			if platform == "darwin" {
+				want = "1"
+			}
+			if env["CGO_ENABLED"] != want || env["GOOS"] != platform || env["GOARCH"] != arch {
+				t.Fatal(platform, arch, env)
+			}
+			for _, forbidden := range []string{"CC", "CXX", "SDKROOT", "DEVELOPER_DIR", "CGO_CFLAGS", "CGO_LDFLAGS"} {
+				if _, ok := env[forbidden]; ok {
+					t.Fatal("caller compiler control", forbidden)
+				}
+			}
+		}
+	}
+}
+
+func TestReleaseDarwinUnavailableOnNonNativeHost(t *testing.T) {
+	if err := requireNativeCompiler(context.Background(), "linux"); !errors.Is(err, ErrNativeReleaseUnavailable) {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "darwin" {
+		t.Skip("non-native release refusal executes on Linux/Windows")
+	}
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source")
+	out := filepath.Join(dir, "release")
+	if err := os.Mkdir(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"go.mod": "module example.org/native-release\n", "go.sum": ""} {
+		if err := os.WriteFile(filepath.Join(source, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := build(context.Background(), config{Source: source, Out: out}); !errors.Is(err, ErrNativeReleaseUnavailable) {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(out); !os.IsNotExist(err) {
+		t.Fatal("unavailable native build published output", err)
 	}
 }

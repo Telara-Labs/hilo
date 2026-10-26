@@ -394,3 +394,34 @@ func TestHarnessPrecompiledNativeHelper(t *testing.T) {
 		t.Fatal("missing utility digest accepted")
 	}
 }
+
+func TestHarnessExplicitCursorAPIKeyScope(t *testing.T) {
+	root := canonicalTemp(t)
+	config := filepath.Join(root, ".cursor")
+	if err := privateWrite(filepath.Join(config, "auth.json"), []byte(`{"apiKey":"synthetic-private-cursor-key"}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range specs {
+		env, err := isolatedClientEnv(root, config, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, item := range env {
+			if strings.HasPrefix(item, "CURSOR_API_KEY=") {
+				found = true
+				if item != "CURSOR_API_KEY=synthetic-private-cursor-key" {
+					t.Fatal("wrong explicit key")
+				}
+			}
+		}
+		if found != (s.name == "cursor") {
+			t.Fatal("Cursor auth escaped client scope")
+		}
+		for _, item := range isolatedEnv(root, config, s) {
+			if strings.HasPrefix(item, "CURSOR_API_KEY=") {
+				t.Fatal("key leaked into node/helper environment")
+			}
+		}
+	}
+}

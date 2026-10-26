@@ -1,0 +1,65 @@
+name: release-artifacts
+on:
+  push:
+    branches: [ci-release-prep]
+permissions:
+  contents: read
+jobs:
+  clean-release:
+    runs-on: macos-15
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: contract/go.sum
+      - name: native compiler and exact source receipts
+        run: |
+          test "$(go version)" = "go version go1.26.1 darwin/arm64"
+          test "$(go env CGO_ENABLED)" = 1
+          compiler="$(go env GOROOT)"
+          if ! test /usr/local/go -ef "$compiler"; then
+            test ! -e /usr/local/go
+            sudo mkdir -p /usr/local
+            sudo ln -s "$compiler" /usr/local/go
+          fi
+          test "$(/usr/local/go/bin/go version)" = "go version go1.26.1 darwin/arm64"
+          mkdir -m 700 "$RUNNER_TEMP/release-receipts"
+          git rev-parse HEAD > "$RUNNER_TEMP/release-receipts/SOURCE_COMMIT"
+          git rev-parse HEAD:contract > "$RUNNER_TEMP/release-receipts/CONTRACT_TREE"
+          git status --porcelain --untracked-files=all > "$RUNNER_TEMP/release-receipts/SOURCE_STATUS"
+          test ! -s "$RUNNER_TEMP/release-receipts/SOURCE_STATUS"
+          /usr/bin/xcode-select -p > "$RUNNER_TEMP/release-receipts/DEVELOPER_PATH"
+          /usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/xcrun --sdk macosx --show-sdk-path > "$RUNNER_TEMP/release-receipts/SDK_PATH"
+          /usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/xcrun --sdk macosx --show-sdk-version > "$RUNNER_TEMP/release-receipts/SDK_VERSION"
+          /usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/xcrun --sdk macosx --find clang > "$RUNNER_TEMP/release-receipts/CLANG_PATH"
+          /usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/clang --version > "$RUNNER_TEMP/release-receipts/CLANG_VERSION"
+          shasum -a 256 "$(cat "$RUNNER_TEMP/release-receipts/CLANG_PATH")" "$(cat "$RUNNER_TEMP/release-receipts/SDK_PATH")/SDKSettings.json" > "$RUNNER_TEMP/release-receipts/NATIVE_INPUT_SHA256SUMS"
+          git tag v0.1.0-rc.1 HEAD
+          git rev-parse refs/tags/v0.1.0-rc.1 > "$RUNNER_TEMP/release-receipts/LOCAL_TAG_COMMIT"
+      - name: release regression gate
+        working-directory: contract
+        run: go test -p 2 -count=1 -v ./release ./releaseauth
+      - name: build all six clean-tag artifacts
+        working-directory: contract
+        run: |
+          go run -p 2 ./release --source "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/release-candidate" --tag v0.1.0-rc.1
+          test "$(find "$RUNNER_TEMP/release-candidate" -type f | wc -l | tr -d ' ')" = 8
+          cd "$RUNNER_TEMP/release-candidate"
+          shasum -a 256 -c SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-release-${{ matrix.replica }}
+          path: ${{ runner.temp }}/release-candidate/
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-source-receipts-${{ matrix.replica }}
+          path: ${{ runner.temp }}/release-receipts/
+          retention-days: 3
