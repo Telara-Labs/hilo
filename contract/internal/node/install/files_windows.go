@@ -104,7 +104,7 @@ func openHandle(path string, directory, private, root bool) (windows.Handle, err
 	access := uint32(windows.READ_CONTROL | windows.GENERIC_READ)
 	if directory {
 		flags |= windows.FILE_FLAG_BACKUP_SEMANTICS
-		access = windows.READ_CONTROL | windows.FILE_LIST_DIRECTORY
+		access = windows.READ_CONTROL | windows.FILE_LIST_DIRECTORY | windows.FILE_READ_ATTRIBUTES
 	}
 	h, e := windows.CreateFile(u, access, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, flags, 0)
 	if e != nil {

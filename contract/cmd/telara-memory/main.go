@@ -39,6 +39,8 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 		return runBundle(ctx, args[1:], in, out)
 	case "doctor":
 		return runDoctor(ctx, args[1:], out)
+	case "verify-release":
+		return runVerifyRelease(args[1:], out)
 	case "daemon", "managed-daemon", "shim", "install", "uninstall", "status", "register", "start", "stop", "upgrade":
 		return runService(ctx, args, out, in)
 	default:

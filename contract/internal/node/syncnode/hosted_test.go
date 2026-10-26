@@ -82,6 +82,12 @@ type hosted struct {
 	// of the authenticated one.
 	policyRoot  *record.Envelope
 	loginDevice string
+	// serviceKeys, when set, replaces the service-key envelopes the login
+	// response returns; by default it returns the tenant_key of tsk.
+	serviceKeys []record.Envelope
+	// onLogin runs while the login response is being served, before it is
+	// written, with h.mu released.
+	onLogin func()
 }
 
 func newHosted(t *testing.T, device ed25519.PublicKey, machine string, repos []string) *hosted {
@@ -189,6 +195,11 @@ func (h *hosted) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "POST" && r.URL.Path == "/v1/memory/import":
 		h.importRecords(w, r, machine)
 	case r.Method == "GET" && r.URL.Path == "/sync/v1/login":
+		if hook := h.onLogin; hook != nil {
+			h.mu.Unlock()
+			hook()
+			h.mu.Lock()
+		}
 		h.login(w, machine)
 	case r.Method == "POST" && r.URL.Path == "/sync/v1/hello":
 		h.hello(w, r, machine)
@@ -359,7 +370,23 @@ func (h *hosted) login(w http.ResponseWriter, machine string) {
 		device = h.loginDevice
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(nodesync.LoginReply{Origin: h.srv.URL, Tenant: h.tenant, User: h.user, Config: h.config, DeviceID: device, PolicyRoot: *h.policyRoot})
+	keys := h.serviceKeys
+	if keys == nil {
+		keys = []record.Envelope{serviceKeyOp(h.t, h.tsk, h.tenant)}
+	}
+	_ = json.NewEncoder(w).Encode(nodesync.LoginReply{Origin: h.srv.URL, Tenant: h.tenant, User: h.user, Config: h.config, DeviceID: device, PolicyRoot: *h.policyRoot, ServiceKeys: keys})
+}
+
+// serviceKeyOp is the exact signed tenant_key operation an authenticated login
+// response returns for one receipt service key of tenant.
+func serviceKeyOp(t *testing.T, key ed25519.PrivateKey, tenant string) record.Envelope {
+	t.Helper()
+	pub := key.Public().(ed25519.PublicKey)
+	op, err := sig.BuildKeyOp(record.KeyOpBody{Op: record.OpTenantKey, Subject: sig.KeyRefOf(pub, record.RoleService, ""), Genesis: tenant}, pub, "", 1761150000000, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return envelopeOf(op.Rec, op.Sigs)
 }
 
 // roots trusts this fixture's TLS certificate only.
