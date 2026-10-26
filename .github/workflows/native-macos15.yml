@@ -24,7 +24,7 @@ jobs:
           test "$(go env GOOS)" = darwin
           test "$(go env GOARCH)" = arm64
           test "$(go env CGO_ENABLED)" = 1
-          go test -p 2 -tags e2e -v -count=1 -run '^TestHarness(AuthIsolation|EnvironmentAndArguments|PrecompiledNativeHelper|ExplicitCursorAPIKeyScope)$' ./e2e/clients
+          go test -p 2 -tags e2e -v -count=1 -run '^TestHarness(AuthIsolation|EnvironmentAndArguments|PrecompiledNativeHelper|ExplicitCursorAPIKeyScope|AdapterMergeAndHookSpool)$' ./e2e/clients
           go test -p 2 -count=1 -run '^TestPiCompositeCallIdentity$' ./internal/node/capture
           go test -p 2 -tags e2e -c -o ../clients.test ./e2e/clients
           go build -p 2 -trimpath -o ../telara-memory-darwin-arm64 ./cmd/telara-memory

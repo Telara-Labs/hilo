@@ -195,6 +195,24 @@ func TestHarnessAdapterMergeAndHookSpool(t *testing.T) {
 			if err = mergeReport(cfg, report); err != nil {
 				t.Fatal(err)
 			}
+			if s.name == "cursor" {
+				path := filepath.Join(cfg.ClientConfig, "cli-config.json")
+				raw, err := privateRead(path, 4096)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var permissions struct {
+					ApprovalMode string `json:"approvalMode"`
+					Permissions  struct {
+						Allow []string `json:"allow"`
+						Deny  []string `json:"deny"`
+					} `json:"permissions"`
+				}
+				if err = json.Unmarshal(raw, &permissions); err != nil || permissions.ApprovalMode != "allowlist" ||
+					!slices.Equal(permissions.Permissions.Allow, []string{"Mcp(telara-memory:telara_task_create)", "Mcp(telara-memory:telara_task_list)"}) || len(permissions.Permissions.Deny) != 0 {
+					t.Fatal("Cursor disposable profile did not retain the exact two-tool allowlist")
+				}
+			}
 			if s.name != "pi" {
 				if err = mergeReport(cfg, report); err == nil {
 					t.Fatal("manual merge overwrote prior config")

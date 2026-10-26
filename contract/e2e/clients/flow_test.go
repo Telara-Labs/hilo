@@ -359,6 +359,13 @@ func mergeReport(cfg installedConfig, r clients.Report) error {
 			return err
 		}
 	}
+	if cfg.Client == "cursor" {
+		// Server approval and tool approval are separate Cursor controls. Only
+		// these two local task tools are needed by this disposable round trip.
+		// The vendor merges this profile with its defaults; allowlist mode stays
+		// enabled and no wildcard, shell or filesystem permission is added.
+		return privateWrite(filepath.Join(cfg.ClientConfig, "cli-config.json"), []byte(`{"approvalMode":"allowlist","permissions":{"allow":["Mcp(telara-memory:telara_task_create)","Mcp(telara-memory:telara_task_list)"],"deny":[]}}`))
+	}
 	if cfg.Client == "codex" {
 		// Existing vendor setting forces file custody; never ask login keyring.
 		p := filepath.Join(cfg.ClientConfig, "config.toml")
