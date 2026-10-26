@@ -67,24 +67,55 @@ type Diagnostics struct {
 var ErrNoDatabase = failure("no_database")
 
 // Inspect opens the store file read-only and reports counts and states. It
-// never creates, migrates, checkpoints or writes the database, and it does not
-// require the writer lock, so it works with or without a running daemon.
+// never creates, migrates, checkpoints or writes the database or its -wal and
+// -shm files, and it does not require the writer lock, so it works with or
+// without a running daemon.
 func Inspect(ctx context.Context, dir string) (Diagnostics, error) {
-	out := Diagnostics{SignatureState: map[string]int64{}, Scrub: ScrubDiagnostics{Jobs: []ScrubJob{}}, SpoolGaps: map[string]int64{}}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return out, failure("unsafe_path")
+		return emptyDiagnostics(), failure("unsafe_path")
 	}
 	path := filepath.Join(abs, "memory.sqlite")
 	if _, err = os.Lstat(path); os.IsNotExist(err) {
-		return out, ErrNoDatabase
+		return emptyDiagnostics(), ErrNoDatabase
 	} else if err != nil {
-		return out, failure("storage_error")
+		return emptyDiagnostics(), failure("storage_error")
 	}
-	if info, err := os.Lstat(path + "-wal"); err == nil {
-		out.Scrub.WALBytes = info.Size()
+	// A read-only connection to a WAL database still creates the -wal and
+	// -shm files when they are absent. Without either there is no live
+	// writer state outside the main file, so it is read as immutable and
+	// nothing is created. With both present a writer's log and index already
+	// exist and are only read, so a live WAL is seen. A WAL without its index,
+	// or an index without its WAL, cannot be read without creating the other.
+	// A writer that starts during an immutable read may have changed what it
+	// read, so the read is repeated through the writer's log and index.
+	for attempt := 0; ; attempt++ {
+		walInfo, walErr := os.Lstat(path + "-wal")
+		_, shmErr := os.Lstat(path + "-shm")
+		switch {
+		case os.IsNotExist(walErr) && os.IsNotExist(shmErr):
+			out, err := inspectFile(ctx, path, "mode=ro&immutable=1", 0)
+			if _, walErr = os.Lstat(path + "-wal"); os.IsNotExist(walErr) || attempt > 0 {
+				return out, err
+			}
+		case walErr != nil || shmErr != nil:
+			return emptyDiagnostics(), failure("wal_index_missing")
+		default:
+			return inspectFile(ctx, path, "mode=ro", walInfo.Size())
+		}
 	}
-	u := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}
+}
+
+func emptyDiagnostics() Diagnostics {
+	return Diagnostics{SignatureState: map[string]int64{}, Scrub: ScrubDiagnostics{Jobs: []ScrubJob{}}, SpoolGaps: map[string]int64{}}
+}
+
+// inspectFile reads one consistent snapshot of the store file opened with
+// the given read-only query.
+func inspectFile(ctx context.Context, path, query string, walBytes int64) (Diagnostics, error) {
+	out := emptyDiagnostics()
+	out.Scrub.WALBytes = walBytes
+	u := url.URL{Scheme: "file", Path: path, RawQuery: query}
 	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		return out, failure("storage_error")
