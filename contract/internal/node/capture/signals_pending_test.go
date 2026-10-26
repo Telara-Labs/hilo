@@ -83,7 +83,7 @@ func TestCollectorUnitPendingIdentityBeforeCapture(t *testing.T) {
 }
 
 func TestCollectorPendingDoesNotHideHostilePath(t *testing.T) {
-	for _, state := range []string{"symlink", "public-file", "public-root", "session-mismatch"} {
+	for _, state := range []string{"symlink", "writable-file", "writable-root", "public-anchor", "session-mismatch"} {
 		t.Run(state, func(t *testing.T) {
 			f := runtimeWorld(t, []byte(`{"type":`))
 			fake := &unitSignalStore{st: f.s, done: map[string]bool{}}
@@ -101,12 +101,16 @@ func TestCollectorPendingDoesNotHideHostilePath(t *testing.T) {
 				if err = os.Symlink(f.path+".original", f.path); err != nil {
 					t.Fatal(err)
 				}
-			case "public-file":
-				if err = os.Chmod(f.path, 0644); err != nil {
+			case "writable-file":
+				if err = os.Chmod(f.path, 0666); err != nil {
 					t.Fatal(err)
 				}
-			case "public-root":
-				if err = os.Chmod(filepath.Dir(f.path), 0755); err != nil {
+			case "writable-root":
+				if err = os.Chmod(filepath.Dir(f.path), 0777); err != nil {
+					t.Fatal(err)
+				}
+			case "public-anchor":
+				if err = os.Chmod(f.c.Home, 0755); err != nil {
 					t.Fatal(err)
 				}
 			case "session-mismatch":

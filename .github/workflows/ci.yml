@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches-ignore: [ci-release-prep]
+    branches-ignore: [ci-native-macos15, ci-native-cross, ci-release-prep, ci-macos15-unit]
   pull_request:
 
 permissions:

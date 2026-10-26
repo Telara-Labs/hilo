@@ -111,7 +111,7 @@ func decodeCursor(b []byte, line int) ([]preparedObservation, error) {
 // execution success, or compaction provenance completeness.
 // OpenAI Responses exposes a composite invocation identity in Pi. This is
 // opaque native correlation, never a path, session ID, tool name or authority.
-var piCompositeCall = regexp.MustCompile(`^call_[A-Za-z0-9_-]+\|fc_[A-Za-z0-9_-]+$`)
+var piCompositeCall = regexp.MustCompile(`^call_[A-Za-z0-9_-]+\|[A-Za-z0-9_-]+$`)
 
 func piCallIdentifier(s string) bool {
 	if identifier(s) {

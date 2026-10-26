@@ -126,7 +126,7 @@ func TestHarnessEnvironmentAndArguments(t *testing.T) {
 				}
 			}
 			args := clientArgs(s, "unique prompt")
-			if s.name == "cursor" && !slices.Contains(args, "--trust") {
+			if s.name == "cursor" && (!slices.Contains(args, "--trust") || !slices.Contains(args, "--approve-mcps")) {
 				t.Fatal("synthetic Cursor workspace trust absent")
 			}
 			if !strings.Contains(strings.Join(args, " "), "unique prompt") {

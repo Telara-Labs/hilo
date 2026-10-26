@@ -268,7 +268,7 @@ func TestPiRedactedReasoningNeverRetainsOpaqueSignature(t *testing.T) {
 
 func TestPiCompositeCallIdentity(t *testing.T) {
 	raw := readFixture(t, "pi-1.1.0")
-	composite := "call_syntheticA|fc_syntheticB"
+	composite := "call_syntheticA|item_" + strings.Repeat("a", 49)
 	raw = bytes.ReplaceAll(raw, []byte("call_synthetic"), []byte(composite))
 	f := runtimeWorldClient(t, raw, "pi")
 	quietSource()
@@ -296,12 +296,12 @@ func TestPiCompositeCallIdentity(t *testing.T) {
 	if !exact || results != 1 {
 		t.Fatal("native identity not preserved", exact, results)
 	}
-	for _, good := range []string{"call_synthetic", composite} {
+	for _, good := range []string{"call_synthetic", "call_syntheticA|fc_syntheticB", composite} {
 		if !piCallIdentifier(good) {
 			t.Fatal("refused native ID")
 		}
 	}
-	for _, bad := range []string{"call_a|fc_b|fc_c", "|fc_b", "call_a|", "call_a|other_b", "call_a|fc_../path", "call_a|fc_b\n", "call_a|fc_b\x00", "call_a|fc_" + strings.Repeat("x", 201), "call_a|fc_AKIAABCDEFGHIJKLMNOP"} {
+	for _, bad := range []string{"call_a|fc_b|fc_c", "|fc_b", "call_a|", "other_a|fc_b", "call_a|fc_../path", "call_a|fc_b\n", "call_a|fc_b\x00", "call_a|fc_" + strings.Repeat("x", 201), "call_a|fc_AKIAABCDEFGHIJKLMNOP"} {
 		if piCallIdentifier(bad) {
 			t.Fatal("accepted unsafe composite ID")
 		}

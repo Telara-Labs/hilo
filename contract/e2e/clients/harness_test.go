@@ -288,7 +288,7 @@ func clientArgs(s clientSpec, prompt string) []string {
 			"-c", `mcp_servers.telara-memory.enabled_tools=["telara_task_create","telara_task_list"]`, prompt}
 	case "cursor":
 		// Only disposable synthetic workspaces are passed by this harness.
-		args = []string{"--print", "--trust", "--output-format", "stream-json", prompt}
+		args = []string{"--print", "--trust", "--approve-mcps", "--output-format", "stream-json", prompt}
 	case "pi":
 		args = []string{"--print", "--mode", "json", prompt}
 	}

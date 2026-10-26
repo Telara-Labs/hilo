@@ -17,7 +17,7 @@ client, hook, capture, redaction, read-back or cleanup check fails the test.
 | --- | --- | --- | --- |
 | Claude Code | `CLAUDE_CONFIG_DIR` | `.claude/.credentials.json` | `claude -p --output-format stream-json --verbose` |
 | Codex CLI | `CODEX_HOME` | `.codex/auth.json` | `codex exec --json --skip-git-repo-check --sandbox read-only` |
-| Cursor Agent | `CURSOR_CONFIG_DIR` | `.cursor/auth.json` | `cursor-agent --print --trust --output-format stream-json` |
+| Cursor Agent | `CURSOR_CONFIG_DIR` | `.cursor/auth.json` | `cursor-agent --print --trust --approve-mcps --output-format stream-json` |
 | Pi | `PI_CODING_AGENT_DIR` | `.pi/agent/auth.json` | `pi --print --mode json` |
 
 Paths in the table are relative to a new disposable home. Each child receives an
@@ -286,3 +286,6 @@ Cursor Agent 2026.10.22 before a headless run starts.
 For Cursor only, an `apiKey` in the explicitly supplied private auth JSON is
 passed through `CURSOR_API_KEY` to the disposable client process. Node and helper
 processes keep their isolated environment. No inherited API key is used.
+
+Cursor approves the sole local MCP server in the fresh fixture for headless
+acceptance. The client sandbox and private config remain in force.

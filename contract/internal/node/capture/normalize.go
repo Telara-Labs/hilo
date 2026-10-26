@@ -7,7 +7,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
 
-const runtimeReaderVersion = "native-jsonl-runtime.3"
+const runtimeReaderVersion = "native-jsonl-runtime.4"
 
 func observationKind(s string) (string, error) {
 	switch s {
