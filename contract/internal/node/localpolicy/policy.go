@@ -10,7 +10,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
 
-const Engine = "tap-discover/cd7b481855de"
+const Engine = "tap-discover/d4bd1496f20d"
 const ID = Engine + "/local"
 
 type policyError struct{}
