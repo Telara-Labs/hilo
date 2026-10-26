@@ -159,10 +159,16 @@ func copyAuth(source, dest string) error {
 // An allowlist prevents inherited tokens, client homes, shell startup hooks,
 // SDK overrides and nested-session settings from entering disposable clients.
 func isolatedEnv(home, config string, s clientSpec) []string {
-	return []string{"PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + home,
+	env := []string{"PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + home,
 		"TMPDIR=" + filepath.Join(home, "tmp"), "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
 		"XDG_CACHE_HOME=" + filepath.Join(home, ".cache"), "XDG_DATA_HOME=" + filepath.Join(home, ".local/share"),
 		s.configVariable + "=" + config, "LANG=en_US.UTF-8"}
+	// Luis approved this existing Cursor vendor option for the disposable test
+	// only. The real native keychain remains denied by the sandbox.
+	if s.name == "cursor" {
+		env = append(env, "AGENT_CLI_CREDENTIAL_STORE=file")
+	}
+	return env
 }
 
 type cappedBuffer struct {

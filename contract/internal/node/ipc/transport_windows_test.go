@@ -61,8 +61,8 @@ func TestWindowsVolumeRootCreationACL(t *testing.T) {
 		})
 	}
 	for _, sddl := range []string{
-		"O:BUD:P(A;CI;AD;;;BU)",   // creation exception cannot trust a new owner
-		"D:P(A;CI;AD;;;BU)",       // missing owner
+		"O:BUD:P(A;CI;0x4;;;BU)",  // creation exception cannot trust a new owner
+		"D:P(A;CI;0x4;;;BU)",      // missing owner
 		"O:SYD:NO_ACCESS_CONTROL", // null DACL
 	} {
 		sd, e := windows.SecurityDescriptorFromString(sddl)
@@ -83,7 +83,7 @@ func TestWindowsCreationACLPrivateDescendant(t *testing.T) {
 	parent := t.TempDir()
 	// Exercise the root's creation ACE on an owned disposable directory, not
 	// the host volume root. Only the descriptor-policy test grants root status.
-	setWindowsDACL(t, parent, "D:P(A;;FA;;;"+current.String()+")(A;CI;AD;;;BU)")
+	setWindowsDACL(t, parent, "D:P(A;;FA;;;"+current.String()+")(A;CI;0x4;;;BU)")
 	u, e := windows.UTF16PtrFromString(parent)
 	if e != nil {
 		t.Fatal(e)
