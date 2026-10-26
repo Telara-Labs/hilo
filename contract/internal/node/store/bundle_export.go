@@ -3,12 +3,14 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/telara-memory/contract/transport"
 )
 
 // BundleExportLock is the lock an exporter holds for the whole life of one
@@ -22,10 +24,10 @@ func BundleExportLock(dir, token string) string {
 // RegisterBundleExport selects a bundle under the store writer and, in the
 // same transaction, registers the in-flight export with the erasure
 // lifecycle: its staging path, the identity of the selected content and
-// every data or variant source id it carries. The caller must already hold
-// BundleExportLock(dir, token). Governed session and task heads travel only
-// as fresh push-metadata variants signed by signer, under the complete
-// current authorization.
+// every data or variant source id it carries, and the exact signed bytes of
+// every variant. The caller must already hold BundleExportLock(dir, token).
+// Governed session and task heads travel only as fresh push-metadata
+// variants signed by signer, under the complete current authorization.
 func (s *Store) RegisterBundleExport(ctx context.Context, token, staging string, ids []string, signer ControlSigner) (BundleSelection, error) {
 	if !record.IsKeyID(token) || !filepath.IsAbs(staging) || filepath.Clean(staging) != staging {
 		return BundleSelection{}, failure("invalid_request")
@@ -55,6 +57,18 @@ func (s *Store) RegisterBundleExport(ctx context.Context, token, staging string,
 				return failure("storage_error")
 			}
 		}
+		// The exact signed variant bytes the staging copy will carry are
+		// registered with the export, so publication revalidates those
+		// frozen bytes rather than a fresh build.
+		for _, v := range meta.variants {
+			sigs, err := json.Marshal(v.rec.Sigs)
+			if err != nil {
+				return failure("invalid_record")
+			}
+			if _, err = s.conn.ExecContext(ctx, "INSERT INTO bundle_export_variant(export,source,id,header,body,sigs) VALUES(?,?,?,?,?,?)", token, v.source, v.rec.AdvisoryID, v.rec.HeaderJCS, v.rec.BodyJCS, sigs); err != nil {
+				return failure("storage_error")
+			}
+		}
 		out = sel
 		return nil
 	})
@@ -66,12 +80,14 @@ func (s *Store) RegisterBundleExport(ctx context.Context, token, staging string,
 
 // PublishBundleExport serializes final publication against current tombs,
 // policy and keys. Under the store writer it requires the registration to be
-// present and not cancelled, and the same selection evaluated now to have
-// exactly the registered identity: the same keyring, controls, facts, data
-// and variants under current authorization. Only then does publish run,
-// still under the writer, so no erasure, key or policy change can interleave.
-// Otherwise the staging copy is destroyed and bundle_invalidated returned.
-// The registration is removed either way.
+// present and not cancelled, every registered signed variant to be permitted
+// as frozen by the complete current authorization, and the same selection
+// evaluated now to have exactly the registered identity: the same keyring,
+// controls, facts, data and byte-identical variants under current redaction
+// and authorization. Only then does publish run, still under the writer, so
+// no erasure, key or policy change can interleave. Otherwise the staging copy
+// is destroyed and bundle_invalidated returned. The registration is removed
+// either way.
 func (s *Store) PublishBundleExport(ctx context.Context, token string, ids []string, publish func() error) error {
 	selected, err := bundleIDs(ids)
 	if err != nil {
@@ -98,11 +114,22 @@ func (s *Store) PublishBundleExport(ctx context.Context, token string, ids []str
 			if d.blocked {
 				current = false
 			} else {
-				_, meta, err := s.selectLocked(ctx, d, selected, variantCheck, nil)
+				key, ok, err := s.revalidateFrozenVariants(ctx, d, token)
 				if err != nil {
 					return err
 				}
-				current = meta.digest() == digest
+				current = ok
+				if current {
+					var check ControlSigner
+					if key != "" {
+						check = variantKey(key)
+					}
+					_, meta, err := s.selectLocked(ctx, d, selected, variantCheck, check)
+					if err != nil {
+						return err
+					}
+					current = meta.digest() == digest
+				}
 			}
 		}
 		if current {
@@ -142,7 +169,60 @@ func (s *Store) AbandonBundleExport(ctx context.Context, token string) error {
 	})
 }
 
+// variantKey names the key a registered variant was signed by, so a
+// check-mode selection rebuilds the exact unsigned bytes. It never signs.
+type variantKey string
+
+func (k variantKey) KeyID() string { return string(k) }
+func (variantKey) SignRecordID(string) (record.Signature, error) {
+	return record.Signature{}, failure("signing_unavailable")
+}
+
+// revalidateFrozenVariants checks every signed variant registered with an
+// export, as frozen, under the complete current authorization: each must
+// still parse to its registered id as a push-metadata variant of its
+// registered source, carry its registered signature, and be permitted in a
+// bundle by the current policy, including its redaction shapes. It returns
+// the single key the variants were signed by, empty when there are none.
+func (s *Store) revalidateFrozenVariants(ctx context.Context, d *databaseState, token string) (string, bool, error) {
+	rows, err := s.conn.QueryContext(ctx, "SELECT source,id,header,body,sigs FROM bundle_export_variant WHERE export=? ORDER BY source", token)
+	if err != nil {
+		return "", false, failure("storage_error")
+	}
+	defer rows.Close()
+	key, ok := "", true
+	for rows.Next() {
+		var source, id string
+		var header, body, raw []byte
+		if rows.Scan(&source, &id, &header, &body, &raw) != nil {
+			return "", false, failure("storage_error")
+		}
+		var sigs []record.Signature
+		r, err := record.Parse(header, body, id)
+		if err != nil || json.Unmarshal(raw, &sigs) != nil || len(sigs) != 1 {
+			ok = false
+			continue
+		}
+		h := r.Header
+		if h.Red.Profile != record.ProfilePushMetadata || h.Links.Origin != source || r.Body == nil || sigs[0].KeyID != h.Author.KeyID || key != "" && key != h.Author.KeyID {
+			ok = false
+			continue
+		}
+		key = h.Author.KeyID
+		if !transport.BundlePolicyAllowed(r, d.bundleAuthorization(r)) {
+			ok = false
+		}
+	}
+	if rows.Err() != nil {
+		return "", false, failure("storage_error")
+	}
+	return key, ok, nil
+}
+
 func (s *Store) forgetBundleExport(ctx context.Context, token string) error {
+	if _, err := s.conn.ExecContext(ctx, "DELETE FROM bundle_export_variant WHERE export=?", token); err != nil {
+		return failure("storage_error")
+	}
 	if _, err := s.conn.ExecContext(ctx, "DELETE FROM bundle_export_item WHERE export=?", token); err != nil {
 		return failure("storage_error")
 	}

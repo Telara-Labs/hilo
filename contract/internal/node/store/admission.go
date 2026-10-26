@@ -457,14 +457,21 @@ func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures [
 		}
 	}
 	if b, ok := r.Body.(*record.ErasureBody); ok {
-		if len(b.Selectors.Tasks)+len(b.Selectors.Sessions)+len(b.Selectors.LIDs)+len(b.Selectors.Sources) > 0 {
-			return failure("bulk_confirmation_required")
-		}
-		// Event selectors have unbounded future effect too, even with zero
-		// current matches. A bundle applies one only after the receiving
-		// owner's local confirmation; the local erase command and hosted
-		// browser re-authentication confirm on their own routes.
-		if len(b.Selectors.Events) > 0 && s.controlConfirm != nil && !s.controlConfirm[r.ID] {
+		// Task, session, LID, source and event selectors have unbounded
+		// future effect, even with zero current matches. Inside a bundle
+		// import each such control applies only after the receiving owner's
+		// local confirmation of that exact control; the issuer checks above
+		// and the cumulative effect bound still apply to a confirmed one.
+		// Elsewhere task, session, LID and source selectors are never
+		// admitted, and event selectors are confirmed by the local erase
+		// command and hosted browser re-authentication on their own routes.
+		sel := b.Selectors
+		bulk := len(sel.Tasks)+len(sel.Sessions)+len(sel.LIDs)+len(sel.Sources) > 0
+		if s.controlConfirm != nil {
+			if (bulk || len(sel.Events) > 0) && !s.controlConfirm[r.ID] {
+				return failure("bulk_confirmation_required")
+			}
+		} else if bulk {
 			return failure("bulk_confirmation_required")
 		}
 	}

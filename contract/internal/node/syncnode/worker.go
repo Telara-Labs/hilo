@@ -41,6 +41,14 @@ var (
 	// acknowledged exactly, but every data and reconciliation fence stays in
 	// place until a round scans and enforces the whole snapshot.
 	ErrControlScanIncomplete = errors.New("sync_control_scan_incomplete")
+	// ErrScrubPending reports a round that deleted a quarantined copy whose
+	// superseded pages a reader still pins. No ACK is sent until a later
+	// round establishes the physical cleanup.
+	ErrScrubPending = errors.New("sync_scrub_pending")
+	// ErrServiceKeysUnpinned reports an enrolled profile whose receipt keys
+	// were not pinned from an authenticated TLS login. No receipt can be
+	// verified, so no round runs until a login pins them.
+	ErrServiceKeysUnpinned = errors.New("sync_service_keys_unpinned")
 )
 
 // Config assembles a worker. Dir is the owner-only data directory holding the
@@ -65,9 +73,12 @@ type Worker struct {
 	client *nodesync.Client
 	digest string
 	ob     *outbox
-	cancel context.CancelFunc
-	done   chan struct{}
-	wake   chan struct{}
+	// genesis is the profile genesis of the running round, the owner the
+	// store's bans are read for.
+	genesis string
+	cancel  context.CancelFunc
+	done    chan struct{}
+	wake    chan struct{}
 }
 
 // NewWorker opens the sync database. It does not start a goroutine or read
@@ -163,10 +174,17 @@ func (w *Worker) Round(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if !p.ServiceKeysPinned() {
+		if ctx.Err() == nil {
+			_ = w.state.recordRound(ctx, destination(p.Scope()), ErrServiceKeysUnpinned.Error())
+		}
+		return ErrServiceKeysUnpinned
+	}
 	client, ob, err := w.clientFor(p)
 	if err != nil {
 		return err
 	}
+	w.genesis = p.Genesis
 	err = w.round(ctx, p, client, ob)
 	failure := ""
 	if err != nil {
@@ -191,6 +209,9 @@ func (w *Worker) clientFor(p Profile) (*nodesync.Client, *outbox, error) {
 		return nil, nil, ErrProfile
 	}
 	keys := &sig.State{Genesis: p.Genesis, Keys: map[string]*sig.Key{}}
+	if !p.ServiceKeysPinned() {
+		return nil, nil, ErrServiceKeysUnpinned
+	}
 	for _, k := range p.ServiceKeys {
 		pub, err := k.public()
 		if err != nil {
@@ -263,6 +284,25 @@ func (w *Worker) round(ctx context.Context, p Profile, client *nodesync.Client, 
 			if err = w.pullData(ctx, client, ob.dest, c.Data, reply.DataHead); err != nil {
 				return err
 			}
+		}
+	}
+	// An ACK claims enforcement only after physical cleanup: a quarantined
+	// copy deleted since the sync database was last clean must be gone from
+	// both of its files first.
+	pending, err := w.state.scrubPending(ctx)
+	if err != nil {
+		return err
+	}
+	if pending {
+		clean, err := w.state.establishScrub(ctx)
+		if err != nil {
+			return err
+		}
+		if !clean {
+			if blocked {
+				return ErrControlBlocked
+			}
+			return ErrScrubPending
 		}
 	}
 	c, err = w.state.cursors(ctx, ob.dest)
@@ -450,7 +490,7 @@ func (w *Worker) cleanup(ctx context.Context, dest string, c pendingControl) (st
 	if reason != "" || r.Header.Type != record.KindErasure && r.Header.Type != record.KindRetraction {
 		return "", nil
 	}
-	if err := w.state.dropQuarantined(ctx, dest, r); err != nil {
+	if err := w.state.fenceQuarantine(ctx, r, storeInvalidates(w.cfg.Store, w.genesis)); err != nil {
 		return "", err
 	}
 	if err := w.reconcile(ctx, dest); err != nil {
@@ -460,7 +500,7 @@ func (w *Worker) cleanup(ctx context.Context, dest string, c pendingControl) (st
 		}
 		return "", err
 	}
-	clean, err := w.state.checkpoint(ctx)
+	clean, err := w.state.establishScrub(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -679,8 +719,11 @@ func (w *Worker) push(ctx context.Context, p Profile, client *nodesync.Client, o
 	return nil
 }
 
-// pullData quarantines every hosted data item to data_head. v1 imports no
+// pullData quarantines hosted data items to data_head. v1 imports no
 // hosted-origin records; data_cursor advances only with its page transaction.
+// Each item is checked against the persistent fences and the store's tombs and
+// bans before anything is stored, so an erased item that arrives after its
+// control was enforced, including a stale or replayed page, is never kept.
 func (w *Worker) pullData(ctx context.Context, client *nodesync.Client, dest string, cursor, head int64) error {
 	pos := cursor
 	for i := 0; i < maxPages && pos < head; i++ {
@@ -691,7 +734,7 @@ func (w *Worker) pullData(ctx context.Context, client *nodesync.Client, dest str
 		if err = checkPage(page, "data", pos, head); err != nil {
 			return err
 		}
-		if err = w.state.applyData(ctx, dest, page.Items, page.NextAfter); err != nil {
+		if _, err = w.state.applyData(ctx, dest, page.Items, page.NextAfter, storeInvalidates(w.cfg.Store, w.genesis)); err != nil {
 			return err
 		}
 		pos = page.NextAfter
@@ -703,7 +746,7 @@ func (w *Worker) pullData(ctx context.Context, client *nodesync.Client, dest str
 }
 
 func publicCode(err error) string {
-	for _, known := range []error{ErrControlBlocked, ErrControlScanIncomplete, ErrHostedLog, ErrCredential, ErrProfile, nodesync.ErrForbidden, nodesync.ErrToken, nodesync.ErrReceipt, nodesync.ErrKeystoreUnavailable, nodesync.ErrInvalid, nodesync.ErrLoggedOut, errControlConflict, errStateInvalid} {
+	for _, known := range []error{ErrControlBlocked, ErrControlScanIncomplete, ErrScrubPending, ErrServiceKeysUnpinned, ErrHostedLog, ErrCredential, ErrProfile, nodesync.ErrForbidden, nodesync.ErrToken, nodesync.ErrReceipt, nodesync.ErrKeystoreUnavailable, nodesync.ErrInvalid, nodesync.ErrLoggedOut, errControlConflict, errStateInvalid} {
 		if errors.Is(err, known) {
 			return known.Error()
 		}

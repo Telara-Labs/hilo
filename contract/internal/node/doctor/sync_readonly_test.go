@@ -152,8 +152,10 @@ func syncProfile(t *testing.T, dir string, enrolled bool) {
 
 // Doctor is a read-only diagnostic. Its sync inspection must not create the
 // sync database, apply its schema, insert a cursor row or change any byte,
-// whatever state the profile is in. Each case is compared with a fresh
-// snapshot of every file and every sync row.
+// whatever state the profile is in, and its inspection of a stopped main
+// store must not create the store's -wal or -shm files. Each case is
+// compared with a fresh snapshot of every file, main store included, and
+// every sync row.
 func TestDoctorSyncInspectionWritesNothing(t *testing.T) {
 	for _, kind := range []string{"enrolled", "enrolled-missing-sidecar", "incomplete", "incomplete-empty-sidecar"} {
 		t.Run(kind, func(t *testing.T) {
@@ -169,6 +171,7 @@ func TestDoctorSyncInspectionWritesNothing(t *testing.T) {
 				}
 			}
 			ctx := context.Background()
+			stoppedStore(t, dir)
 			enrolled := strings.HasPrefix(kind, "enrolled")
 			syncProfile(t, dir, enrolled)
 			switch kind {
@@ -201,6 +204,9 @@ func TestDoctorSyncInspectionWritesNothing(t *testing.T) {
 			}
 			if after := syncRows(t, dir); after != rows {
 				t.Fatalf("doctor changed sync rows:\nbefore %s\nafter  %s", rows, after)
+			}
+			if r.Store.State != "ok" || r.Store.Records != 1 {
+				t.Fatalf("main store section %+v", r.Store)
 			}
 			if !r.Sync.Configured || r.Sync.Enrolled != enrolled || r.Sync.Error != "" {
 				t.Fatalf("sync section %+v", r.Sync)

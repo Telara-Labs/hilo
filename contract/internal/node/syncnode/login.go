@@ -130,14 +130,8 @@ func checkSecondLogin(ctx context.Context, dir string, p Profile, e Enrollment) 
 // bindProfile returns the enrolled profile for e without touching the vault.
 // The refresh slot is a placeholder until the credential is stored.
 func bindProfile(ctx context.Context, vault SecretVault, p Profile, e Enrollment) (Profile, error) {
-	if e.Grant.GenesisID != p.Genesis || e.Grant.DeviceID != p.Device {
-		return Profile{}, ErrIdentity
-	}
-	if _, err := CredentialThumbprint(ctx, vault, p.Credential); err != nil {
-		return Profile{}, ErrCredential
-	}
-	if !validRefresh(e.RefreshToken) {
-		return Profile{}, ErrEnrollment
+	if err := checkBinding(ctx, vault, p, e); err != nil {
+		return Profile{}, err
 	}
 	next := p
 	next.Enabled = true
@@ -145,7 +139,10 @@ func bindProfile(ctx context.Context, vault SecretVault, p Profile, e Enrollment
 	next.AuthIssuer = e.AuthIssuer
 	key := e.AuthKey
 	next.AuthKey = &key
+	// Keys named by terminal input are never pins; only LoginTLS replaces
+	// them with keys the authenticated TLS login response returned.
 	next.ServiceKeys = append([]ServiceKey(nil), e.ServiceKeys...)
+	next.ServiceKeyPins = ""
 	grant := e.Grant
 	grant.Repos = append([]string(nil), e.Grant.Repos...)
 	grant.Ops = append([]string(nil), e.Grant.Ops...)
@@ -157,11 +154,28 @@ func bindProfile(ctx context.Context, vault SecretVault, p Profile, e Enrollment
 	return next, nil
 }
 
+// checkBinding checks that e is for this installation's genesis and device,
+// that the device key is in custody and that the refresh credential has the
+// bootstrap shape.
+func checkBinding(ctx context.Context, vault SecretVault, p Profile, e Enrollment) error {
+	if e.Grant.GenesisID != p.Genesis || e.Grant.DeviceID != p.Device {
+		return ErrIdentity
+	}
+	if _, err := CredentialThumbprint(ctx, vault, p.Credential); err != nil {
+		return ErrCredential
+	}
+	if !validRefresh(e.RefreshToken) {
+		return ErrEnrollment
+	}
+	return nil
+}
+
 // crashPoint is called between the durable steps of a credential
 // replacement. It does nothing; tests replace it to stop the process there.
 var crashPoint = func(string) {}
 
-// commitProfile stores the refresh credential and atomically saves next.
+// commitProfile stores the refresh credential and atomically saves next. The
+// caller holds the profile lock and read p under it.
 // Credential slots are never forgotten: the new slot is recorded as retired
 // before it is created, so a crash before next is durable deletes it, and next
 // records the replaced refresh slot as retired in the same atomic replacement
@@ -208,7 +222,7 @@ func commitProfile(ctx context.Context, dir string, vault SecretVault, p, next P
 }
 
 // retireCredentials deletes every retired slot of the current profile and
-// records each established deletion. It reports whether none remains; a
+// records each established deletion. The caller holds the profile lock. It reports whether none remains; a
 // deletion that fails leaves its slot recorded for the next attempt.
 func retireCredentials(ctx context.Context, dir string, vault SecretVault) (bool, error) {
 	p, err := LoadProfile(dir)
@@ -315,41 +329,114 @@ func (loginOutbox) Retry(context.Context, nodesync.Scope, nodesync.Retry) error 
 }
 func (loginOutbox) Logout(context.Context, nodesync.Scope) error { return nil }
 
-// verifiedRoot performs the authenticated login exchange with the document's
+// verifiedLogin performs the authenticated login exchange with the document's
 // origin over validated TLS (roots nil means the system pool) and returns the
-// tenant policy root that response carries. The session is minted with this
-// device's DPoP key and the document's refresh credential and verified
-// against the document's pinned issuer key, so the tenant, user and config are
-// authenticated; the response must name the same origin, destination and
-// device, and its root must be a policy tenant_key for that tenant. The
-// document's own root must be exactly that root.
-func verifiedRoot(ctx context.Context, p Profile, vault SecretVault, roots *x509.CertPool, d LoginDocument) (store.SignedRecord, error) {
+// tenant policy root and the receipt issuer's service keys that response
+// carries. The session is minted with this device's DPoP key and the
+// document's refresh credential and verified against the document's pinned
+// issuer key, so the tenant, user and config are authenticated; the response
+// must name the same origin, destination and device, its root must be a
+// policy tenant_key for that tenant, and each service key a service
+// tenant_key for that tenant with a verifying possession signature. The
+// document's own root must be exactly that root, and any service keys it
+// names exactly that set.
+func verifiedLogin(ctx context.Context, p Profile, vault SecretVault, roots *x509.CertPool, d LoginDocument) (store.SignedRecord, []ServiceKey, error) {
+	root, keys, err := verifiedLoginReply(ctx, p, vault, roots, d)
+	if err != nil {
+		return store.SignedRecord{}, nil, err
+	}
+	if len(d.ServiceKeys) > 0 && !sameServiceKeys(d.ServiceKeys, keys) {
+		return store.SignedRecord{}, nil, ErrLoginUnverified
+	}
+	return root, keys, nil
+}
+
+func verifiedLoginReply(ctx context.Context, p Profile, vault SecretVault, roots *x509.CertPool, d LoginDocument) (store.SignedRecord, []ServiceKey, error) {
 	authKey, err := d.AuthKey.PublicKey()
 	if err != nil {
-		return store.SignedRecord{}, ErrLogin
+		return store.SignedRecord{}, nil, ErrLogin
 	}
 	scope := nodesync.Scope{Origin: d.Origin, Tenant: d.Tenant, User: d.User, Config: d.Config, Genesis: p.Genesis, Device: p.Device}
 	client, err := nodesync.New(nodesync.Config{Scope: scope, Grant: d.Grant, Keystore: loginKeystore{vault: vault, key: p.Credential, refresh: d.RefreshToken, tenant: d.Tenant}, Outbox: loginOutbox{}, Keys: pinnedKeys{&sig.State{Genesis: p.Genesis, Keys: map[string]*sig.Key{}}}, AuthKey: authKey, AuthIssuer: d.AuthIssuer, TLSRoots: roots, MaxRetries: 1})
 	if err != nil {
-		return store.SignedRecord{}, ErrLogin
+		return store.SignedRecord{}, nil, ErrLogin
 	}
 	defer client.Logout(context.WithoutCancel(ctx))
 	reply, err := client.Login(ctx)
 	if err != nil {
-		return store.SignedRecord{}, errors.Join(ErrLoginUnverified, err)
+		return store.SignedRecord{}, nil, errors.Join(ErrLoginUnverified, err)
 	}
 	root, rootRec, err := signedOf(reply.PolicyRoot)
 	if err != nil || !policyRootOf(rootRec, d.Tenant) {
-		return store.SignedRecord{}, ErrLoginUnverified
+		return store.SignedRecord{}, nil, ErrLoginUnverified
 	}
 	claimed, claimedRec, err := signedOf(d.PolicyRoot)
 	if err != nil {
-		return store.SignedRecord{}, err
+		return store.SignedRecord{}, nil, err
 	}
 	if claimedRec.ID != rootRec.ID || !bytes.Equal(claimed.BodyJCS, root.BodyJCS) || !sameSigs(claimed.Sigs, root.Sigs) {
-		return store.SignedRecord{}, ErrLoginUnverified
+		return store.SignedRecord{}, nil, ErrLoginUnverified
 	}
-	return root, nil
+	keys, err := pinnedServiceKeys(p.Genesis, d.Tenant, reply.ServiceKeys)
+	if err != nil {
+		return store.SignedRecord{}, nil, err
+	}
+	return root, keys, nil
+}
+
+// maxServiceKeys bounds the service keys one login response may pin.
+const maxServiceKeys = 16
+
+// pinnedServiceKeys verifies the service keys of an authenticated login
+// response. Each must be an exact tenant_key operation of the authenticated
+// tenant with role service, no parents and one verifying possession signature
+// by its subject, verified as a login-pinned service key; the set must be
+// non-empty, bounded and free of duplicates. Anything else refuses the whole
+// login: a partial pin set is never recorded.
+func pinnedServiceKeys(genesis, tenant string, envs []record.Envelope) ([]ServiceKey, error) {
+	if len(envs) == 0 || len(envs) > maxServiceKeys {
+		return nil, ErrLoginUnverified
+	}
+	seen := map[string]bool{}
+	var out []ServiceKey
+	for _, e := range envs {
+		r, err := nodesync.OpenEnvelope(e)
+		if err != nil {
+			return nil, ErrLoginUnverified
+		}
+		b, ok := r.Body.(*record.KeyOpBody)
+		if !ok || r.Header.Type != record.KindKeyOp || b.Op != record.OpTenantKey || b.Subject.Role != record.RoleService || b.Genesis != tenant || len(b.Parents) != 0 {
+			return nil, ErrLoginUnverified
+		}
+		op := &sig.KeyOp{Rec: r, Body: b, Sigs: append([]record.Signature(nil), e.Sigs...), FromLogin: true, Issuer: sig.TrustedIssuer{Tenant: tenant, Role: record.RoleService, Provenance: sig.PinnedTLSLogin}}
+		if sig.VerifyKeyOp(sig.NewKeyring(genesis), op).Status != sig.OpAuthorized {
+			return nil, ErrLoginUnverified
+		}
+		k := ServiceKey{KeyID: b.Subject.KeyID, Public: b.Subject.Pub}
+		if _, err := k.public(); err != nil || seen[k.KeyID] {
+			return nil, ErrLoginUnverified
+		}
+		seen[k.KeyID] = true
+		out = append(out, k)
+	}
+	return out, nil
+}
+
+// sameServiceKeys reports whether two key lists name the same set.
+func sameServiceKeys(a, b []ServiceKey) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := map[ServiceKey]bool{}
+	for _, k := range b {
+		set[k] = true
+	}
+	for _, k := range a {
+		if !set[k] {
+			return false
+		}
+	}
+	return true
 }
 
 func policyRootOf(r *record.Record, tenant string) bool {
@@ -393,28 +480,6 @@ func Login(ctx context.Context, dir string, vault SecretVault, d LoginDocument) 
 func LoginTLS(ctx context.Context, dir string, vault SecretVault, roots *x509.CertPool, d LoginDocument) (LoginReport, error) {
 	defer func() { d.RefreshToken = "" }()
 	var out LoginReport
-	p, err := LoadProfile(dir)
-	if Disabled(err) {
-		return out, ErrNotEnrolled
-	}
-	if err != nil {
-		return out, err
-	}
-	// Retry any earlier retirement first; its outcome is reported below.
-	if _, err = retireCredentials(ctx, dir, vault); err != nil {
-		return out, err
-	}
-	if p, err = LoadProfile(dir); err != nil {
-		return out, err
-	}
-	wasActive, err := checkSecondLogin(ctx, dir, p, d.Enrollment)
-	if err != nil {
-		return out, err
-	}
-	next, err := bindProfile(ctx, vault, p, d.Enrollment)
-	if err != nil {
-		return out, err
-	}
 	_, rootRec, err := signedOf(d.PolicyRoot)
 	if err != nil {
 		return out, err
@@ -430,46 +495,100 @@ func LoginTLS(ctx context.Context, dir string, vault SecretVault, roots *x509.Ce
 	if !ok || polRec.Header.Type != record.KindPolicy || pb.Tenant != d.Tenant {
 		return out, ErrLogin
 	}
-	root, err := verifiedRoot(ctx, p, vault, roots, d)
+	// The profile is read and checked under the profile lock, which is not
+	// held across the network exchange; the commit below takes it again and
+	// proceeds only if the profile is still exactly the one checked here.
+	var p Profile
+	err = withProfileLock(ctx, dir, func() error {
+		var err error
+		if p, err = LoadProfile(dir); Disabled(err) {
+			return ErrNotEnrolled
+		} else if err != nil {
+			return err
+		}
+		// Retry any earlier retirement first; its outcome is reported below.
+		if _, err = retireCredentials(ctx, dir, vault); err != nil {
+			return err
+		}
+		if p, err = LoadProfile(dir); err != nil {
+			return err
+		}
+		if _, err = checkSecondLogin(ctx, dir, p, d.Enrollment); err != nil {
+			return err
+		}
+		return checkBinding(ctx, vault, p, d.Enrollment)
+	})
 	if err != nil {
 		return out, err
 	}
-	st, err := store.Open(ctx, store.Options{Dir: dir, PinnedGenesisID: p.Genesis, LocalMachineID: p.Device})
+	root, keys, err := verifiedLogin(ctx, p, vault, roots, d)
 	if err != nil {
 		return out, err
 	}
-	defer st.Close()
-	// A failure after the tenant authority was installed by this login
-	// deactivates it again. Its pin and admission facts remain, as after any
-	// logout; a re-login of an already active tenant is never rolled back.
-	undo := func(cause error) error {
-		if wasActive {
+	err = withProfileLock(ctx, dir, func() error {
+		current, err := LoadProfile(dir)
+		if Disabled(err) || err == nil && profileDigest(current) != profileDigest(p) {
+			return ErrProfileChanged
+		}
+		if err != nil {
+			return err
+		}
+		wasActive, err := checkSecondLogin(ctx, dir, current, d.Enrollment)
+		if err != nil {
+			return err
+		}
+		// Receipt authority comes only from the authenticated response.
+		e := d.Enrollment
+		e.ServiceKeys = keys
+		next, err := bindProfile(ctx, vault, current, e)
+		if err != nil {
+			return err
+		}
+		next.ServiceKeyPins = string(sig.PinnedTLSLogin)
+		st, err := store.Open(ctx, store.Options{Dir: dir, PinnedGenesisID: current.Genesis, LocalMachineID: current.Device})
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		// A failure after the tenant authority was installed by this login
+		// deactivates it again. Its pin and admission facts remain, as after
+		// any logout; a re-login of an already active tenant is never rolled
+		// back.
+		undo := func(cause error) error {
+			if wasActive {
+				return cause
+			}
+			if e := st.LogoutTenant(context.WithoutCancel(ctx)); e != nil && store.Code(e) != "physical_pending" {
+				return errors.Join(cause, e)
+			}
 			return cause
 		}
-		if e := st.LogoutTenant(context.WithoutCancel(ctx)); e != nil && store.Code(e) != "physical_pending" {
-			return errors.Join(cause, e)
+		if err = st.InstallTenantPolicyContext(ctx, store.TenantPolicyContext{Tenant: d.Tenant, UserID: d.User, Origin: d.Origin, Root: root}); err != nil {
+			if store.Code(err) == "tenant_conflict" {
+				return ErrTenantConflict
+			}
+			return err
 		}
-		return cause
-	}
-	if err = st.InstallTenantPolicyContext(ctx, store.TenantPolicyContext{Tenant: d.Tenant, UserID: d.User, Origin: d.Origin, Root: root}); err != nil {
-		if store.Code(err) == "tenant_conflict" {
-			return out, ErrTenantConflict
+		if _, err = st.Append(ctx, pol); err != nil {
+			return undo(err)
 		}
-		return out, err
-	}
-	if _, err = st.Append(ctx, pol); err != nil {
-		return out, undo(err)
-	}
-	// The login's policy must now be the verified head with its body. A
-	// replay of a policy whose body logout already purged cannot reopen it.
-	if id, body, err := st.CapturePolicy(ctx); err != nil || id != polRec.ID || body == nil {
-		return out, undo(ErrPolicyNotCurrent)
-	}
-	clean, err := commitProfile(ctx, dir, vault, p, next, d.RefreshToken)
+		// The login's policy must now be the verified head with its body. A
+		// replay of a policy whose body logout already purged cannot reopen
+		// it.
+		if id, body, err := st.CapturePolicy(ctx); err != nil || id != polRec.ID || body == nil {
+			return undo(ErrPolicyNotCurrent)
+		}
+		clean, err := commitProfile(ctx, dir, vault, current, next, d.RefreshToken)
+		if err != nil {
+			return undo(err)
+		}
+		out = LoginReport{State: "logged_in", Tenant: d.Tenant, Policy: polRec.ID, Seq: pb.Seq, CredentialCleanup: cleanupState(clean)}
+		return nil
+	})
 	if err != nil {
-		return out, undo(err)
+		return LoginReport{}, err
 	}
-	return LoginReport{State: "logged_in", Tenant: d.Tenant, Policy: polRec.ID, Seq: pb.Seq, CredentialCleanup: cleanupState(clean)}, nil
+	return out, nil
 }
 
 func cleanupState(clean bool) string {
@@ -487,6 +606,20 @@ func cleanupState(clean bool) string {
 // removes the profile. Records sealed under the tenant's policy stay local,
 // non-pushable and non-bundleable. It never deletes hosted history.
 func LogoutDetailed(ctx context.Context, dir string, vault SecretVault) (LogoutReport, error) {
+	var out LogoutReport
+	err := withProfileLock(ctx, dir, func() error {
+		var err error
+		out, err = logoutLocked(ctx, dir, vault)
+		return err
+	})
+	if err != nil {
+		return LogoutReport{}, err
+	}
+	return out, nil
+}
+
+// logoutLocked is LogoutDetailed under the profile lock.
+func logoutLocked(ctx context.Context, dir string, vault SecretVault) (LogoutReport, error) {
 	out := LogoutReport{State: "logged_out", Physical: "complete", HostedHistory: "not_deleted"}
 	p, err := LoadProfile(dir)
 	configured := err == nil
