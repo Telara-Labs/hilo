@@ -19,6 +19,7 @@ const maxBundleReceipts = 16384
 type ReceiptIssuer struct {
 	Tenant string
 	Keys   map[string]ed25519.PublicKey // key id to public key
+	state  *sig.State                   // current locally retained service authority, never wire data
 }
 
 func receiptIssuerContext(tenant string) sig.TrustedIssuer {
@@ -53,6 +54,9 @@ func (i *ReceiptIssuer) verify(carried map[string]record.Receipt) map[string]rec
 	st := &sig.State{Keys: map[string]*sig.Key{}}
 	for id, pub := range i.Keys {
 		st.Keys[serviceBinding(i.Tenant, id)] = &sig.Key{KeyID: id, Pub: pub, Role: record.RoleService, Tenant: i.Tenant, Status: sig.KeyActive}
+	}
+	if i.state != nil {
+		st = i.state
 	}
 	for id, rc := range carried {
 		if rc.ID == id && rc.Tenant == i.Tenant && sig.VerifyReceipt(rc, st, receiptIssuerContext(i.Tenant)) == nil {
@@ -147,8 +151,16 @@ func (d *databaseState) receiptState(st *sig.State, tenant string) *sig.State {
 	for k, v := range st.Keys {
 		out.Keys[k] = v
 	}
-	for id, pub := range keys {
-		out.Keys[serviceBinding(tenant, id)] = &sig.Key{KeyID: id, Pub: pub, Role: record.RoleService, Tenant: tenant, Status: sig.KeyActive}
+	if kr, err := d.store.serviceKeyring(d.ctx, tenant); err == nil {
+		for binding, key := range kr.State().Keys {
+			out.Keys[binding] = key
+		}
+	} else if Code(err) == "service_pins_required" {
+		for id, pub := range keys {
+			out.Keys[serviceBinding(tenant, id)] = &sig.Key{KeyID: id, Pub: pub, Role: record.RoleService, Tenant: tenant, Status: sig.KeyActive}
+		}
+	} else {
+		return nil
 	}
 	for id, op := range st.Ops {
 		rc, ok := d.receipts[id]

@@ -1,0 +1,16 @@
+name: measure-current-security
+on: [push]
+permissions:
+  contents: read
+jobs:
+  measured-gates:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: contract/go.sum
+      - name: measure actual ruleset and exercise security regressions
+        working-directory: contract
+        run: go test -p 2 -v -count=1 -timeout 15m -run 'Test(RedactBeforeBoundaryAndActualGolden|QuarantineRecallClosureAllArrivalOrders|LocalUnseenErasureFencesHostedQuarantine|LocalErasureScrubsSidecarWithoutHostedRound|LocalScrubDoesNotDeadlockSidecarWriter|HostedServiceKeyRotationVerifiesNewReceipts|Release)' ./record ./internal/node/syncnode ./releaseauth

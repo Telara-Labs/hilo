@@ -36,8 +36,10 @@ var (
 	errStateInvalid = errors.New("sync_state_invalid")
 )
 
-// ServiceKey is a tenant service (receipt) key pinned at enrollment over the
-// authenticated login. Receipts verify only against these pins.
+// ServiceKey is a tenant service (receipt) key. It is a receipt authority
+// only when the profile records that it was pinned from the authenticated TLS
+// login response (ServiceKeyPins); keys named by an enrollment document read
+// from terminal input are never pins.
 type ServiceKey struct {
 	KeyID  string `json:"key_id"`
 	Public string `json:"public"`
@@ -47,20 +49,24 @@ type ServiceKey struct {
 // Enabled=false both mean sync is off. Credential names an opaque vault slot
 // holding the DPoP key and refresh credential; no secret is stored here.
 type Profile struct {
-	Version     int                   `json:"version"`
-	Enabled     bool                  `json:"enabled"`
-	Genesis     string                `json:"genesis"`
-	Device      string                `json:"device"`
-	Credential  string                `json:"credential"`
-	Refresh     string                `json:"refresh,omitempty"`
-	Origin      string                `json:"origin,omitempty"`
-	Tenant      string                `json:"tenant,omitempty"`
-	User        string                `json:"user,omitempty"`
-	Config      string                `json:"config,omitempty"`
-	AuthIssuer  string                `json:"auth_issuer,omitempty"`
-	AuthKey     *nodesync.PublicJWK   `json:"auth_key,omitempty"`
-	ServiceKeys []ServiceKey          `json:"service_keys,omitempty"`
-	Grant       *nodesync.MemoryGrant `json:"grant,omitempty"`
+	Version     int                 `json:"version"`
+	Enabled     bool                `json:"enabled"`
+	Genesis     string              `json:"genesis"`
+	Device      string              `json:"device"`
+	Credential  string              `json:"credential"`
+	Refresh     string              `json:"refresh,omitempty"`
+	Origin      string              `json:"origin,omitempty"`
+	Tenant      string              `json:"tenant,omitempty"`
+	User        string              `json:"user,omitempty"`
+	Config      string              `json:"config,omitempty"`
+	AuthIssuer  string              `json:"auth_issuer,omitempty"`
+	AuthKey     *nodesync.PublicJWK `json:"auth_key,omitempty"`
+	ServiceKeys []ServiceKey        `json:"service_keys,omitempty"`
+	// ServiceKeyPins is the provenance of ServiceKeys. Only "pinned-tls-login",
+	// set when every key came from the origin's authenticated login response
+	// over validated TLS, makes them receipt authority.
+	ServiceKeyPins string                `json:"service_key_pins,omitempty"`
+	Grant          *nodesync.MemoryGrant `json:"grant,omitempty"`
 	// Retired names credential slots this profile no longer uses whose
 	// deletion is not yet established. A slot is recorded here before it is
 	// created or replaced and removed only after its deletion succeeded.
@@ -73,6 +79,12 @@ const maxRetired = 16
 // Enrolled reports whether every hosted field required to run is present.
 func (p Profile) Enrolled() bool {
 	return p.Refresh != "" && p.Origin != "" && p.Tenant != "" && p.User != "" && p.Config != "" && p.AuthIssuer != "" && p.AuthKey != nil && len(p.ServiceKeys) > 0 && p.Grant != nil
+}
+
+// ServiceKeysPinned reports whether ServiceKeys are receipt authority: keys of
+// an enrolled profile pinned from the authenticated TLS login response.
+func (p Profile) ServiceKeysPinned() bool {
+	return p.Enrolled() && p.ServiceKeyPins == string(sig.PinnedTLSLogin)
 }
 
 // Scope is the authenticated destination for this profile.
@@ -91,8 +103,11 @@ func (p Profile) validate() error {
 		}
 		retired[h] = true
 	}
+	if p.ServiceKeyPins != "" && p.ServiceKeyPins != string(sig.PinnedTLSLogin) {
+		return ErrProfile
+	}
 	if !p.Enrolled() {
-		if p.Enabled || p.Refresh != "" || p.Origin != "" || p.Tenant != "" || p.User != "" || p.Config != "" || p.AuthIssuer != "" || p.AuthKey != nil || len(p.ServiceKeys) != 0 || p.Grant != nil {
+		if p.ServiceKeyPins != "" || p.Enabled || p.Refresh != "" || p.Origin != "" || p.Tenant != "" || p.User != "" || p.Config != "" || p.AuthIssuer != "" || p.AuthKey != nil || len(p.ServiceKeys) != 0 || p.Grant != nil {
 			return ErrProfile
 		}
 		return nil
