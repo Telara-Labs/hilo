@@ -44,7 +44,9 @@ jobs:
           git rev-parse refs/tags/v0.1.0-rc.1 > "$RUNNER_TEMP/release-receipts/LOCAL_TAG_COMMIT"
       - name: release regression gate
         working-directory: contract
-        run: go test -p 2 -count=1 -v ./release ./releaseauth
+        run: |
+          go test -p 2 -count=1 -v ./release ./releaseauth
+          go test -p 2 -count=1 -v -run '^TestPiCompositeCallIdentity$' ./internal/node/capture
       - name: build all six clean-tag artifacts
         working-directory: contract
         run: |

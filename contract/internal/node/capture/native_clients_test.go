@@ -267,7 +267,7 @@ func TestPiRedactedReasoningNeverRetainsOpaqueSignature(t *testing.T) {
 }
 
 func TestPiCompositeCallIdentity(t *testing.T) {
-	raw := readFixture(t, "pi-1.1.0.jsonl")
+	raw := readFixture(t, "pi-1.1.0")
 	composite := "call_syntheticA|fc_syntheticB"
 	raw = bytes.ReplaceAll(raw, []byte("call_synthetic"), []byte(composite))
 	f := runtimeWorldClient(t, raw, "pi")
