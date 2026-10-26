@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -24,7 +23,8 @@ func migrationLegacyDatabase(t *testing.T, f *producerFixture) (Options, map[str
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.Chmod(dir, 0700); err != nil {
+	dir = filepath.Join(dir, "private")
+	if err = privateDir(dir); err != nil {
 		t.Fatal(err)
 	}
 	o := f.w.o
@@ -35,7 +35,7 @@ func migrationLegacyDatabase(t *testing.T, f *producerFixture) (Options, map[str
 		t.Fatal(err)
 	}
 	file.Close()
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String())
+	db, err := sql.Open("sqlite", SQLiteURI(path, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestWeakUnreleasedDisclosureSchemaRefusesUpgradeAtomically(t *testing.T) {
 	ctx := context.Background()
 	o, before := migrationLegacyDatabase(t, f)
 	path := filepath.Join(o.Dir, "memory.sqlite")
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String())
+	db, err := sql.Open("sqlite", SQLiteURI(path, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestWeakUnreleasedDisclosureSchemaRefusesUpgradeAtomically(t *testing.T) {
 	if got != nil || Code(err) != "incompatible_database" {
 		t.Fatal("weak disclosure schema opened", Code(err))
 	}
-	db, err = sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String())
+	db, err = sql.Open("sqlite", SQLiteURI(path, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,7 +17,7 @@ client, hook, capture, redaction, read-back or cleanup check fails the test.
 | --- | --- | --- | --- |
 | Claude Code | `CLAUDE_CONFIG_DIR` | `.claude/.credentials.json` | `claude -p --output-format stream-json --verbose` |
 | Codex CLI | `CODEX_HOME` | `.codex/auth.json` | `codex exec --json --skip-git-repo-check --sandbox read-only` |
-| Cursor Agent | `CURSOR_CONFIG_DIR` | `.cursor/auth.json` | `cursor-agent --print --output-format stream-json` |
+| Cursor Agent | `CURSOR_CONFIG_DIR` | `.cursor/auth.json` | `cursor-agent --print --trust --output-format stream-json` |
 | Pi | `PI_CODING_AGENT_DIR` | `.pi/agent/auth.json` | `pi --print --mode json` |
 
 Paths in the table are relative to a new disposable home. Each child receives an
@@ -57,6 +57,12 @@ can change independently of the installed versions.
   `~/.cursor/auth.json` on macOS. The harness sets both the config variable and
   isolated HOME, and selects the matching `.cursor` directory. Credential refresh
   may fail when native custody is blocked. Such a failure is not a memory pass.
+  The installed CLI defaults to native Keychain on macOS. With Luis's explicit
+  approval, this harness sets its existing `AGENT_CLI_CREDENTIAL_STORE=file`
+  option only for the disposable Cursor process. The environment assertion
+  rejects that option for every other client. The native Keychain remains
+  blocked. This setting was verified in the installed CLI credential-store
+  implementation and is not a Telara runtime or deployment setting.
 - [Pi configuration](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/configuration.md)
   defines `PI_CODING_AGENT_DIR` and `auth.json`.
   [Pi CLI](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/cli.md)
@@ -262,3 +268,17 @@ No native clients were launched while authoring the harness. Native execution,
 provider auth compatibility, sandbox enforcement, installed custody, launchd
 cleanup and full native capture/read-back are UNVERIFIED until the operator runs
 the corresponding gate and inspects its receipt.
+
+## Precompiled native utility
+
+CI can bundle the native utility with the acceptance driver. Supply both
+`-e2e-native-helper=/absolute/path/keychain-helper` and
+`-e2e-native-helper-sha256=AUTHENTICATED_CI_ARTIFACT_DIGEST`. The driver checks a
+private regular file without symlink components, verifies that digest, and
+copies it into the protected disposable root. A failed check refuses the run.
+No local compiler is invoked in this mode. Custody creation/deletion, sandbox
+probes, installation, capture and MCP behavior remain native runtime checks.
+
+The Cursor driver explicitly trusts only the fresh synthetic workspace it creates.
+The native sandbox still denies the real home and Keychain. This is required by
+Cursor Agent 2026.10.22 before a headless run starts.

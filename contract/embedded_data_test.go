@@ -41,7 +41,7 @@ func TestEmbeddedRedactionDataIsPinnedAndDetached(t *testing.T) {
 	if err := json.Unmarshal(contract.RedactionGoldenV1(), &golden); err != nil {
 		t.Fatal(err)
 	}
-	if golden.Epoch != 3 || golden.Engine != "tap-discover/cd7b481855de" || golden.Digest != "30163cf872ff0400169bee03cb47ead720407406c5b88a32774564a187e30692" || golden.Behavior != "22f0462649ab79e1bf7f0459622692d822b9db09f4caddba3c7869b7bc5c5af5" {
+	if golden.Epoch != 42 || golden.Engine != "tap-discover/d4bd1496f20d" || golden.Digest != "7a8a5173474a5a4a3317c56a1f7c41f56bd00a12cc85fb5040b5ba8765b7dd05" || golden.Behavior != "ae83f631a285ace70469636cf4d0ae13236944fa45c47a4030ea5a1507c23b5d" {
 		t.Fatal("pinned golden changed")
 	}
 }

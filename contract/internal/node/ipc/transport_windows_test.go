@@ -61,8 +61,8 @@ func TestWindowsVolumeRootCreationACL(t *testing.T) {
 		})
 	}
 	for _, sddl := range []string{
-		"O:BUD:P(A;CI;AD;;;BU)",   // creation exception cannot trust a new owner
-		"D:P(A;CI;AD;;;BU)",       // missing owner
+		"O:BUD:P(A;CI;0x4;;;BU)",  // creation exception cannot trust a new owner
+		"D:P(A;CI;0x4;;;BU)",      // missing owner
 		"O:SYD:NO_ACCESS_CONTROL", // null DACL
 	} {
 		sd, e := windows.SecurityDescriptorFromString(sddl)
@@ -83,7 +83,7 @@ func TestWindowsCreationACLPrivateDescendant(t *testing.T) {
 	parent := t.TempDir()
 	// Exercise the root's creation ACE on an owned disposable directory, not
 	// the host volume root. Only the descriptor-policy test grants root status.
-	setWindowsDACL(t, parent, "D:P(A;;FA;;;"+current.String()+")(A;CI;AD;;;BU)")
+	setWindowsDACL(t, parent, "D:P(A;;FA;;;"+current.String()+")(A;CI;0x4;;;BU)")
 	u, e := windows.UTF16PtrFromString(parent)
 	if e != nil {
 		t.Fatal(e)
@@ -133,16 +133,19 @@ func TestWindowsPipeIdentityAndFirstInstance(t *testing.T) {
 		t.Fatal("first instance bypass")
 	}
 	got := make(chan error, 1)
+	release := make(chan struct{})
+	defer close(release)
 	go func() {
 		c, e := l.Accept()
 		if e == nil {
+			defer c.Close()
 			pid, pe := Peer(c)
 			if pe != nil || pid != os.Getpid() {
 				e = ErrPeer
 			}
-			c.Close()
 		}
 		got <- e
+		<-release
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -150,13 +153,21 @@ func TestWindowsPipeIdentityAndFirstInstance(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	defer c.Close()
 	if pid, e := Peer(c); e != nil || pid != os.Getpid() {
 		t.Fatal("server SID", e)
 	}
-	c.Close()
-	if e = <-got; e != nil {
-		t.Fatal("client SID", e)
+	// Keep the client connected until Accept authenticates it. A client that
+	// closes before Accept is intentionally recycled as a disconnected probe.
+	select {
+	case e = <-got:
+		if e != nil {
+			t.Fatal("client SID", e)
+		}
+	case <-ctx.Done():
+		t.Fatal("authenticated accept timed out", ctx.Err())
 	}
+	c.Close()
 	a, b := net.Pipe()
 	defer a.Close()
 	defer b.Close()

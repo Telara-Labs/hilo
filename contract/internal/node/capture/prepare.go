@@ -215,7 +215,7 @@ func prepareHeld(ctx context.Context, c preparationConfig, u unitLocator, gate p
 	if ctx.Err() != nil {
 		return empty, nil, hold("cancelled")
 	}
-	h, err := openUnit(c.root, u.relative)
+	h, err := openNativeUnit(c.home, c.root, u.relative)
 	if err != nil {
 		return empty, nil, err
 	}

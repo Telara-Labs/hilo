@@ -654,11 +654,9 @@ func TestSecretServiceLocationPrivacyAndParsing(t *testing.T) {
 
 func linuxInstalledRecord(t *testing.T, data string) install.Record {
 	t.Helper()
-	// Installed images deliberately forbid mutable ancestors, including /tmp.
-	homeBase, e := os.UserHomeDir()
-	if e != nil {
-		t.Fatal(e)
-	}
+	// Installed images forbid mutable ancestors. CI supplies a private temporary
+	// root; its /home/runner directory may grant other principals write access.
+	homeBase := os.TempDir()
 	root, e := os.MkdirTemp(homeBase, ".memory-vault-fixture-")
 	if e != nil {
 		t.Fatal(e)
@@ -699,6 +697,13 @@ func linuxInstalledRecord(t *testing.T, data string) install.Record {
 		if e = os.WriteFile(filepath.Join(dir, name), raw, 0600); e != nil {
 			t.Fatal(e)
 		}
+	}
+	status, err := install.Status(context.Background(), dir)
+	if err != nil && !errors.Is(err, install.ErrUnavailable) {
+		t.Fatal("installed custody fixture could not verify", err)
+	}
+	if status.Record != r {
+		t.Fatal("installed custody fixture receipt mismatch")
 	}
 	return r
 }

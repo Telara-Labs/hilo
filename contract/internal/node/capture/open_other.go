@@ -12,6 +12,9 @@ type openedUnitHandle struct {
 	initial os.FileInfo
 }
 
+func openNativeUnit(string, string, string) (*openedUnitHandle, error) {
+	return nil, hold("unsupported_platform")
+}
 func openUnit(string, string) (*openedUnitHandle, error) { return nil, hold("unsupported_platform") }
 func (*openedUnitHandle) close()                         {}
 func (*openedUnitHandle) bound() bool                    { return false }

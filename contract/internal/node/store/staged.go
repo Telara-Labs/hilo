@@ -24,6 +24,7 @@ import (
 type authorityView struct {
 	devices *sig.Keyring
 	tenant  *sig.Keyring
+	service *sig.Keyring
 	name    string
 	// policy is the verification-only chain: the committed sequence and id
 	// plus every staged policy in log order. Its head is a private copy.
@@ -60,6 +61,11 @@ func (s *Store) stagedView(ctx context.Context, d *databaseState, staged []Signe
 			return nil, err
 		}
 		v.tenant, v.name = kr, d.tenant.tenant
+		if service, err := s.serviceKeyring(ctx, v.name); err == nil {
+			v.service = service
+		} else if Code(err) != "service_pins_required" {
+			return nil, err
+		}
 		c := d.tenant.chain
 		v.policy = &policy.Chain{Tenant: c.Tenant, HighestSeq: c.HighestSeq, HighestID: c.HighestID, Tampered: c.Tampered}
 	}
@@ -85,6 +91,9 @@ func (s *Store) stagedView(ctx context.Context, d *databaseState, staged []Signe
 				if b.Genesis != s.opts.PinnedGenesisID {
 					return nil, failure("unauthorized_staged")
 				}
+			case b.Subject.Role == record.RoleService && v.service != nil && b.Genesis == v.name:
+				op.Issuer = receiptIssuerContext(v.name)
+				kr = v.service
 			case b.Subject.Role == record.RolePolicy && v.tenant != nil && b.Genesis == v.name:
 				op.Issuer = sig.TrustedIssuer{Tenant: v.name, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin}
 				kr = v.tenant

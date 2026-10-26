@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,7 +119,7 @@ func (w *world) session(n int, remote, pol string) *record.Record {
 // storeDB opens the node database read-only for physical inspection.
 func storeDB(t *testing.T, dir string) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: filepath.Join(dir, "memory.sqlite"), RawQuery: "mode=ro"}).String())
+	db, err := sql.Open("sqlite", store.SQLiteURI(filepath.Join(dir, "memory.sqlite"), "mode=ro"))
 	if err != nil {
 		t.Fatal(err)
 	}

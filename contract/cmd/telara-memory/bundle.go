@@ -546,11 +546,12 @@ func bundleExport(ctx context.Context, dir, mode string, ids, to []string, outPa
 }
 
 // receiptIssuer is this device's existing receipt authority: the tenant and
-// service keys pinned over the authenticated login of an enrolled sync
-// profile. Nothing in a bundle can supply or extend it.
+// service keys pinned from the authenticated TLS login response of an enrolled
+// sync profile. Keys an enrollment document named are not pinned and give no
+// authority. Nothing in a bundle can supply or extend it.
 func receiptIssuer(dir string) *store.ReceiptIssuer {
 	p, err := syncnode.LoadProfile(dir)
-	if err != nil || !p.Enrolled() {
+	if err != nil || !p.ServiceKeysPinned() {
 		return nil
 	}
 	keys := map[string]ed25519.PublicKey{}

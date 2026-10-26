@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"net/url"
 	"os"
 	"path/filepath"
 
@@ -67,7 +66,7 @@ func InspectStatus(ctx context.Context, dir string) (StatusReport, string, error
 	case walErr != nil || shmErr != nil:
 		return out, "", errStateInvalid
 	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path, RawQuery: query}).String())
+	db, err := sql.Open("sqlite", store.SQLiteURI(path, query))
 	if err != nil {
 		return out, "", errStateInvalid
 	}
