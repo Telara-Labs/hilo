@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,7 +20,9 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/syncnode"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/vault"
+	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
 	"github.com/Telara-Labs/telara-memory/contract/transport"
 )
@@ -67,6 +72,7 @@ func runBundle(ctx context.Context, args []string, in io.Reader, out io.Writer) 
 	inPath := fs.String("in", "", "Bundle file to restore")
 	code := fs.String("code", "", "Six-word code shown by the other device")
 	backup := fs.Bool("backup", false, "Restore a passphrase backup read from standard input")
+	yes := fs.Bool("yes", false, "Confirm carried controls with unbounded effect without the interactive review prompt")
 	asJSON := fs.Bool("json", false, "Print the report as JSON")
 	if fs.Parse(args[1:]) != nil || fs.NArg() != 0 {
 		return errors.New("invalid_arguments")
@@ -83,7 +89,7 @@ func runBundle(ctx context.Context, args []string, in io.Reader, out io.Writer) 
 	case "backup":
 		allowed["id"], allowed["out"], allowed["json"] = true, true, true
 	case "restore":
-		allowed["in"], allowed["backup"], allowed["json"] = true, true, true
+		allowed["in"], allowed["backup"], allowed["json"], allowed["yes"] = true, true, true, true
 	default:
 		return errors.New("invalid_command")
 	}
@@ -137,7 +143,7 @@ func runBundle(ctx context.Context, args []string, in io.Reader, out io.Writer) 
 		if *inPath == "" {
 			return errors.New("invalid_arguments")
 		}
-		err = bundleRestore(ctx, dir, *inPath, *backup, *asJSON, in, out)
+		err = bundleRestore(ctx, dir, *inPath, *backup, *asJSON, *yes, in, out)
 	}
 	return bundleError(err)
 }
@@ -362,15 +368,26 @@ func writeBundleReport(out io.Writer, title string, r bundleReport, asJSON bool)
 	return err
 }
 
-// writeNewFile creates path exclusively with owner-only permissions.
-func writeNewFile(path string, b []byte) (string, error) {
-	abs, err := filepath.Abs(path)
+// bundleExportStaged runs after an export's sealed staging copy is written
+// and before its publication. Only in-process tests replace it, to pause an
+// export between selection and publication.
+var bundleExportStaged = func() {}
+
+// bundleSigner signs governed metadata variants with the device key. The
+// key never leaves this process.
+type bundleSigner struct{ key ed25519.PrivateKey }
+
+func (b bundleSigner) KeyID() string { return sig.KeyID(b.key.Public().(ed25519.PublicKey)) }
+func (b bundleSigner) SignRecordID(id string) (record.Signature, error) {
+	return sig.SignRecord(b.key, id)
+}
+
+// writeStaging creates the export's staging copy exclusively, owner-only,
+// next to the final path so publication is a link within one directory.
+func writeStaging(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
-		return "", errors.New("invalid_paths")
-	}
-	f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return "", publicError("output_exists_or_unwritable")
+		return publicError("output_exists_or_unwritable")
 	}
 	_, err = f.Write(b)
 	if err == nil {
@@ -380,10 +397,32 @@ func writeNewFile(path string, b []byte) (string, error) {
 		err = closeErr
 	}
 	if err != nil {
-		os.Remove(abs)
-		return "", publicError("output_write_failed")
+		os.Remove(path)
+		return publicError("output_write_failed")
 	}
-	return abs, nil
+	return nil
+}
+
+// publishStaging makes the complete staging copy visible at the final path
+// without replacing anything there, then removes the staging name.
+func publishStaging(staging, final string) error {
+	if err := os.Link(staging, final); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return publicError("output_exists_or_unwritable")
+		}
+		if _, statErr := os.Lstat(final); !errors.Is(statErr, os.ErrNotExist) {
+			return publicError("output_exists_or_unwritable")
+		}
+		if err = os.Rename(staging, final); err != nil {
+			return publicError("output_write_failed")
+		}
+		return nil
+	}
+	if err := os.Remove(staging); err != nil {
+		os.Remove(final)
+		return publicError("output_write_failed")
+	}
+	return nil
 }
 
 func bundleExport(ctx context.Context, dir, mode string, ids, to []string, outPath string, asJSON bool, in io.Reader, out io.Writer) error {
@@ -403,6 +442,13 @@ func bundleExport(ctx context.Context, dir, mode string, ids, to []string, outPa
 		}
 		passphrase = first
 	}
+	path, err := filepath.Abs(outPath)
+	if err != nil {
+		return errors.New("invalid_paths")
+	}
+	if _, err = os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		return publicError("output_exists_or_unwritable")
+	}
 	id, st, err := openProfile(ctx, dir)
 	if err != nil {
 		return err
@@ -418,18 +464,41 @@ func bundleExport(ctx context.Context, dir, mode string, ids, to []string, outPa
 			return err
 		}
 	}
-	// Selection and its policy recheck happen under the store writer
-	// immediately before the bundle is framed and encrypted.
-	sel, err := st.SelectBundle(ctx, ids)
-	if err != nil {
-		return err
-	}
 	key, err := deviceKey(ctx, dir, id)
 	if err != nil {
 		return err
 	}
+	defer clear(key)
+	// The export is registered with the erasure lifecycle under this lock
+	// from selection until its staging copy is published or destroyed.
+	var nonce [16]byte
+	if _, err = rand.Read(nonce[:]); err != nil {
+		return publicError("entropy_unavailable")
+	}
+	token := hex.EncodeToString(nonce[:])
+	lockPath := store.BundleExportLock(dir, token)
+	lock, err := ipc.Lock(lockPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		lock.Close()
+		os.Remove(lockPath)
+	}()
+	staging := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+"."+token+".partial")
+	// Selection and its policy recheck happen under the store writer, which
+	// registers the in-flight export in the same transaction.
+	sel, err := st.RegisterBundleExport(ctx, token, staging, ids, bundleSigner{key})
+	if err != nil {
+		return err
+	}
+	published := false
+	defer func() {
+		if !published {
+			st.AbandonBundleExport(context.Background(), token)
+		}
+	}()
 	plaintext, _, err := bundle.Encode(sel, id.Genesis, key, time.Now().UnixMilli())
-	clear(key)
 	if err != nil {
 		return err
 	}
@@ -443,10 +512,28 @@ func bundleExport(ctx context.Context, dir, mode string, ids, to []string, outPa
 	if err != nil {
 		return err
 	}
-	path, err := writeNewFile(outPath, sealed)
-	if err != nil {
+	if err = writeStaging(staging, sealed); err != nil {
 		return err
 	}
+	bundleExportStaged()
+	// Publication rechecks the current tombs, policy and keys under the
+	// writer; anything that invalidates the selection destroys the staging
+	// copy instead.
+	linked := false
+	err = st.PublishBundleExport(ctx, token, ids, func() error {
+		if err := publishStaging(staging, path); err != nil {
+			return err
+		}
+		linked = true
+		return nil
+	})
+	if err != nil {
+		if linked {
+			os.Remove(path)
+		}
+		return err
+	}
+	published = true
 	limits := []string{noSurvivingDeviceLimit, unmanagedCopyNotice}
 	if mode == bundle.ModeBackup {
 		limits = append(limits, rollbackWarning)
@@ -458,7 +545,55 @@ func bundleExport(ctx context.Context, dir, mode string, ids, to []string, outPa
 	return writeBundleReport(out, title, bundleReport{Mode: mode, Path: path, Keyring: len(sel.Keyring), Facts: len(sel.Facts), Controls: len(sel.Controls), Data: len(sel.Data), Excluded: sel.Excluded, Limits: limits}, asJSON)
 }
 
-func bundleRestore(ctx context.Context, dir, inPath string, backup, asJSON bool, in io.Reader, out io.Writer) error {
+// receiptIssuer is this device's existing receipt authority: the tenant and
+// service keys pinned over the authenticated login of an enrolled sync
+// profile. Nothing in a bundle can supply or extend it.
+func receiptIssuer(dir string) *store.ReceiptIssuer {
+	p, err := syncnode.LoadProfile(dir)
+	if err != nil || !p.Enrolled() {
+		return nil
+	}
+	keys := map[string]ed25519.PublicKey{}
+	for _, k := range p.ServiceKeys {
+		raw, err := base64.RawURLEncoding.Strict().DecodeString(k.Public)
+		if err != nil || len(raw) != ed25519.PublicKeySize || sig.KeyID(raw) != k.KeyID {
+			return nil
+		}
+		keys[k.KeyID] = ed25519.PublicKey(raw)
+	}
+	return &store.ReceiptIssuer{Tenant: p.Tenant, Keys: keys}
+}
+
+// confirmControls shows the content-free review of carried controls with
+// unbounded effect and requires the owner to type the confirmation word. A
+// closed or non-interactive input without --yes is a refusal, never consent.
+func confirmControls(r *bufio.Reader, out io.Writer, review []store.ControlReview, asJSON bool) error {
+	if asJSON {
+		if err := ipc.WriteFrame(out, map[string]any{"controls_requiring_confirmation": review}); err != nil {
+			return err
+		}
+	} else {
+		var b strings.Builder
+		fmt.Fprintf(&b, "This bundle carries %d erasure control(s) whose effect is unbounded: they also remove matching records that arrive later, even if nothing matches now.\n", len(review))
+		for _, c := range review {
+			fmt.Fprintf(&b, "  %s  ids %d, events %d, tasks %d, sessions %d, lids %d, sources %d\n", c.ID, c.IDs, c.Events, c.Tasks, c.Sessions, c.LIDs, c.Sources)
+		}
+		b.WriteString("Type confirm to apply them with this restore. ")
+		if _, err := io.WriteString(out, b.String()); err != nil {
+			return err
+		}
+	}
+	line, err := r.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return publicError("confirmation_required")
+	}
+	if strings.TrimSpace(line) != "confirm" {
+		return publicError("confirmation_required")
+	}
+	return nil
+}
+
+func bundleRestore(ctx context.Context, dir, inPath string, backup, asJSON, yes bool, in io.Reader, out io.Writer) error {
 	id, err := bundle.ProfileIdentity(dir)
 	if err != nil {
 		return err
@@ -472,12 +607,14 @@ func bundleRestore(ctx context.Context, dir, inPath string, backup, asJSON bool,
 	if err != nil {
 		return publicError("input_unreadable")
 	}
+	// One reader serves the passphrase line and the confirmation line.
+	stdin := bufio.NewReader(io.LimitReader(in, 4096))
 	mode := bundle.ModeTransfer
 	var plaintext []byte
 	var kinds []string
 	if backup {
 		mode = bundle.ModeBackup
-		passphrase, err := readSecretLine(bufio.NewReader(io.LimitReader(in, 4096)))
+		passphrase, err := readSecretLine(stdin)
 		if err != nil {
 			return err
 		}
@@ -514,7 +651,24 @@ func bundleRestore(ctx context.Context, dir, inPath string, backup, asJSON bool,
 	if err = bundle.Verify(c, local); err != nil {
 		return err
 	}
-	r, err := st.ImportBundle(ctx, store.BundleImport{LocalKeyID: id.Device, Keyring: c.Keyring, Facts: c.FactLines, Controls: c.Controls, Data: c.Data})
+	// Carried controls with unbounded effect need this owner's local review
+	// and confirmation before anything is admitted.
+	review, err := st.ReviewBundleControls(ctx, c.Controls)
+	if err != nil {
+		return err
+	}
+	var confirmed []string
+	if len(review) > 0 {
+		if !yes {
+			if err = confirmControls(stdin, out, review, asJSON); err != nil {
+				return err
+			}
+		}
+		for _, r := range review {
+			confirmed = append(confirmed, r.ID)
+		}
+	}
+	r, err := st.ImportBundle(ctx, store.BundleImport{LocalKeyID: id.Device, Keyring: c.Keyring, Facts: c.FactLines, Controls: c.Controls, Data: c.Data, Receipts: c.Receipts, ReceiptIssuer: receiptIssuer(dir), ConfirmedControls: confirmed})
 	if err != nil {
 		return err
 	}

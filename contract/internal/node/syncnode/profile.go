@@ -61,7 +61,14 @@ type Profile struct {
 	AuthKey     *nodesync.PublicJWK   `json:"auth_key,omitempty"`
 	ServiceKeys []ServiceKey          `json:"service_keys,omitempty"`
 	Grant       *nodesync.MemoryGrant `json:"grant,omitempty"`
+	// Retired names credential slots this profile no longer uses whose
+	// deletion is not yet established. A slot is recorded here before it is
+	// created or replaced and removed only after its deletion succeeded.
+	Retired []string `json:"retired,omitempty"`
 }
+
+// maxRetired bounds recorded retired slots; each replacement adds at most two.
+const maxRetired = 16
 
 // Enrolled reports whether every hosted field required to run is present.
 func (p Profile) Enrolled() bool {
@@ -74,8 +81,15 @@ func (p Profile) Scope() nodesync.Scope {
 }
 
 func (p Profile) validate() error {
-	if p.Version != ProfileVersion || !record.IsKeyID(p.Genesis) || !record.IsUUIDv4(p.Device) || !validHandle(p.Credential) {
+	if p.Version != ProfileVersion || !record.IsKeyID(p.Genesis) || !record.IsUUIDv4(p.Device) || !validHandle(p.Credential) || len(p.Retired) > maxRetired {
 		return ErrProfile
+	}
+	retired := map[string]bool{}
+	for _, h := range p.Retired {
+		if !validHandle(h) || retired[h] || h == p.Credential || h == p.Refresh {
+			return ErrProfile
+		}
+		retired[h] = true
 	}
 	if !p.Enrolled() {
 		if p.Enabled || p.Refresh != "" || p.Origin != "" || p.Tenant != "" || p.User != "" || p.Config != "" || p.AuthIssuer != "" || p.AuthKey != nil || len(p.ServiceKeys) != 0 || p.Grant != nil {

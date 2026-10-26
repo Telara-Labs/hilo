@@ -60,6 +60,10 @@ type Contents struct {
 	Keyring, Controls, Data []store.SignedRecord
 	Facts                   []transport.ExposureFact
 	FactLines               [][]byte
+	// Receipts are carried hosted acceptance receipts by record id, kept
+	// apart from any grant. They are unverified here: only the receiver's
+	// existing TLS-pinned receipt authority can verify them.
+	Receipts map[string]record.Receipt
 }
 
 // Encode frames a store selection as NDJSON under a manifest signed by the
@@ -77,7 +81,14 @@ func Encode(sel store.BundleSelection, genesis string, key ed25519.PrivateKey, c
 			if r.BodyJCS == nil {
 				return ErrInvalid
 			}
-			line, err := jcs.MarshalRecord(nodesync.Envelope(r.HeaderJCS, r.BodyJCS, r.Sigs, r.AdvisoryID))
+			e := nodesync.Envelope(r.HeaderJCS, r.BodyJCS, r.Sigs, r.AdvisoryID)
+			if rc, ok := sel.Receipts[r.AdvisoryID]; ok {
+				if rc.ID != r.AdvisoryID {
+					return ErrInvalid
+				}
+				e.Receipt = &rc
+			}
+			line, err := jcs.MarshalRecord(e)
 			if err != nil {
 				return ErrInvalid
 			}
@@ -142,8 +153,10 @@ func strictDecode(raw []byte, out any) error {
 // Decode checks the exact LF framing, the manifest, counts, the items digest,
 // size and fact bounds, and every envelope, before any data is admitted. A
 // bundle of another genesis is refused whole. Any envelope carrying a hosted
-// delivery grant or receipt is refused whole: granted content never travels in
-// a bundle and a receipt cannot be trusted without this node's own TLS pin.
+// delivery grant is refused whole: granted content never travels in a bundle.
+// A hosted acceptance receipt is not a grant. It is preserved separately,
+// bound to its record id, and trusted only after the receiver verifies it
+// under its own existing TLS pin.
 func Decode(plaintext []byte, pinnedGenesis string) (Contents, error) {
 	var c Contents
 	if len(plaintext) > MaxBytes {
@@ -178,12 +191,23 @@ func Decode(plaintext []byte, pinnedGenesis string) (Contents, error) {
 		if strictDecode(line, &e) != nil {
 			return Contents{}, ErrInvalid
 		}
-		if e.Grant != nil || e.Receipt != nil {
+		if e.Grant != nil {
 			return Contents{}, ErrGranted
 		}
+		receipt := e.Receipt
+		e.Receipt = nil
 		r, err := nodesync.OpenEnvelope(e)
 		if err != nil || r.Body == nil {
 			return Contents{}, ErrInvalid
+		}
+		if receipt != nil {
+			if _, dup := c.Receipts[r.ID]; dup || receipt.ID != r.ID {
+				return Contents{}, ErrInvalid
+			}
+			if c.Receipts == nil {
+				c.Receipts = map[string]record.Receipt{}
+			}
+			c.Receipts[r.ID] = *receipt
 		}
 		item := store.SignedRecord{HeaderJCS: r.HeaderJCS, BodyJCS: r.BodyJCS, Sigs: append([]record.Signature(nil), e.Sigs...), AdvisoryID: r.ID}
 		switch {

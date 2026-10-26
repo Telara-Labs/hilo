@@ -62,3 +62,40 @@ func TestNativeCredentialManagerLifecycleAndConcurrentPut(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Credential Manager targets are per handle, so one user holds several
+// independent secrets for a profile at the same time.
+func TestNativeCredentialManagerHoldsIndependentHandles(t *testing.T) {
+	ctx := context.Background()
+	handles := make([]string, 4)
+	for i := range handles {
+		var id [16]byte
+		if _, err := rand.Read(id[:]); err != nil {
+			t.Fatal(err)
+		}
+		handles[i] = hex.EncodeToString(id[:])
+	}
+	t.Cleanup(func() {
+		for _, h := range handles {
+			_ = New().Delete(ctx, h)
+		}
+	})
+	for i, h := range handles {
+		if err := New().Put(ctx, h, []byte{byte(i + 1)}); err != nil {
+			t.Fatal("additional handle refused", i, err)
+		}
+	}
+	if err := New().Delete(ctx, handles[0]); err != nil {
+		t.Fatal(err)
+	}
+	for i, h := range handles[1:] {
+		b, err := New().Get(ctx, h)
+		if err != nil || !bytes.Equal(b, []byte{byte(i + 2)}) {
+			t.Fatal("handle lost", i, err)
+		}
+		clear(b)
+	}
+	if _, err := New().Get(ctx, handles[0]); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+}

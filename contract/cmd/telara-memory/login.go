@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"io"
@@ -16,6 +17,10 @@ import (
 // physical scrub of purged policy configuration.
 const loginTimeout = 2 * time.Minute
 
+// loginTLSRoots validates the hosted login origin's certificate. Nil is the
+// system pool; only in-process tests that serve a private origin replace it.
+var loginTLSRoots *x509.CertPool
+
 // loginError reports store refusals verbatim; fixed sync codes are mapped by
 // publicCode.
 func loginError(err error) error {
@@ -29,8 +34,9 @@ func loginError(err error) error {
 // runLogin binds one tenant login to this device. With --key it provisions
 // the device's DPoP key and prints the thumbprint the hosted login must bind.
 // Otherwise it reads the login document from standard input, so the refresh
-// credential never appears in argv, pins that tenant's policy root, admits its
-// policy and enables sync. A second tenant is refused until logout.
+// credential never appears in argv, confirms that tenant's policy root through
+// the origin's authenticated TLS login response, pins it, admits its policy
+// and enables sync. A second tenant is refused until logout.
 func runLogin(ctx context.Context, args []string, in io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -57,7 +63,7 @@ func runLogin(ctx context.Context, args []string, in io.Reader, out io.Writer) e
 	if err != nil {
 		return loginError(err)
 	}
-	r, err := syncnode.Login(ctx, dir, syncVault(dir), doc)
+	r, err := syncnode.LoginTLS(ctx, dir, syncVault(dir), loginTLSRoots, doc)
 	if err != nil {
 		return loginError(err)
 	}

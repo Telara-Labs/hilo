@@ -175,3 +175,35 @@ func (c *Client) authorized(ctx context.Context, method, path, query string, bod
 		return nil, c.reason(err)
 	}
 }
+
+// LoginReply is the hosted login response, read under a session minted with
+// the device's DPoP key over validated TLS to the requested origin. It names
+// the authenticated destination and device it was issued for, and carries the
+// tenant policy root the node pins with pinned-TLS-login provenance.
+type LoginReply struct {
+	Origin     string          `json:"origin"`
+	Tenant     string          `json:"tenant"`
+	User       string          `json:"user"`
+	Config     string          `json:"config"`
+	DeviceID   string          `json:"device_id"`
+	PolicyRoot record.Envelope `json:"policy_root"`
+}
+
+// Login fetches the login response for this client's scope. The session mint
+// already binds issuer, user, tenant, config, grant genesis and device and the
+// DPoP key; the reply must name exactly that origin, destination and device.
+func (c *Client) Login(ctx context.Context) (LoginReply, error) {
+	var reply LoginReply
+	raw, err := c.authorized(ctx, "GET", "/sync/v1/login", "", nil, maxResponseBytes)
+	if err != nil {
+		return reply, err
+	}
+	if strictJSON(raw, &reply) != nil {
+		return LoginReply{}, ErrInvalid
+	}
+	s := c.cfg.Scope
+	if reply.Origin != s.Origin || reply.Tenant != s.Tenant || reply.User != s.User || reply.Config != s.Config || reply.DeviceID != s.Device {
+		return LoginReply{}, ErrInvalid
+	}
+	return reply, nil
+}

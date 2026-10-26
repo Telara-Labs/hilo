@@ -28,7 +28,7 @@ func TestSecretServiceNativeLifecycle(t *testing.T) {
 		t.Fatal("Secret Service absent, locked, or prompting", e)
 	}
 	defer v.Delete(ctx, h)
-	m := *v.secretService
+	m := v.secretItems[h]
 	t.Logf("selected alias=%s collection=%s item=%s", m.Alias, m.Collection, m.Item)
 	if m.State != "ready" || m.Creation == "" || (m.Alias != collectionAlias && m.Alias != defaultAlias) {
 		t.Fatal("custody identity not recorded", m.State, m.Alias)
@@ -47,7 +47,7 @@ func TestSecretServiceNativeLifecycle(t *testing.T) {
 	if b, e = v.Get(ctx, h); b != nil || !errors.Is(e, ErrNotFound) {
 		t.Fatal(e)
 	}
-	if v.secretService.State != "deleted" || v.secretService.Item != m.Item {
+	if v.secretItems[h].State != "deleted" || v.secretItems[h].Item != m.Item {
 		t.Fatal("deletion not recorded against the exact item")
 	}
 }

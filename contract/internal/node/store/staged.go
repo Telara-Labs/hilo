@@ -17,20 +17,38 @@ import (
 // every call. Nothing staged is written, so no staged relaxation or key
 // activation becomes live by loading it, and a staged op cannot authorize
 // itself because the keyring requires an authorizer already in its history.
+// Staged policies are also reduced by sequence and identity in a view-only
+// chain that starts at the committed chain. It decides nothing by itself: it
+// names the staged policy a later one equivocates with or rolls back behind.
 
 type authorityView struct {
 	devices *sig.Keyring
 	tenant  *sig.Keyring
 	name    string
+	// policy is the verification-only chain: the committed sequence and id
+	// plus every staged policy in log order. Its head is a private copy.
+	policy *policy.Chain
+}
+
+// release scrubs the view chain's private copy of a staged policy body.
+func (v *authorityView) release() {
+	if v != nil && v.policy != nil {
+		v.policy.Logout()
+	}
 }
 
 // stagedView replays staged controls into a copy of completed authority and
 // refuses any that is not valid at its position.
-func (s *Store) stagedView(ctx context.Context, d *databaseState, staged []SignedRecord) (*authorityView, error) {
+func (s *Store) stagedView(ctx context.Context, d *databaseState, staged []SignedRecord) (_ *authorityView, err error) {
 	if len(staged) > 256 {
 		return nil, failure("invalid_request")
 	}
 	v := &authorityView{devices: sig.NewKeyring(s.opts.PinnedGenesisID)}
+	defer func() {
+		if err != nil {
+			v.release()
+		}
+	}()
 	for _, op := range d.kr.Ops() {
 		if v.devices.Add(op) != nil {
 			return nil, failure("corrupt_database")
@@ -42,6 +60,8 @@ func (s *Store) stagedView(ctx context.Context, d *databaseState, staged []Signe
 			return nil, err
 		}
 		v.tenant, v.name = kr, d.tenant.tenant
+		c := d.tenant.chain
+		v.policy = &policy.Chain{Tenant: c.Tenant, HighestSeq: c.HighestSeq, HighestID: c.HighestID, Tampered: c.Tampered}
 	}
 	seq := d.nextSeq
 	for _, in := range staged {
@@ -78,7 +98,13 @@ func (s *Store) stagedView(ctx context.Context, d *databaseState, staged []Signe
 			if v.tenant == nil {
 				return nil, failure("policy_context_required")
 			}
-			if _, err = policy.Verify(r, in.Sigs, v.tenant.State(), sig.TrustedIssuer{Tenant: v.name, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin}); err != nil {
+			p, err := policy.Verify(r, in.Sigs, v.tenant.State(), sig.TrustedIssuer{Tenant: v.name, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin})
+			if err != nil {
+				return nil, failure("invalid_policy")
+			}
+			// Rollback and equivocation inside the staged log are not errors:
+			// ordinary order refuses or latches them when they commit.
+			if _, err = v.policy.Offer(p); err != nil {
 				return nil, failure("invalid_policy")
 			}
 		default:
@@ -112,7 +138,8 @@ func (s *Store) VerifyStaged(ctx context.Context, staged []SignedRecord) error {
 		if err != nil {
 			return err
 		}
-		_, err = s.stagedView(ctx, d, staged)
+		v, err := s.stagedView(ctx, d, staged)
+		v.release()
 		return err
 	})
 }
@@ -120,9 +147,12 @@ func (s *Store) VerifyStaged(ctx context.Context, staged []SignedRecord) error {
 // PolicyRelaxes verifies a tenant policy in the staged view and reports whether
 // committing it would relax current durable authority in any respect. Only a
 // policy that is at least as restrictive everywhere reports false. Rollback and
-// equal-sequence offers report false: their durable effect is a refusal or the
-// equivocation latch, never a relaxation. Durable authority is the effective
-// policy, including restrictions already staged. It writes nothing.
+// equal-sequence offers against the committed chain report false: their
+// durable effect is a refusal or the equivocation latch, never a relaxation.
+// A policy above the committed chain but below a staged one is a rollback in
+// log order; it reports true, so it stays staged, and it supplies nothing.
+// Durable authority is the effective policy, including restrictions already
+// staged. It writes nothing.
 func (s *Store) PolicyRelaxes(ctx context.Context, in SignedRecord, staged []SignedRecord) (bool, error) {
 	return s.stagePolicy(ctx, in, staged, false)
 }
@@ -132,6 +162,10 @@ func (s *Store) PolicyRelaxes(ctx context.Context, in SignedRecord, staged []Sig
 // transaction it joins the effective-policy overlay, so disclosure, capture,
 // push and pull enforce the intersection of the committed head and every
 // staged candidate. Its relaxations stay staged until it commits normally.
+// A policy that equivocates with the view's highest policy, staged or
+// committed, durably records both ids at that sequence in the same
+// transaction. The latch then applies at once and survives restart and logout,
+// though neither policy's permissions become live.
 func (s *Store) StagePolicy(ctx context.Context, in SignedRecord, staged []SignedRecord) (bool, error) {
 	return s.stagePolicy(ctx, in, staged, true)
 }
@@ -154,14 +188,29 @@ func (s *Store) stagePolicy(ctx context.Context, in SignedRecord, staged []Signe
 		if err != nil || r.Header.Type != record.KindPolicy {
 			return failure("invalid_policy")
 		}
+		defer v.release()
 		p, err := policy.Verify(r, in.Sigs, v.tenant.State(), sig.TrustedIssuer{Tenant: v.name, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin})
 		if err != nil {
 			return failure("invalid_policy")
 		}
 		t := d.tenant
+		prior := v.policy.HighestID
+		offered, err := v.policy.Offer(p)
+		if err != nil {
+			return failure("invalid_policy")
+		}
+		if offered == policy.Tamper && persist {
+			if err = s.recordEquivocation(ctx, t.tenant, p.Body.Seq, prior, p.ID); err != nil {
+				return err
+			}
+		}
 		switch {
 		case p.Body.Seq <= t.chain.HighestSeq:
 			relaxes = false
+		case offered == policy.Rollback:
+			// Committing it after its staged successor is a refused rollback.
+			relaxes = true
+			return nil
 		case t.chain.Tampered || t.chain.Head == nil:
 			relaxes = true
 		case t.freshness != policy.Fresh && t.freshness != policy.RefreshDue:
@@ -240,6 +289,7 @@ func (s *Store) ApplySupplement(ctx context.Context, in SignedRecord, staged []S
 			if err != nil {
 				return err
 			}
+			v.release()
 			view = v.devices.State()
 		}
 		// A staged rotation of this device's key retires the old key durably
@@ -288,9 +338,11 @@ func (s *Store) StageKeyOperation(ctx context.Context, in SignedRecord, staged [
 		if err != nil {
 			return err
 		}
-		if _, err = s.stagedView(ctx, d, append(append([]SignedRecord(nil), staged...), in)); err != nil {
+		v, err := s.stagedView(ctx, d, append(append([]SignedRecord(nil), staged...), in))
+		if err != nil {
 			return err
 		}
+		v.release()
 		r, signatures, err := parse(in)
 		if err != nil {
 			return err

@@ -219,7 +219,7 @@ func TestV20LogoutRetainedPolicyRecordsDenyExportAndImport(t *testing.T) {
 		}
 		return out.String()
 	}
-	tenant := newLoginTenant(t, 81, "tenant-logout-bundle", "logout-user", "https://127.0.0.1:9")
+	tenant := newLoginTenant(t, 81, "tenant-logout-bundle", "logout-user")
 	policy, policyEnv := tenant.policy(1, "logoutbundlerulecanary")
 	login("", "login", "--key")
 	login(tenant.document(d, policyEnv, "telara_mcp_logout_bundle"), "login")

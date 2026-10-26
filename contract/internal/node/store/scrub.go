@@ -50,6 +50,19 @@ func (s *Store) Scrub(ctx context.Context, controlID string) (ScrubResult, error
 		begun = false
 		return out, nil
 	}
+	// An in-flight bundle export carrying erased content keeps the erasure
+	// pending until its staging copy is destroyed.
+	exportPending, err := s.reconcileBundleExports(ctx, d)
+	if err != nil {
+		return out, err
+	}
+	if exportPending {
+		if _, err = s.conn.ExecContext(ctx, "COMMIT"); err != nil {
+			return out, failure("storage_error")
+		}
+		begun = false
+		return out, nil
+	}
 	var captured int64
 	var jobState string
 	if s.conn.QueryRowContext(ctx, "SELECT generation FROM meta WHERE singleton=1").Scan(&captured) != nil {

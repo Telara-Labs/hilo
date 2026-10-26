@@ -168,7 +168,15 @@ func erasurePending(t *testing.T, dir string) int64 {
 
 func assertNoCanary(t *testing.T, dir, canary string) {
 	t.Helper()
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	if err := canaryIn(dir, canary); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// canaryIn reports the first file under dir, database, WAL and sidecar
+// included, whose bytes hold canary.
+func canaryIn(dir, canary string) error {
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -181,9 +189,6 @@ func assertNoCanary(t *testing.T, dir, canary string) {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 }
 
 // X2: two devices of one genesis and one hosted log with page size one.
@@ -386,7 +391,8 @@ func TestX2CrossDeviceErasureSignersPagesAndRestart(t *testing.T) {
 	wa = a.restart(wa)
 
 	// Page 3: newly enrolled C supplies the signed event coverage. The ACK
-	// that covers c1 must find the purge and the completed coverage committed.
+	// that covers c1 must find the purge and the completed coverage committed,
+	// and the erased bytes already gone from every file.
 	c2 := erasureBy(t, cKey, machineC, "x2-c2", a.at+1, record.Selectors{Events: []record.EventSelector{{Owner: genesisOwner, SessionKey: sk, EventID: e2}}})
 	hc2 := h.addControl(c2)
 	checkMu.Lock()
@@ -398,6 +404,9 @@ func TestX2CrossDeviceErasureSignersPagesAndRestart(t *testing.T) {
 		snap, err := a.st.Snapshot(ctx, store.ReadRequest{IDs: []string{k2.ID}})
 		if err != nil || len(snap.Entries) != 1 || snap.Entries[0].State != "invalidated" || len(snap.Entries[0].BodyJCS) != 0 {
 			return fmt.Sprintf("k2 not purged (%v)", err)
+		}
+		if err := canaryIn(a.dir, canary2); err != nil {
+			return err.Error()
 		}
 		return ""
 	}}
@@ -411,11 +420,6 @@ func TestX2CrossDeviceErasureSignersPagesAndRestart(t *testing.T) {
 	}
 	if ack := lastAck(testMachine); ack.CtlEnforcedThrough != hc2 {
 		t.Fatalf("A final ack %+v", ack)
-	}
-	for _, id := range []string{c1.ID, c2.ID} {
-		if res, err := a.st.Scrub(ctx, id); err != nil || res.State != "complete" {
-			t.Fatalf("scrub %s %+v %v", id[:8], res, err)
-		}
 	}
 	assertNoCanary(t, a.dir, canary2)
 	round(wb, nil)

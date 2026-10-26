@@ -446,7 +446,7 @@ func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures [
 		if s.verifyView != nil && r.Header.Type == record.KindErasure {
 			st = s.verifyView
 		}
-		res := sig.VerifyRecord(r, signatures, st, sig.Context{Route: record.RouteLocal})
+		res := d.verifyWithReceipt(r, signatures, st, 0, nil)
 		if res.Status != sig.StatusVerified || res.Owner != s.opts.PinnedGenesisID || !s.authorMachineAllowed(r, res) {
 			return failure("unauthorized_record")
 		}
@@ -458,6 +458,13 @@ func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures [
 	}
 	if b, ok := r.Body.(*record.ErasureBody); ok {
 		if len(b.Selectors.Tasks)+len(b.Selectors.Sessions)+len(b.Selectors.LIDs)+len(b.Selectors.Sources) > 0 {
+			return failure("bulk_confirmation_required")
+		}
+		// Event selectors have unbounded future effect too, even with zero
+		// current matches. A bundle applies one only after the receiving
+		// owner's local confirmation; the local erase command and hosted
+		// browser re-authentication confirm on their own routes.
+		if len(b.Selectors.Events) > 0 && s.controlConfirm != nil && !s.controlConfirm[r.ID] {
 			return failure("bulk_confirmation_required")
 		}
 	}

@@ -53,6 +53,44 @@ func (s *Store) recordPolicyOverlay(ctx context.Context, t *tenantState, p *poli
 	return s.policyProjectionFence(ctx)
 }
 
+// recordEquivocation durably records two verified policies with one sequence
+// and different ids. It is a restrictive fact, never a policy: it changes no
+// head, sequence or overlay, and logout keeps it, as it keeps the rollback
+// watermark. Staging records it at once, so the latch does not depend on the
+// staged envelopes surviving until ordinary commit.
+func (s *Store) recordEquivocation(ctx context.Context, tenant string, seq int64, ids ...string) error {
+	added := false
+	for _, id := range ids {
+		if id == "" {
+			return failure("invalid_policy")
+		}
+		res, err := s.conn.ExecContext(ctx, "INSERT OR IGNORE INTO policy_equivocation VALUES(?,?,?)", tenant, seq, id)
+		if err != nil {
+			return failure("storage_error")
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			added = true
+		}
+	}
+	if !added {
+		return nil
+	}
+	return s.policyProjectionFence(ctx)
+}
+
+// equivocationLatched reports whether recorded equivocation facts latch the
+// chain: a fact above the committed sequence, which only a higher committed
+// sequence can clear, or a fact at the committed sequence naming another id
+// than the committed one.
+func (s *Store) equivocationLatched(ctx context.Context, t *tenantState) (bool, error) {
+	var latched bool
+	err := s.conn.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM policy_equivocation WHERE tenant=? AND (seq>? OR seq=? AND id!=?))", t.tenant, t.chain.HighestSeq, t.chain.HighestSeq, t.chain.HighestID).Scan(&latched)
+	if err != nil {
+		return false, failure("storage_error")
+	}
+	return latched, nil
+}
+
 // clearPolicyOverlays drops candidates the committed head has reached.
 func (s *Store) clearPolicyOverlays(ctx context.Context, tenant string, through int64) error {
 	if _, err := s.conn.ExecContext(ctx, "DELETE FROM policy_overlay WHERE tenant=? AND seq<=?", tenant, through); err != nil {
@@ -61,9 +99,17 @@ func (s *Store) clearPolicyOverlays(ctx context.Context, tenant string, through 
 	return nil
 }
 
-// loadPolicyOverlay intersects the verified head with every staged candidate
-// above its sequence. An unreadable overlay fails closed.
+// loadPolicyOverlay applies recorded equivocation facts to the chain and
+// intersects the verified head with every staged candidate above its
+// sequence. An unreadable overlay fails closed.
 func (s *Store) loadPolicyOverlay(ctx context.Context, t *tenantState) error {
+	latched, err := s.equivocationLatched(ctx, t)
+	if err != nil {
+		return err
+	}
+	if latched {
+		t.chain.Tampered = true
+	}
 	if t.chain.Head == nil {
 		return nil
 	}

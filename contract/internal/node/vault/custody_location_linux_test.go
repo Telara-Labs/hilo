@@ -377,6 +377,29 @@ func (s *testSecrets) aliasTo(t *testing.T, address string, path dbus.ObjectPath
 		t.Fatal(e)
 	}
 }
+
+// linuxItemRecord reads the fixture handle's own custody record.
+func linuxItemRecord(data string) (*secretServiceLocation, error) {
+	return readLinuxRecord(data, custodyItemFile(linuxTestHandle))
+}
+
+// linuxEvidence is every durable custody byte of a profile: the selection
+// record and every per-handle record, in name order.
+func linuxEvidence(data string) ([]byte, error) {
+	names, e := filepath.Glob(filepath.Join(data, "custody-*.json"))
+	if e != nil {
+		return nil, e
+	}
+	var out []byte
+	for _, name := range names {
+		b, e := os.ReadFile(name)
+		if e != nil {
+			return nil, e
+		}
+		out = append(append(append(out, filepath.Base(name)...), 0), b...)
+	}
+	return out, nil
+}
 func linuxProfile(t *testing.T) string {
 	t.Helper()
 	data := t.TempDir()
@@ -442,14 +465,14 @@ func TestSecretServiceRecordedIdentitySurvivesAliasReassignment(t *testing.T) {
 				}
 				s.mu.Lock()
 				s.beforeCreate = func() error {
-					m, e := readLinuxLocation(data)
+					m, e := linuxItemRecord(data)
 					if e != nil || m.State != "creating" || m.Handle != linuxTestHandle || m.Collection != string(testC1) || m.Item != "" {
 						return errors.New("creation intent missing")
 					}
 					return nil
 				}
 				s.beforeSet = func() error {
-					m, e := readLinuxLocation(data)
+					m, e := linuxItemRecord(data)
 					if e != nil || m.State != "bound" || m.Item == "" || m.Collection != string(testC1) || m.Handle != linuxTestHandle {
 						return errors.New("item identity missing before authority")
 					}
@@ -461,7 +484,7 @@ func TestSecretServiceRecordedIdentitySurvivesAliasReassignment(t *testing.T) {
 				if e := v.Put(ctx, linuxTestHandle, []byte("synthetic profile authority")); e != nil {
 					t.Fatal(e)
 				}
-				m, e = readLinuxLocation(data)
+				m, e = linuxItemRecord(data)
 				if e != nil || m.State != "ready" || m.Item == "" || m.Collection != string(testC1) {
 					t.Fatal("item identity missing", m, e)
 				}
@@ -503,7 +526,7 @@ func TestSecretServiceRecordedIdentityAcrossServiceRestart(t *testing.T) {
 }
 func TestSecretServiceLostIdentityRefusesCleanup(t *testing.T) {
 	secretModes(t, func(t *testing.T, mode string) {
-		for _, kind := range []string{"missing-location", "corrupt-location", "missing-item-after-restart", "reassigned-item-path", "missing-collection"} {
+		for _, kind := range []string{"missing-location", "corrupt-location", "missing-item-record", "corrupt-item-record", "foreign-collection-record", "missing-item-after-restart", "reassigned-item-path", "missing-collection"} {
 			t.Run(kind, func(t *testing.T) {
 				s, address := privateSecretService(t, mode)
 				data := linuxProfile(t)
@@ -511,7 +534,7 @@ func TestSecretServiceLostIdentityRefusesCleanup(t *testing.T) {
 				if e := ForProfile(data).Put(ctx, linuxTestHandle, []byte("synthetic profile authority")); e != nil {
 					t.Fatal(e)
 				}
-				m, e := readLinuxLocation(data)
+				m, e := linuxItemRecord(data)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -522,6 +545,21 @@ func TestSecretServiceLostIdentityRefusesCleanup(t *testing.T) {
 					}
 				case "corrupt-location":
 					if e = os.WriteFile(filepath.Join(data, custodyLocationFile), []byte("{}"), 0600); e != nil {
+						t.Fatal(e)
+					}
+				case "missing-item-record":
+					// The item exists, but no record proves this profile made it.
+					if e = os.Remove(filepath.Join(data, custodyItemFile(linuxTestHandle))); e != nil {
+						t.Fatal(e)
+					}
+				case "corrupt-item-record":
+					if e = os.WriteFile(filepath.Join(data, custodyItemFile(linuxTestHandle)), []byte("{}"), 0600); e != nil {
+						t.Fatal(e)
+					}
+				case "foreign-collection-record":
+					moved := *m
+					moved.Collection = string(testC2)
+					if e = writeLinuxRecord(data, custodyItemFile(linuxTestHandle), moved); e != nil {
 						t.Fatal(e)
 					}
 				case "missing-item-after-restart":
@@ -543,11 +581,11 @@ func TestSecretServiceLostIdentityRefusesCleanup(t *testing.T) {
 					s.restart(t, address)
 				}
 				s.aliasTo(t, address, testC2)
-				before, _ := os.ReadFile(filepath.Join(data, custodyLocationFile))
+				before, _ := linuxEvidence(data)
 				if e := ForProfile(data).Delete(ctx, linuxTestHandle); !errors.Is(e, ErrUnavailable) {
 					t.Fatal("lost identity accepted as deletion", e)
 				}
-				after, _ := os.ReadFile(filepath.Join(data, custodyLocationFile))
+				after, _ := linuxEvidence(data)
 				if !bytes.Equal(before, after) {
 					t.Fatal("refusal changed evidence")
 				}
@@ -566,7 +604,7 @@ func TestSecretServiceInterruptedCreationUsesOriginalCollection(t *testing.T) {
 		if e := ForProfile(data).Put(ctx, linuxTestHandle, []byte("synthetic profile authority")); e != ErrUnavailable {
 			t.Fatal(e)
 		}
-		m, e := readLinuxLocation(data)
+		m, e := linuxItemRecord(data)
 		if e != nil || m.State != "creating" || m.Item != "" {
 			t.Fatal(m, e)
 		}
@@ -690,9 +728,21 @@ func TestSecretServiceInstalledAuthorityReassignmentBeforeAndAfterLoad(t *testin
 				if e := disclosure.BootstrapInstalled(ctx, data, "Linux native custody fixture", disclosure.Grant{Repos: disclosure.AllLocalRepos(), Channels: []disclosure.Channel{disclosure.S}}, disclosure.TaskWriteGrant{}, Installed{Vault: v, Record: r}); e != nil {
 					t.Fatal(e)
 				}
-				m, e := readLinuxLocation(data)
-				if e != nil || m.State != "ready" {
-					t.Fatal(m, e)
+				// The probe's record stays deleted; the authority has its own.
+				var m *secretServiceLocation
+				for h, state := range recordedHandles(t, data) {
+					if h != linuxTestHandle {
+						if m != nil {
+							t.Fatal("ambiguous installed authority")
+						}
+						var e error
+						if m, e = readLinuxRecord(data, custodyItemFile(h)); e != nil || state != "ready" {
+							t.Fatal(m, e)
+						}
+					}
+				}
+				if probe, e := linuxItemRecord(data); m == nil || e != nil || probe.State != "deleted" {
+					t.Fatal("installed authority or probe record missing", e)
 				}
 				if loaded {
 					runtime, e := (disclosure.InstalledProvider{Dir: data, Vault: ForProfile(data), Peers: peer.Authority{}}).Load(ctx)
@@ -753,7 +803,7 @@ func TestSecretServiceLostSetSecretReplyRetainsExactIdentity(t *testing.T) {
 		if e := ForProfile(data).Put(ctx, linuxTestHandle, []byte("synthetic profile authority")); e != ErrUnavailable {
 			t.Fatal(e)
 		}
-		m, e := readLinuxLocation(data)
+		m, e := linuxItemRecord(data)
 		if e != nil || m.State != "bound" || m.Item == "" {
 			t.Fatal("authority sent before path was durable", m, e)
 		}
@@ -778,7 +828,7 @@ func TestSecretServiceSearchAbsenceDoesNotProveRecordedItemDeletion(t *testing.T
 		if e := ForProfile(data).Put(ctx, linuxTestHandle, []byte("synthetic profile authority")); e != nil {
 			t.Fatal(e)
 		}
-		before, e := os.ReadFile(filepath.Join(data, custodyLocationFile))
+		before, e := linuxEvidence(data)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -788,7 +838,7 @@ func TestSecretServiceSearchAbsenceDoesNotProveRecordedItemDeletion(t *testing.T
 		if e := ForProfile(data).Delete(ctx, linuxTestHandle); e != ErrUnavailable {
 			t.Fatal("search absence hid retained item", e)
 		}
-		after, e := os.ReadFile(filepath.Join(data, custodyLocationFile))
+		after, e := linuxEvidence(data)
 		if e != nil || !bytes.Equal(before, after) {
 			t.Fatal("refusal changed identity", e)
 		}
@@ -811,7 +861,7 @@ func TestSecretServiceCrashAfterPhysicalDeleteUsesExactAbsence(t *testing.T) {
 		if e := ForProfile(data).Put(ctx, linuxTestHandle, []byte("synthetic profile authority")); e != nil {
 			t.Fatal(e)
 		}
-		m, e := readLinuxLocation(data)
+		m, e := linuxItemRecord(data)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -823,7 +873,7 @@ func TestSecretServiceCrashAfterPhysicalDeleteUsesExactAbsence(t *testing.T) {
 		// Same service owner plus explicit absence at the recorded object path
 		// permits retry after Item.Delete but before the deleted record was synced.
 		linuxProcess(t, data, "delete")
-		m, e = readLinuxLocation(data)
+		m, e = linuxItemRecord(data)
 		if e != nil || m.State != "deleted" {
 			t.Fatal(m, e)
 		}
@@ -872,7 +922,7 @@ func TestSecretServiceCollectionSelection(t *testing.T) {
 			if stall != nil {
 				close(stall)
 			}
-			m, re := readLinuxLocation(data)
+			m, re := linuxItemRecord(data)
 			s.mu.Lock()
 			creates, collections := s.creates, len(s.collections)
 			s.mu.Unlock()
@@ -880,7 +930,8 @@ func TestSecretServiceCollectionSelection(t *testing.T) {
 			case "gnome-no-default", "create-no-reply":
 				// Absent default custody or an unanswered creation refuses
 				// before any selection, handle or item exists.
-				if !errors.Is(e, ErrUnavailable) || !os.IsNotExist(re) || collections != 2 {
+				_, me := readLinuxLocation(data)
+				if !errors.Is(e, ErrUnavailable) || !os.IsNotExist(re) || !os.IsNotExist(me) || collections != 2 {
 					t.Fatal("refusal left state", e, re, collections)
 				}
 				return
@@ -921,7 +972,7 @@ func TestSecretServiceCollectionSelection(t *testing.T) {
 			}
 			linuxProcess(t, data, "get")
 			linuxProcess(t, data, "delete")
-			if m, e = readLinuxLocation(data); e != nil || m.State != "deleted" {
+			if m, e = linuxItemRecord(data); e != nil || m.State != "deleted" {
 				t.Fatal(m, e)
 			}
 		})
@@ -939,7 +990,7 @@ func TestSecretServiceUnknownMethodAloneIsNotDeletionProof(t *testing.T) {
 			if e := ForProfile(data).Put(ctx, linuxTestHandle, []byte("synthetic profile authority")); e != nil {
 				t.Fatal(e)
 			}
-			before, e := os.ReadFile(filepath.Join(data, custodyLocationFile))
+			before, e := linuxEvidence(data)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -956,7 +1007,7 @@ func TestSecretServiceUnknownMethodAloneIsNotDeletionProof(t *testing.T) {
 			if e := ForProfile(data).Delete(ctx, linuxTestHandle); !errors.Is(e, ErrUnavailable) {
 				t.Fatal("UnknownMethod alone accepted as deletion", e)
 			}
-			after, e := os.ReadFile(filepath.Join(data, custodyLocationFile))
+			after, e := linuxEvidence(data)
 			if e != nil || !bytes.Equal(before, after) {
 				t.Fatal("refusal changed evidence", e)
 			}
@@ -969,7 +1020,7 @@ func TestSecretServiceUnknownMethodAloneIsNotDeletionProof(t *testing.T) {
 			}
 			// With complete evidence available again the retry proves absence.
 			linuxProcess(t, data, "delete")
-			if m, e := readLinuxLocation(data); e != nil || m.State != "deleted" {
+			if m, e := linuxItemRecord(data); e != nil || m.State != "deleted" {
 				t.Fatal(m, e)
 			}
 			s.mu.Lock()
@@ -1014,7 +1065,7 @@ func TestSecretServiceNeverAdoptsForeignItem(t *testing.T) {
 			if e := ForProfile(data).Put(ctx, linuxTestHandle, []byte("synthetic profile authority")); e != ErrUnavailable {
 				t.Fatal(e)
 			}
-			m, e := readLinuxLocation(data)
+			m, e := linuxItemRecord(data)
 			if e != nil || m.State != "creating" || m.Creation == "" {
 				t.Fatal(m, e)
 			}
@@ -1037,7 +1088,7 @@ func TestSecretServiceNeverAdoptsForeignItem(t *testing.T) {
 			if item == nil || string(item.value) != "foreign value" {
 				t.Fatal("foreign item deleted")
 			}
-			if m, e = readLinuxLocation(data); e != nil || m.State != "deleted" || m.Item != "" {
+			if m, e = linuxItemRecord(data); e != nil || m.State != "deleted" || m.Item != "" {
 				t.Fatal(m, e)
 			}
 		})

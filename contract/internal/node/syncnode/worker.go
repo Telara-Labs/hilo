@@ -36,6 +36,11 @@ var (
 	// PULL(data) are skipped and ctl_cursor stays below it until it can.
 	ErrControlBlocked = errors.New("sync_control_blocked")
 	ErrHostedLog      = errors.New("sync_hosted_log_unavailable")
+	// ErrControlScanIncomplete reports a round whose control scan stopped at
+	// the page budget below the HELLO head. The fetched prefix is enforced and
+	// acknowledged exactly, but every data and reconciliation fence stays in
+	// place until a round scans and enforces the whole snapshot.
+	ErrControlScanIncomplete = errors.New("sync_control_scan_incomplete")
 )
 
 // Config assembles a worker. Dir is the owner-only data directory holding the
@@ -229,22 +234,26 @@ func (w *Worker) round(ctx context.Context, p Profile, client *nodesync.Client, 
 			return err
 		}
 	}
-	if err = w.pullControl(ctx, client, ob.dest, c.Ctl, reply.CtlHead); err != nil {
+	scanned, err := w.pullControl(ctx, client, ob.dest, c.Ctl, reply.CtlHead)
+	if err != nil {
 		return err
 	}
 	blocked, err := w.enforce(ctx, ob.dest, p.Device)
 	if err != nil {
 		return err
 	}
-	// Every control to the HELLO head is now enforced, which is the
-	// reconciliation a restored node needs before serving restored data.
-	if r, ok := w.cfg.Store.(restoreReconciler); ok && !blocked {
+	// Only a scan that reached the HELLO head followed by an unblocked
+	// enforcement of everything fetched is the reconciliation a restored node
+	// needs before serving restored data. A prefix enforced below the head
+	// keeps the restore fence and skips PUSH and PULL(data).
+	fenced := blocked || !scanned
+	if r, ok := w.cfg.Store.(restoreReconciler); ok && !fenced {
 		if err = r.CompleteRestoreReconciliation(ctx); err != nil {
 			return err
 		}
 	}
 	var pushErr error
-	if !blocked {
+	if !fenced {
 		pushErr = w.push(ctx, p, client, ob)
 		if pushErr == nil || !errors.Is(pushErr, nodesync.ErrForbidden) && !errors.Is(pushErr, nodesync.ErrLoggedOut) {
 			c, err = w.state.cursors(ctx, ob.dest)
@@ -271,30 +280,45 @@ func (w *Worker) round(ctx context.Context, p Profile, client *nodesync.Client, 
 	if blocked {
 		return ErrControlBlocked
 	}
+	if !scanned {
+		return ErrControlScanIncomplete
+	}
 	return pushErr
 }
 
-// pullControl fetches every control page to ctl_head and persists exact
-// envelopes. The scan position is in-round only; it is never a cursor or ACK.
-func (w *Worker) pullControl(ctx context.Context, client *nodesync.Client, dest string, cursor, head int64) error {
-	pos := cursor
+// pullControl fetches control pages toward ctl_head and persists exact
+// envelopes, at most maxPages per round. It reports whether the scan reached
+// the HELLO head. The scan position is never a cursor or ACK: a round resumes
+// after the last exact envelope already persisted in ctl_pending above
+// ctl_cursor, so a control held below a distant supplement cannot restart a
+// capped scan forever, and a restart recovers progress from durable pending
+// state rather than from a scan watermark.
+func (w *Worker) pullControl(ctx context.Context, client *nodesync.Client, dest string, cursor, head int64) (bool, error) {
+	pos, err := w.state.fetchedThrough(ctx, dest, cursor)
+	if err != nil {
+		return false, err
+	}
+	if pos > head {
+		// Hosted advertises a head below controls it already served.
+		return false, ErrHostedLog
+	}
 	for i := 0; i < maxPages && pos < head; i++ {
 		page, err := client.Log(ctx, "control", pos, head, nodesync.MaxPageItems)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err = checkPage(page, "control", pos, head); err != nil {
-			return err
+			return false, err
 		}
 		if err = w.state.persistControls(ctx, dest, page.Items); err != nil {
-			return err
+			return false, err
 		}
 		pos = page.NextAfter
 		if !page.More {
 			break
 		}
 	}
-	return nil
+	return pos >= head, nil
 }
 
 func checkPage(page transport.Page, class string, pos, head int64) error {
@@ -325,6 +349,7 @@ func (w *Worker) enforce(ctx context.Context, dest, device string) (bool, error)
 	var after, held int64
 	var applied []int64
 	staged := map[int64]pendingControl{}
+	fetched := map[int64]pendingControl{}
 	var view []store.SignedRecord
 	for {
 		pending, err := w.state.pendingControls(ctx, dest, after, 64)
@@ -336,6 +361,7 @@ func (w *Worker) enforce(ctx context.Context, dest, device string) (bool, error)
 		}
 		for _, c := range pending {
 			after = c.HSeq
+			fetched[c.HSeq] = c
 			var reason string
 			if held == 0 {
 				reason = w.applyControl(ctx, c, device)
@@ -375,11 +401,21 @@ func (w *Worker) enforce(ctx context.Context, dest, device string) (bool, error)
 						return true, w.state.blockControl(ctx, dest, h, reason)
 					}
 				}
+				// A control is enforced only once every managed copy it
+				// invalidates is physically gone; until then it is a barrier
+				// and no cursor or ACK crosses it.
+				reason, err := w.cleanup(ctx, dest, fetched[h])
+				if err != nil {
+					return false, err
+				}
+				if reason != "" {
+					return true, w.state.blockControl(ctx, dest, h, reason)
+				}
 				if err = w.state.completeControl(ctx, dest, h); err != nil {
 					return false, err
 				}
 			}
-			applied, held, staged, view = nil, 0, map[int64]pendingControl{}, nil
+			applied, held, staged, fetched, view = nil, 0, map[int64]pendingControl{}, map[int64]pendingControl{}, nil
 		}
 	}
 	if held != 0 {
@@ -401,6 +437,44 @@ func (w *Worker) enforcementIncomplete(ctx context.Context, id string) (bool, er
 		return true, nil
 	}
 	return false, err
+}
+
+// cleanup establishes physical cleanup of every managed copy an erasure or
+// retraction invalidates: quarantined hosted copies and queued metadata copies
+// in the sync database, then that database's WAL, then the node store's
+// durable scrub of its database files and FTS shadows. It returns a barrier
+// reason while any copy may still be readable, for example because a reader
+// pins either WAL. Other controls have nothing to clean.
+func (w *Worker) cleanup(ctx context.Context, dest string, c pendingControl) (string, error) {
+	r, _, reason := checkControl(c)
+	if reason != "" || r.Header.Type != record.KindErasure && r.Header.Type != record.KindRetraction {
+		return "", nil
+	}
+	if err := w.state.dropQuarantined(ctx, dest, r); err != nil {
+		return "", err
+	}
+	if err := w.reconcile(ctx, dest); err != nil {
+		var e *store.Error
+		if errors.As(err, &e) {
+			return "scrub_pending", nil
+		}
+		return "", err
+	}
+	clean, err := w.state.checkpoint(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !clean {
+		return "scrub_pending", nil
+	}
+	res, err := w.cfg.Store.Scrub(ctx, r.ID)
+	if err != nil {
+		return "scrub_" + store.Code(err), nil
+	}
+	if res.State != "complete" {
+		return "scrub_pending", nil
+	}
+	return "", nil
 }
 
 // stagedAuthority is implemented by the node store. It admits erasure and
@@ -629,7 +703,7 @@ func (w *Worker) pullData(ctx context.Context, client *nodesync.Client, dest str
 }
 
 func publicCode(err error) string {
-	for _, known := range []error{ErrControlBlocked, ErrHostedLog, ErrCredential, ErrProfile, nodesync.ErrForbidden, nodesync.ErrToken, nodesync.ErrReceipt, nodesync.ErrKeystoreUnavailable, nodesync.ErrInvalid, nodesync.ErrLoggedOut, errControlConflict, errStateInvalid} {
+	for _, known := range []error{ErrControlBlocked, ErrControlScanIncomplete, ErrHostedLog, ErrCredential, ErrProfile, nodesync.ErrForbidden, nodesync.ErrToken, nodesync.ErrReceipt, nodesync.ErrKeystoreUnavailable, nodesync.ErrInvalid, nodesync.ErrLoggedOut, errControlConflict, errStateInvalid} {
 		if errors.Is(err, known) {
 			return known.Error()
 		}

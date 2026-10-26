@@ -22,6 +22,9 @@ type Store interface {
 	Append(context.Context, store.SignedRecord) (store.AdmissionResult, error)
 	ApplyControl(context.Context, store.SignedRecord) (store.EraseResult, error)
 	OfferTenantKeyOperation(context.Context, store.SignedRecord) error
+	// Scrub retries the durable physical scrub of one control. Only a
+	// complete result establishes that its invalidated bytes are gone.
+	Scrub(context.Context, string) (store.ScrubResult, error)
 }
 
 // outbox adapts State to the push client for one authenticated destination.

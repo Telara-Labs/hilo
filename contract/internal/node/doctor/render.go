@@ -143,6 +143,7 @@ func WriteText(w io.Writer, r Report) error {
 	if r.Sync.Configured {
 		line("enabled", yes(r.Sync.Enabled))
 		line("enrolled", yes(r.Sync.Enrolled))
+		line("sync database", r.Sync.State)
 		line("outbox", counts(r.Sync.Outbox))
 	}
 	line("blockers", list(r.Sync.Blockers))

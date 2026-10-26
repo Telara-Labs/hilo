@@ -82,6 +82,12 @@ func Enroll(ctx context.Context, dir string, vault SecretVault, e Enrollment) er
 	if err != nil {
 		return err
 	}
+	if _, err = retireCredentials(ctx, dir, vault); err != nil {
+		return err
+	}
+	if p, err = LoadProfile(dir); err != nil {
+		return err
+	}
 	if _, err = checkSecondLogin(ctx, dir, p, e); err != nil {
 		return err
 	}
@@ -89,7 +95,10 @@ func Enroll(ctx context.Context, dir string, vault SecretVault, e Enrollment) er
 	if err != nil {
 		return err
 	}
-	return commitProfile(ctx, dir, vault, p, next, e.RefreshToken)
+	// A failed deletion of the replaced refresh slot stays recorded and is
+	// reported by Status until a later attempt establishes it.
+	_, err = commitProfile(ctx, dir, vault, p, next, e.RefreshToken)
+	return err
 }
 
 // SetEnabled switches sync on or off without touching credentials or state.
@@ -142,6 +151,9 @@ type StatusReport struct {
 	BarrierReason  string           `json:"barrier_reason,omitempty"`
 	LastError      string           `json:"last_error,omitempty"`
 	LastRound      int64            `json:"last_round,omitempty"`
+	// CredentialCleanup is "pending" while a retired credential slot has not
+	// been deleted, and omitted otherwise.
+	CredentialCleanup string `json:"credential_cleanup,omitempty"`
 }
 
 // Status reads the profile and sync database without contacting the network.
@@ -155,6 +167,9 @@ func Status(ctx context.Context, dir string) (StatusReport, error) {
 		return out, err
 	}
 	out.Configured, out.Enabled, out.Enrolled = true, p.Enabled, p.Enrolled()
+	if len(p.Retired) > 0 {
+		out.CredentialCleanup = "pending"
+	}
 	st, err := OpenState(ctx, dir)
 	if err != nil {
 		return out, err
@@ -238,6 +253,9 @@ func Blockers(r StatusReport, now time.Time) []string {
 	}
 	if r.Quarantined > 0 {
 		out = append(out, "hosted_data_quarantined")
+	}
+	if r.CredentialCleanup == "pending" {
+		out = append(out, "credential_cleanup_pending")
 	}
 	return out
 }

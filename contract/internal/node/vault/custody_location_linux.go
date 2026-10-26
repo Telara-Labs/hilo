@@ -20,15 +20,26 @@ import (
 
 const custodyLocationFile = "custody-location.json"
 
+// custodyItemPrefix names one handle's custody record. Each handle owns an
+// independent record, written only while that handle's writer lock is held,
+// so concurrent operations on different handles never rewrite each other.
+const custodyItemPrefix = "custody-item-"
+
+func custodyItemFile(h string) string { return custodyItemPrefix + h + ".json" }
+
 func readLinuxLocation(data string) (*secretServiceLocation, error) {
+	return readLinuxRecord(data, custodyLocationFile)
+}
+
+func readLinuxRecord(data, name string) (*secretServiceLocation, error) {
 	if ipc.ValidateDir(data, false) != nil {
 		return nil, ErrUnavailable
 	}
-	fd, e := unix.Open(filepath.Join(data, custodyLocationFile), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+	fd, e := unix.Open(filepath.Join(data, name), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
 	if e != nil {
 		return nil, e
 	}
-	f := os.NewFile(uintptr(fd), custodyLocationFile)
+	f := os.NewFile(uintptr(fd), name)
 	defer f.Close()
 	st, e := f.Stat()
 	if e != nil {
@@ -111,6 +122,10 @@ func (v *Vault) bindCustody(ctx context.Context, data string, create bool) error
 }
 
 func writeLinuxLocation(data string, m secretServiceLocation) error {
+	return writeLinuxRecord(data, custodyLocationFile, m)
+}
+
+func writeLinuxRecord(data, name string, m secretServiceLocation) error {
 	if !validLinuxLocation(m) || ipc.ValidateDir(data, false) != nil {
 		return ErrUnavailable
 	}
@@ -118,7 +133,7 @@ func writeLinuxLocation(data string, m secretServiceLocation) error {
 	if e != nil || len(raw) > 16384 {
 		return ErrUnavailable
 	}
-	f, e := os.CreateTemp(data, ".custody-location-")
+	f, e := os.CreateTemp(data, "."+strings.TrimSuffix(name, ".json")+"-")
 	if e != nil {
 		return e
 	}
@@ -133,7 +148,7 @@ func writeLinuxLocation(data string, m secretServiceLocation) error {
 	if ce != nil {
 		return ce
 	}
-	if e = os.Rename(f.Name(), filepath.Join(data, custodyLocationFile)); e != nil {
+	if e = os.Rename(f.Name(), filepath.Join(data, name)); e != nil {
 		return e
 	}
 	dir, e := os.Open(data)
@@ -143,6 +158,67 @@ func writeLinuxLocation(data string, m secretServiceLocation) error {
 	defer dir.Close()
 	return dir.Sync()
 }
+
+// linuxSlot reports where a handle's custody state lives.
+type linuxSlot int
+
+const (
+	// slotNone: this profile has never recorded a creation intent for the handle.
+	slotNone linuxSlot = iota
+	// slotItem: the handle's own record.
+	slotItem
+	// slotLegacy: a record written before per-handle records, which kept its
+	// single handle in the selection record itself.
+	slotLegacy
+)
+
+// linuxEntry reads the handle's custody state. A per-handle record must name
+// the handle and the profile's selected collection. A handle recorded both in
+// the legacy selection record and in its own record is ambiguous and refuses.
+func (v *Vault) linuxEntry(h string) (secretServiceLocation, linuxSlot, error) {
+	main := *v.secretService
+	legacy := main.State != "selected" && main.Handle == h
+	if v.profile == "" {
+		if m, ok := v.secretItems[h]; ok {
+			return m, slotItem, nil
+		}
+		if legacy {
+			return main, slotLegacy, nil
+		}
+		return secretServiceLocation{}, slotNone, nil
+	}
+	m, e := readLinuxRecord(v.profile, custodyItemFile(h))
+	if os.IsNotExist(e) {
+		if legacy {
+			return main, slotLegacy, nil
+		}
+		return secretServiceLocation{}, slotNone, nil
+	}
+	if e != nil || legacy || m.Handle != h || m.Collection != main.Collection || m.State == "selected" {
+		return secretServiceLocation{}, slotNone, ErrUnavailable
+	}
+	return *m, slotItem, nil
+}
+
+// saveLinuxEntry durably replaces one handle's state. Only the holder of that
+// handle's writer lock calls it, so the read-modify-write cannot lose another
+// handle's update.
+func (v *Vault) saveLinuxEntry(m secretServiceLocation, slot linuxSlot) error {
+	if slot == slotLegacy {
+		return v.saveLinuxLocation(m)
+	}
+	if v.profile != "" {
+		if e := writeLinuxRecord(v.profile, custodyItemFile(m.Handle), m); e != nil {
+			return e
+		}
+	}
+	if v.secretItems == nil {
+		v.secretItems = map[string]secretServiceLocation{}
+	}
+	v.secretItems[m.Handle] = m
+	return nil
+}
+
 func (v *Vault) saveLinuxLocation(m secretServiceLocation) error {
 	if v.profile != "" {
 		if e := writeLinuxLocation(v.profile, m); e != nil {

@@ -44,7 +44,8 @@ func deviceControl(t *testing.T, key ed25519.PrivateKey, machine, nonce string, 
 }
 
 // carryControls moves a device's controls to another device of the same
-// genesis the only way the node admits them: a verified bundle import.
+// genesis the only way the node admits them: a verified bundle import whose
+// controls the receiving owner reviewed and confirmed.
 func carryControls(t *testing.T, from *Store, to *Store, toKey string) {
 	t.Helper()
 	ctx := context.Background()
@@ -56,7 +57,11 @@ func carryControls(t *testing.T, from *Store, to *Store, toKey string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = to.ImportBundle(ctx, BundleImport{LocalKeyID: toKey, Keyring: keyring, Controls: sel.Controls}); err != nil {
+	var confirmed []string
+	for _, c := range sel.Controls {
+		confirmed = append(confirmed, c.AdvisoryID)
+	}
+	if _, err = to.ImportBundle(ctx, BundleImport{LocalKeyID: toKey, Keyring: keyring, Controls: sel.Controls, ConfirmedControls: confirmed}); err != nil {
 		t.Fatal("control transfer", err)
 	}
 }

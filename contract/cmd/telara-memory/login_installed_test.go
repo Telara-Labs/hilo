@@ -10,10 +10,15 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"log"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -32,8 +37,10 @@ import (
 )
 
 // loginTenant is one hosted tenant: its policy key, pinned login root and the
-// hosted session keys a login returns. Its origin refuses connections, so the
-// daemon's sync worker can never reach it; the test proves local state only.
+// hosted session keys a login returns. Its origin is a private TLS server that
+// answers only the session mint and the authenticated login response; the
+// daemon's sync worker validates against the system pool and never reaches it,
+// so the test proves local state only.
 type loginTenant struct {
 	t                    *testing.T
 	tenant, user, origin string
@@ -43,7 +50,7 @@ type loginTenant struct {
 	service              ed25519.PublicKey
 }
 
-func newLoginTenant(t *testing.T, seed byte, tenant, user, origin string) *loginTenant {
+func newLoginTenant(t *testing.T, seed byte, tenant, user string) *loginTenant {
 	t.Helper()
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{seed}, 32))
 	pub := key.Public().(ed25519.PublicKey)
@@ -53,7 +60,115 @@ func newLoginTenant(t *testing.T, seed byte, tenant, user, origin string) *login
 	}
 	auth, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	service, _, _ := ed25519.GenerateKey(rand.Reader)
-	return &loginTenant{t: t, tenant: tenant, user: user, origin: origin, key: key, root: root, auth: auth, service: service}
+	l := &loginTenant{t: t, tenant: tenant, user: user, key: key, root: root, auth: auth, service: service}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(l.serve))
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	l.origin = srv.URL
+	old := loginTLSRoots
+	loginTLSRoots = srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	t.Cleanup(func() { loginTLSRoots = old })
+	return l
+}
+
+// serve mints a memory session bound to the presented DPoP key and answers the
+// authenticated login response with this tenant's policy root.
+func (l *loginTenant) serve(w http.ResponseWriter, r *http.Request) {
+	fail := func() { w.WriteHeader(http.StatusUnauthorized) }
+	switch {
+	case r.Method == "POST" && r.URL.Path == "/v1/mcp/session":
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer telara_mcp_") {
+			fail()
+			return
+		}
+		jkt, ok := proofThumbprint(r.Header.Get("DPoP"))
+		var body struct {
+			Grant struct {
+				Ops     []string `json:"ops"`
+				Repos   []string `json:"repos"`
+				Origin  string   `json:"origin"`
+				Genesis string   `json:"genesis_id"`
+				Device  string   `json:"device_id"`
+				Expiry  string   `json:"expires_at_unix"`
+			} `json:"memory_grant"`
+		}
+		if !ok || json.NewDecoder(r.Body).Decode(&body) != nil {
+			fail()
+			return
+		}
+		expiry, err := strconv.ParseInt(body.Grant.Expiry, 10, 64)
+		if err != nil {
+			fail()
+			return
+		}
+		now := time.Now().UTC().Truncate(time.Second)
+		claims := map[string]any{"exp": now.Add(10 * time.Minute).Unix(), "iat": now.Unix(), "nbf": now.Unix(), "iss": "https://auth.example", "sub": l.user, "aud": []string{"telara-mcp-session"}, "tenant_id": l.tenant, "mcp_config_id": "config-" + l.tenant, "cnf": map[string]string{"jkt": jkt},
+			"memory_grant": nodesync.MemoryGrant{Ops: body.Grant.Ops, Repos: body.Grant.Repos, Origin: body.Grant.Origin, GenesisID: body.Grant.Genesis, DeviceID: body.Grant.Device, ExpiresAtUnix: expiry}}
+		token, err := signLoginJWT(l.auth, claims)
+		if err != nil {
+			fail()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"session_token": token, "expires_at": claims["exp"]})
+	case r.Method == "GET" && r.URL.Path == "/sync/v1/login":
+		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "DPoP ")
+		parts := strings.Split(token, ".")
+		if !ok || len(parts) != 3 {
+			fail()
+			return
+		}
+		raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+		var c struct {
+			Grant nodesync.MemoryGrant `json:"memory_grant"`
+		}
+		if err != nil || json.Unmarshal(raw, &c) != nil {
+			fail()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(nodesync.LoginReply{Origin: l.origin, Tenant: l.tenant, User: l.user, Config: "config-" + l.tenant, DeviceID: c.Grant.DeviceID, PolicyRoot: nodesync.Envelope(l.root.Rec.HeaderJCS, l.root.Rec.BodyJCS, l.root.Sigs, l.root.Rec.ID)})
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+// proofThumbprint returns the jkt of the public key a DPoP proof carries.
+func proofThumbprint(proof string) (string, bool) {
+	parts := strings.Split(proof, ".")
+	if len(parts) != 3 {
+		return "", false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	var head struct {
+		JWK map[string]string `json:"jwk"`
+	}
+	if err != nil || json.Unmarshal(raw, &head) != nil {
+		return "", false
+	}
+	x, e1 := base64.RawURLEncoding.DecodeString(head.JWK["x"])
+	y, e2 := base64.RawURLEncoding.DecodeString(head.JWK["y"])
+	if e1 != nil || e2 != nil {
+		return "", false
+	}
+	jkt, err := nodesync.Thumbprint(&ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)})
+	return jkt, err == nil
+}
+
+func signLoginJWT(key *ecdsa.PrivateKey, claims any) (string, error) {
+	h, _ := json.Marshal(map[string]string{"alg": "ES256", "typ": "JWT"})
+	c, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	msg := base64.RawURLEncoding.EncodeToString(h) + "." + base64.RawURLEncoding.EncodeToString(c)
+	d := sha256.Sum256([]byte(msg))
+	r, s, err := ecdsa.Sign(rand.Reader, key, d[:])
+	if err != nil {
+		return "", err
+	}
+	return msg + "." + base64.RawURLEncoding.EncodeToString(append(r.FillBytes(make([]byte, 32)), s.FillBytes(make([]byte, 32))...)), nil
 }
 
 // policy signs a fresh policy carrying a private rule string that logout
@@ -258,8 +373,8 @@ func TestInstalledLogoutThenLoginToDifferentTenant(t *testing.T) {
 	}
 
 	// Login to tenant A.
-	tenantA := newLoginTenant(t, 71, "tenant-alpha", "alpha-user", "https://127.0.0.1:9")
-	tenantB := newLoginTenant(t, 72, "tenant-bravo", "bravo-user", "https://127.0.0.1:10")
+	tenantA := newLoginTenant(t, 71, "tenant-alpha", "alpha-user")
+	tenantB := newLoginTenant(t, 72, "tenant-bravo", "bravo-user")
 	if _, err := cli("", "login", "x"); publicCode(err) != "invalid_arguments" {
 		t.Fatal("login accepted a positional argument", err)
 	}

@@ -228,9 +228,8 @@ func (v *Vault) selectedSession(ctx context.Context, create bool) (*linuxSession
 // Resolve an interrupted CreateItem only in the originally recorded collection
 // and only for an item carrying this record's creation value.
 // After a service/bus restart, absence cannot establish deletion or no creation.
-func (v *Vault) locateLinux(s *linuxSession, h string) (dbus.ObjectPath, error) {
-	m := *v.secretService
-	if m.Handle != h || m.State == "selected" {
+func (v *Vault) locateLinux(s *linuxSession, m secretServiceLocation, slot linuxSlot) (dbus.ObjectPath, error) {
+	if slot == slotNone || m.State == "selected" {
 		return "", ErrUnavailable
 	}
 	if m.State == "deleted" {
@@ -257,13 +256,15 @@ func (v *Vault) locateLinux(s *linuxSession, h string) (dbus.ObjectPath, error) 
 		if m.State == "creating" {
 			m.State = "bound"
 		}
-		if e = v.saveLinuxLocation(m); e != nil {
+		if e = v.saveLinuxEntry(m, slot); e != nil {
 			return "", e
 		}
 	}
 	return item, nil
 }
 
+// put creates a new item for h. Each handle has its own creation generation
+// and custody record, so a profile holds any number of independent secrets.
 func (v *Vault) put(ctx context.Context, h string, b []byte) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -277,12 +278,12 @@ func (v *Vault) put(ctx context.Context, h string, b []byte) error {
 		return e
 	}
 	defer s.close()
-	m := *v.secretService
-	if m.State == "deleted" {
-		m.Handle, m.Item, m.Creation, m.State = "", "", "", "selected"
+	m, slot, e := v.linuxEntry(h)
+	if e != nil {
+		return e
 	}
-	if m.State != "selected" {
-		if _, e = v.locateLinux(s, h); e == nil {
+	if slot != slotNone && m.State != "deleted" {
+		if _, e = v.locateLinux(s, m, slot); e == nil {
 			return ErrExists
 		} else if e != ErrNotFound {
 			return e
@@ -299,8 +300,12 @@ func (v *Vault) put(ctx context.Context, h string, b []byte) error {
 	if _, e = rand.Read(creation[:]); e != nil {
 		return ErrUnavailable
 	}
-	m.Handle, m.Item, m.Creation, m.State, m.Bus, m.Owner = h, "", hex.EncodeToString(creation[:]), "creating", s.bus, s.owner
-	if e = v.saveLinuxLocation(m); e != nil {
+	if slot == slotNone {
+		slot = slotItem
+	}
+	sel := *v.secretService
+	m = secretServiceLocation{Version: 1, Collection: sel.Collection, Alias: sel.Alias, Handle: h, Creation: hex.EncodeToString(creation[:]), State: "creating", Bus: s.bus, Owner: s.owner}
+	if e = v.saveLinuxEntry(m, slot); e != nil {
 		return e
 	}
 	props := map[string]dbus.Variant{"org.freedesktop.Secret.Item.Label": dbus.MakeVariant("Telara Memory runtime authority"), "org.freedesktop.Secret.Item.Attributes": dbus.MakeVariant(m.attributes())}
@@ -314,14 +319,14 @@ func (v *Vault) put(ctx context.Context, h string, b []byte) error {
 	}
 	// Publish the exact backend item identity before any authority is sent.
 	m.Item, m.State = string(item), "bound"
-	if e = v.saveLinuxLocation(m); e != nil {
+	if e = v.saveLinuxEntry(m, slot); e != nil {
 		return e
 	}
 	if s.call(item, "Item.SetSecret", wireSecret{s.session, []byte{}, b, "application/octet-stream"}).Err != nil {
 		return ErrUnavailable
 	}
 	m.State = "ready"
-	return v.saveLinuxLocation(m)
+	return v.saveLinuxEntry(m, slot)
 }
 func (v *Vault) get(ctx context.Context, h string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -331,7 +336,11 @@ func (v *Vault) get(ctx context.Context, h string) ([]byte, error) {
 		return nil, e
 	}
 	defer s.close()
-	item, e := v.locateLinux(s, h)
+	m, slot, e := v.linuxEntry(h)
+	if e != nil {
+		return nil, e
+	}
+	item, e := v.locateLinux(s, m, slot)
 	if e != nil {
 		return nil, e
 	}
@@ -359,18 +368,22 @@ func (v *Vault) delete(ctx context.Context, h string) error {
 		return e
 	}
 	defer s.close()
-	if v.secretService.State == "selected" {
-		// Selection precedes handle publication and every native creation intent.
-		// No CreateItem was attempted in this generation. Refuse any unexplained
-		// item instead of deleting it by guessing its identity.
+	m, slot, e := v.linuxEntry(h)
+	if e != nil {
+		return e
+	}
+	if slot == slotNone {
+		// Every native creation is preceded by a durable per-handle intent. No
+		// record means no CreateItem was attempted for this handle by this
+		// profile. Refuse any unexplained item instead of deleting it by
+		// guessing its identity.
 		if _, e = s.find(map[string]string{"service": service, "handle": h}); e != ErrNotFound {
 			return ErrUnavailable
 		}
-		m := *v.secretService
-		m.Handle, m.State = h, "deleted"
-		return v.saveLinuxLocation(m)
+		sel := *v.secretService
+		return v.saveLinuxEntry(secretServiceLocation{Version: 1, Collection: sel.Collection, Alias: sel.Alias, Handle: h, State: "deleted", Bus: s.bus, Owner: s.owner}, slotItem)
 	}
-	item, e := v.locateLinux(s, h)
+	item, e := v.locateLinux(s, m, slot)
 	if e != nil && e != ErrNotFound {
 		return e
 	}
@@ -379,12 +392,15 @@ func (v *Vault) delete(ctx context.Context, h string) error {
 		if s.call(item, "Item.Delete").Store(&prompt) != nil || prompt != "/" {
 			return ErrUnavailable
 		}
-		if !s.itemAbsent(item, v.secretService.attributes()) {
+		if !s.itemAbsent(item, m.attributes()) {
 			return ErrUnavailable
 		}
 	}
-	m := *v.secretService
+	// Re-read: locating may have bound an interrupted creation's exact path.
+	if m, _, e = v.linuxEntry(h); e != nil {
+		return e
+	}
 	// Retain exact item identity even after physical deletion for crash-safe retries.
 	m.State = "deleted"
-	return v.saveLinuxLocation(m)
+	return v.saveLinuxEntry(m, slot)
 }

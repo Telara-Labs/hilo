@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
+	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/transport"
 )
@@ -77,9 +80,10 @@ func contains(xs []string, x string) bool {
 // State is the durable sync database. All methods end their transaction
 // before returning; no network wait ever holds a transaction open.
 type State struct {
-	db  *sql.DB
-	mu  gosync.Mutex
-	now func() time.Time
+	db   *sql.DB
+	path string
+	mu   gosync.Mutex
+	now  func() time.Time
 }
 
 func OpenState(ctx context.Context, dir string) (*State, error) {
@@ -91,7 +95,130 @@ func OpenState(ctx context.Context, dir string) (*State, error) {
 		db.Close()
 		return nil, errStateInvalid
 	}
-	return &State{db: db, now: time.Now}, nil
+	return &State{db: db, path: filepath.Join(dir, store.SyncDatabaseName), now: time.Now}, nil
+}
+
+// checkpoint folds the sync database WAL into the main file and truncates it.
+// Deleted rows are already zeroed in place by secure_delete, so a clean result
+// means no superseded page image of a dropped copy remains in either file. A
+// reader pinning the WAL makes it report false; it never reports a clean
+// result it did not establish.
+func (s *State) checkpoint(ctx context.Context) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, err := s.db.Conn(ctx)
+	if err != nil {
+		return false, errStateInvalid
+	}
+	defer c.Close()
+	var busy, log, done int
+	if err = c.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &done); err != nil {
+		return false, errStateInvalid
+	}
+	if busy != 0 || log != 0 || done != 0 {
+		return false, nil
+	}
+	info, err := os.Stat(s.path + "-wal")
+	if err != nil && !os.IsNotExist(err) {
+		return false, errStateInvalid
+	}
+	return err != nil || info.Size() == 0, nil
+}
+
+// fetchedThrough is where a control scan resumes: after the highest exact
+// envelope persisted above ctl_cursor, or at the cursor when none is. Pages
+// are persisted in order, so every control at or below it is already held.
+func (s *State) fetchedThrough(ctx context.Context, dest string, cursor int64) (int64, error) {
+	var top sql.NullInt64
+	err := s.tx(ctx, func(q querier) error {
+		if q.QueryRowContext(ctx, "SELECT max(hseq) FROM ctl_pending WHERE destination=? AND hseq>?", dest, cursor).Scan(&top) != nil {
+			return errStateInvalid
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return max(cursor, top.Int64), nil
+}
+
+// dropQuarantined deletes every quarantined hosted envelope an erasure or
+// retraction may select. v1 imports no hosted data, so a quarantined copy is
+// never needed; one that cannot be decoded, or whose relation to a selector
+// cannot be decided from the envelope alone, is dropped too.
+func (s *State) dropQuarantined(ctx context.Context, dest string, ctl *record.Record) error {
+	return s.tx(ctx, func(q querier) error {
+		rows, err := q.QueryContext(ctx, "SELECT hseq,envelope FROM data_quarantine WHERE destination=?", dest)
+		if err != nil {
+			return errStateInvalid
+		}
+		var drop []int64
+		for rows.Next() {
+			var hseq int64
+			var raw []byte
+			if rows.Scan(&hseq, &raw) != nil {
+				rows.Close()
+				return errStateInvalid
+			}
+			var env record.Envelope
+			if json.Unmarshal(raw, &env) != nil || mayInvalidate(ctl, env) {
+				drop = append(drop, hseq)
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return errStateInvalid
+		}
+		for _, hseq := range drop {
+			if _, err := q.ExecContext(ctx, "DELETE FROM data_quarantine WHERE destination=? AND hseq=?", dest, hseq); err != nil {
+				return errStateInvalid
+			}
+		}
+		return nil
+	})
+}
+
+// mayInvalidate reports whether ctl can select the record in env. It decides
+// only from fields the envelope carries and errs toward selecting.
+func mayInvalidate(ctl *record.Record, env record.Envelope) bool {
+	r, err := nodesync.OpenEnvelope(env)
+	if err != nil {
+		return true
+	}
+	switch b := ctl.Body.(type) {
+	case *record.RetractionBody:
+		return contains(b.IDs, r.ID)
+	case *record.ErasureBody:
+		sel := b.Selectors
+		h := r.Header
+		if contains(sel.IDs, r.ID) || contains(sel.LIDs, h.LID) || h.Subj.SessionKey != "" && contains(sel.Sessions, h.Subj.SessionKey) || h.Subj.Source != "" && contains(sel.Sources, h.Subj.Source) {
+			return true
+		}
+		for _, t := range sel.Tasks {
+			if h.Subj.TaskID != "" && t.TaskID == h.Subj.TaskID {
+				return true
+			}
+		}
+		if len(sel.Events) == 0 {
+			return false
+		}
+		chunk, ok := r.Body.(*record.ChunkBody)
+		if !ok {
+			// Only a chunk carries events; a bodyless or other record that
+			// links to one is decided by the store's own closure on import.
+			return r.Body == nil && h.Type == record.KindChunk
+		}
+		for _, e := range chunk.Events {
+			for _, es := range sel.Events {
+				if es.EventID == e.ID {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return true
 }
 
 func (s *State) Close() error { return s.db.Close() }

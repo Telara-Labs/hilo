@@ -94,13 +94,16 @@ type Store struct {
 }
 
 type Sync struct {
-	Configured bool             `json:"configured"`
-	Enabled    bool             `json:"enabled"`
-	Enrolled   bool             `json:"enrolled"`
-	Blockers   []string         `json:"blockers"`
-	Outbox     map[string]int64 `json:"outbox,omitempty"`
-	LastRound  int64            `json:"last_round,omitempty"`
-	Error      string           `json:"error,omitempty"`
+	Configured bool `json:"configured"`
+	// State is the sync database: "absent" when none exists, which doctor
+	// reports without creating it, or "present".
+	State     string           `json:"state,omitempty"`
+	Enabled   bool             `json:"enabled"`
+	Enrolled  bool             `json:"enrolled"`
+	Blockers  []string         `json:"blockers"`
+	Outbox    map[string]int64 `json:"outbox,omitempty"`
+	LastRound int64            `json:"last_round,omitempty"`
+	Error     string           `json:"error,omitempty"`
 }
 
 // Report is the complete doctor output. Problems summarizes every section
@@ -385,12 +388,15 @@ func syncState(ctx context.Context, data string, pol store.PolicyDiagnostics, no
 	if _, err := os.Lstat(filepath.Join(data, store.SyncProfileName)); os.IsNotExist(err) {
 		return s
 	}
-	st, err := syncnode.Status(ctx, data)
+	// Doctor is read-only: this inspection never creates, initializes or
+	// writes the sync database.
+	st, state, err := syncnode.InspectStatus(ctx, data)
 	if err != nil {
 		s.Error = syncCode(err)
 		s.Blockers = append(s.Blockers, s.Error)
 		return s
 	}
+	s.State = state
 	s.Configured, s.Enabled, s.Enrolled, s.Outbox, s.LastRound = st.Configured, st.Enabled, st.Enrolled, st.Outbox, st.LastRound
 	s.Blockers = append(s.Blockers, syncnode.Blockers(st, now)...)
 	if s.Configured && pol.KillSync {

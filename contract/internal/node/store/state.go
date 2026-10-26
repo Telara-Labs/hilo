@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"encoding/json"
 	"sort"
@@ -48,6 +49,8 @@ type databaseState struct {
 	projectionBlocked                   bool
 	restoreFenced                       bool
 	importedFacts                       []transport.ExposureFact
+	receipts                            map[string]record.Receipt
+	receiptIssuers                      map[string]map[string]ed25519.PublicKey
 	attrs                               map[string]attributionFact
 	exposures                           []*exposureFact
 	semantic                            map[string]map[string]bool
@@ -300,7 +303,7 @@ func (d *databaseState) rebuild(o Options) error {
 				x.sigStatus = sig.StatusUnknownSigner
 			}
 		} else {
-			x.sigStatus = sig.VerifyRecord(x.rec, x.sigs, st, sig.Context{Route: record.RouteLocal, AdmittedSeq: x.seq}).Status
+			x.sigStatus = d.recordSigStatus(x, st)
 		}
 		it := invalidate.Item{BodyAvailable: x.rec.Body != nil, EventMembershipComplete: x.membershipComplete, ID: x.rec.ID, LID: h.LID, Kind: h.Type, Prov: h.Prov, Owner: x.owner, TaskID: h.Subj.TaskID, SessionKey: h.Subj.SessionKey, Source: h.Subj.Source, Deps: x.deps, Events: x.events, Recalls: x.recalls, Origin: h.Links.Origin, Route: record.RouteLocal, OriginMachine: h.Author.MachineID, Explicit: h.Prov == record.ProvMCPExplicit, SessionSeq: x.lastSeq}
 		if a, ok := d.attrs[x.rec.ID]; ok {

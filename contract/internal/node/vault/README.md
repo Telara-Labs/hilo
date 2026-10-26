@@ -81,8 +81,26 @@ recorded collection path and never resolve an alias again.
 The record keeps `alias` (`telara-memory` or `default`; empty in records written
 before this path, which always used the dedicated alias) for diagnosis.
 
+A profile holds several independent secrets at once: the installed runtime
+authority, the export key, the sync DPoP key and refresh credentials. The
+selection record (`custody-location.json`) therefore holds only the collection
+choice. Each handle has its own owner-only record, `custody-item-<handle>.json`,
+with its own creation generation, item path and state. A handle's record is
+written only while that handle's writer lock is held, so operations on
+different handles never rewrite each other's evidence. A per-handle record
+must name its handle and the selected collection, or custody refuses. Records
+written before per-handle records kept their single handle inside the
+selection record. That handle stays readable and deletable there; every other
+handle gets its own record. A handle present in both places refuses as
+ambiguous. An older build cannot see per-handle records and so refuses those
+handles.
+
+Keychain and Credential Manager custody are already per handle: the Keychain
+account and the Credential Manager target are the handle itself, and the macOS
+location record pins only the Keychain path.
+
 Each provisioning generation writes a random 128-bit `creation` value into the
-record, in state `creating`, before CreateItem. The item carries the exact
+handle's record, in state `creating`, before CreateItem. The item carries the exact
 attributes `service`, `handle` and `creation`. After CreateItem the assigned
 object path is persisted (`bound`) before SetSecret sends any authority.
 
@@ -92,9 +110,10 @@ object path is persisted (`bound`) before SetSecret sends any authority.
   value. No item without it is adopted, overwritten or deleted.
 - Exact identity. Reads and deletes use the recorded item path. A search result
   at another path refuses as a relocated or ambiguous item.
-- Crash recovery. A crash before CreateItem leaves `selected` or `creating` with
-  no matching item, so retry or delete proves no creation on the same service
-  owner. A lost CreateItem reply is resolved by the `creation` attribute. A lost
+- Crash recovery. A crash before CreateItem leaves no handle record, or one in
+  `creating` with no matching item, so retry or delete proves no creation on
+  the same service owner. A handle without a record was never created by this
+  profile, so any item carrying its handle is refused, never deleted. A lost CreateItem reply is resolved by the `creation` attribute. A lost
   SetSecret reply leaves `bound` with the exact path. After a service or bus
   restart, absence never proves deletion or no creation, and cleanup refuses.
 - Deletion proof. Absence of the recorded item needs three observations of the

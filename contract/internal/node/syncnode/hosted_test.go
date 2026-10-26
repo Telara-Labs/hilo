@@ -8,6 +8,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -75,6 +76,12 @@ type hosted struct {
 	grants map[string]nodesync.MemoryGrant
 	acksBy map[string][]transport.Ack
 	onAck  func(machine string, a transport.Ack)
+
+	// policyRoot is the tenant policy root this origin's authenticated login
+	// response returns; loginDevice, when set, is the device it names instead
+	// of the authenticated one.
+	policyRoot  *record.Envelope
+	loginDevice string
 }
 
 func newHosted(t *testing.T, device ed25519.PublicKey, machine string, repos []string) *hosted {
@@ -181,6 +188,8 @@ func (h *hosted) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == "POST" && r.URL.Path == "/v1/memory/import":
 		h.importRecords(w, r, machine)
+	case r.Method == "GET" && r.URL.Path == "/sync/v1/login":
+		h.login(w, machine)
 	case r.Method == "POST" && r.URL.Path == "/sync/v1/hello":
 		h.hello(w, r, machine)
 	case r.Method == "GET" && r.URL.Path == "/sync/v1/log":
@@ -334,6 +343,28 @@ func (h *hosted) importRecords(w http.ResponseWriter, r *http.Request, machine s
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
+}
+
+// login is the authenticated login response. The contract fixes only that a
+// tenant root is pinned from the authenticated, validated TLS login response
+// of <node> login; this shape is the minimal one the node needs: the origin,
+// the authenticated destination and device, and the policy root.
+func (h *hosted) login(w http.ResponseWriter, machine string) {
+	if h.policyRoot == nil {
+		h.fail(w, 404, "route")
+		return
+	}
+	device := machine
+	if h.loginDevice != "" {
+		device = h.loginDevice
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(nodesync.LoginReply{Origin: h.srv.URL, Tenant: h.tenant, User: h.user, Config: h.config, DeviceID: device, PolicyRoot: *h.policyRoot})
+}
+
+// roots trusts this fixture's TLS certificate only.
+func (h *hosted) roots() *x509.CertPool {
+	return h.srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
 }
 
 func (h *hosted) heads() (ctl, data int64) {

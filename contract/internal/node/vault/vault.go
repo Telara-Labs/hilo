@@ -42,10 +42,13 @@ type secretServiceLocation struct {
 type Vault struct {
 	mu            sync.Mutex
 	secretService *secretServiceLocation
-	keychain      uintptr
-	keychainPath  string
-	profile       string
-	closed        bool
+	// secretItems holds per-handle Secret Service state for a vault without a
+	// profile. A profile keeps each handle's state in its own durable record.
+	secretItems  map[string]secretServiceLocation
+	keychain     uintptr
+	keychainPath string
+	profile      string
+	closed       bool
 }
 
 func New() *Vault { return &Vault{} }

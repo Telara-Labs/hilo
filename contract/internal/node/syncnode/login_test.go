@@ -69,6 +69,10 @@ func (w *world) loginDocument(h *hosted, a *tenantAuthority, policy record.Envel
 	if err != nil {
 		w.t.Fatal(err)
 	}
+	root := envelopeOf(a.root.Rec, a.root.Sigs)
+	h.mu.Lock()
+	h.policyRoot = &root
+	h.mu.Unlock()
 	d := LoginDocument{Enrollment: Enrollment{Origin: h.srv.URL, Tenant: h.tenant, User: h.user, Config: h.config, AuthIssuer: "https://auth.example", AuthKey: jwk, ServiceKeys: []ServiceKey{h.serviceKey()}, Grant: h.grant, RefreshToken: h.bootstrap}, PolicyRoot: envelopeOf(a.root.Rec, a.root.Sigs), Policy: policy}
 	// Round-trip through the strict terminal decoder the command uses.
 	raw, err := json.Marshal(d)
@@ -199,7 +203,7 @@ func TestLogoutThenLoginToDifferentTenantKeepsFencesAndCopiesNothing(t *testing.
 	// Tenant A login pins A's policy root and admits its first policy.
 	authA := newTenantAuthority(t, 61, w.hosted.tenant, w.hosted.user)
 	p1, p1Env := authA.policy(1, "tenantasecretrulecanary")
-	report, err := Login(ctx, w.dir, w.vault, w.loginDocument(w.hosted, authA, p1Env))
+	report, err := LoginTLS(ctx, w.dir, w.vault, w.hosted.roots(), w.loginDocument(w.hosted, authA, p1Env))
 	if err != nil || report.Tenant != w.hosted.tenant || report.Policy != p1.ID || report.Seq != 1 {
 		t.Fatal("login A", report, err)
 	}
@@ -349,7 +353,7 @@ func TestLogoutThenLoginToDifferentTenantKeepsFencesAndCopiesNothing(t *testing.
 	if _, err = CreateKey(ctx, w.dir, w.vault); err != nil {
 		t.Fatal(err)
 	}
-	report, err = Login(ctx, w.dir, w.vault, w.loginDocument(hostedB, authB, q1Env))
+	report, err = LoginTLS(ctx, w.dir, w.vault, hostedB.roots(), w.loginDocument(hostedB, authB, q1Env))
 	if err != nil || report.Tenant != hostedB.tenant || report.Policy != q1.ID {
 		t.Fatal("login B", report, err)
 	}
