@@ -191,7 +191,7 @@ func (w *world) enroll() Profile {
 	w.hosted.mu.Lock()
 	grant, _ := w.hosted.grantFor(w.machine)
 	w.hosted.mu.Unlock()
-	p := Profile{Version: ProfileVersion, Enabled: true, Genesis: w.genesis, Device: w.machine, Credential: key, Refresh: refresh, Origin: w.hosted.srv.URL, Tenant: w.hosted.tenant, User: w.hosted.user, Config: w.hosted.config, AuthIssuer: "https://auth.example", AuthKey: &jwk, ServiceKeys: []ServiceKey{w.hosted.serviceKey()}, Grant: &grant}
+	p := Profile{Version: ProfileVersion, Enabled: true, Genesis: w.genesis, Device: w.machine, Credential: key, Refresh: refresh, Origin: w.hosted.srv.URL, Tenant: w.hosted.tenant, User: w.hosted.user, Config: w.hosted.config, AuthIssuer: "https://auth.example", AuthKey: &jwk, ServiceKeys: []ServiceKey{w.hosted.serviceKey()}, ServiceKeyPins: string(sig.PinnedTLSLogin), Grant: &grant}
 	if err := SaveProfile(w.dir, p); err != nil {
 		w.t.Fatal(err)
 	}

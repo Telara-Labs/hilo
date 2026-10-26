@@ -128,7 +128,7 @@ func relativeOpen(parent windows.Handle, name string, directory, create bool, sd
 		return 0, unsafePath("NTUnicodeString", name, "valid Windows string required", e)
 	}
 	oa := windows.OBJECT_ATTRIBUTES{Length: uint32(unsafe.Sizeof(windows.OBJECT_ATTRIBUTES{})), RootDirectory: parent, ObjectName: u, Attributes: windows.OBJ_CASE_INSENSITIVE | windows.OBJ_DONT_REPARSE, SecurityDescriptor: sd}
-	access := uint32(windows.READ_CONTROL | windows.SYNCHRONIZE)
+	access := uint32(windows.READ_CONTROL | windows.SYNCHRONIZE | windows.FILE_READ_ATTRIBUTES)
 	options := uint32(windows.FILE_OPEN_REPARSE_POINT | windows.FILE_SYNCHRONOUS_IO_NONALERT)
 	if directory {
 		options |= windows.FILE_DIRECTORY_FILE
@@ -173,7 +173,7 @@ func openDirs(path string, create bool) (hs []windows.Handle, err error) {
 	if e != nil {
 		return nil, unsafePath("UTF16 root", root, "valid Windows string required", e)
 	}
-	h, e := windows.CreateFile(u, windows.READ_CONTROL|windows.FILE_LIST_DIRECTORY, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	h, e := windows.CreateFile(u, windows.READ_CONTROL|windows.FILE_LIST_DIRECTORY|windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if e != nil {
 		return nil, unsafePath("CreateFile root", root, "root directory open required", e)
 	}

@@ -8,9 +8,12 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,6 +26,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/Telara-Labs/telara-memory/contract/releaseauth"
 )
 
 type target struct{ OS, Arch string }
@@ -52,11 +57,26 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	f := flag.NewFlagSet("release", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	c := config{}
+	verify := f.String("verify", "", "Verify a release directory against the compiled project key")
+	signingKey := f.String("signing-key", "", "Private PKCS8 Ed25519 project release key")
 	f.StringVar(&c.Source, "source", ".", "Repository root, or module root with --development")
 	f.StringVar(&c.Out, "out", "", "New output directory")
 	f.StringVar(&c.Tag, "tag", "", "Exact release tag to export")
 	f.BoolVar(&c.Development, "development", false, "Unsigned UNVERIFIED build of uncommitted source")
-	if f.Parse(args) != nil || f.NArg() != 0 || c.Out == "" {
+	if f.Parse(args) != nil || f.NArg() != 0 {
+		return errors.New("invalid release arguments")
+	}
+	if *verify != "" {
+		if c.Out != "" || *signingKey != "" || c.Tag != "" || c.Development {
+			return errors.New("verification cannot build or sign")
+		}
+		p, err := releaseauth.Verify(*verify)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(p)
+	}
+	if c.Out == "" || c.Development && *signingKey != "" {
 		return errors.New("usage release --source DIR --out NEW_DIR --tag TAG, or --development")
 	}
 	var e error
@@ -100,7 +120,48 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if e = build(ctx, c); e != nil {
 		return e
 	}
-	return json.NewEncoder(out).Encode(map[string]any{"out": c.Out, "artifacts": 6, "signed": false, "development": c.Development})
+	if *signingKey != "" {
+		if e = signRelease(c.Out, *signingKey); e != nil {
+			return e
+		}
+	}
+	return json.NewEncoder(out).Encode(map[string]any{"out": c.Out, "artifacts": 6, "signed": *signingKey != "", "development": c.Development})
+}
+
+func signRelease(dir, path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 4096 {
+		return errors.New("private project signing key required")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return errors.New("signing key changed")
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 4097))
+	if err != nil || len(b) > 4096 {
+		return errors.New("invalid signing key")
+	}
+	defer clear(b)
+	p, rest := pem.Decode(b)
+	if p == nil || len(rest) != 0 {
+		return errors.New("invalid signing key")
+	}
+	defer clear(p.Bytes)
+	k, err := x509.ParsePKCS8PrivateKey(p.Bytes)
+	if err != nil {
+		return errors.New("invalid signing key")
+	}
+	key, ok := k.(ed25519.PrivateKey)
+	if !ok {
+		return errors.New("Ed25519 signing key required")
+	}
+	defer clear(key)
+	return releaseauth.Sign(dir, key)
 }
 func copySource(source, target string) error {
 	return filepath.WalkDir(source, func(path string, d fs.DirEntry, e error) error {

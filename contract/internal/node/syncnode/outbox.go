@@ -220,6 +220,18 @@ func (o *outbox) storeEligible(ctx context.Context, rows []queuedRow) (bool, str
 		if !live[r.SourceID] {
 			return false, "source_invalidated", nil
 		}
+		if r.Kind == string(record.KindTask) && pol.Governed {
+			resolver, ok := o.store.(interface {
+				RepositoryRemote(context.Context, string) (string, error)
+			})
+			if !ok {
+				return false, "repository_unavailable", nil
+			}
+			remote, err := resolver.RepositoryRemote(ctx, r.Repo)
+			if err != nil || remote == "" || remote != r.Remote {
+				return false, "repository_unavailable", nil
+			}
+		}
 		if !pol.PushAllowed(r.Remote) {
 			return false, "policy_denied", nil
 		}

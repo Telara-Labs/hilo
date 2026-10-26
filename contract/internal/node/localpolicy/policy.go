@@ -10,7 +10,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/record"
 )
 
-const Engine = "tap-discover/cd7b481855de"
+const Engine = "tap-discover/d4bd1496f20d"
 const ID = Engine + "/local"
 
 type policyError struct{}
@@ -45,10 +45,12 @@ func (Policy) Argument(n, s string) string { return Argument(n, s) }
 
 type measured struct{}
 
-func (measured) Redact(s string) string                  { return Text(s) }
-func (measured) Argument(n, s string) string             { return Argument(n, s) }
-func (measured) Profiles() []string                      { return nil }
-func (measured) RedactProfile(_ string, s string) string { return Text(s) }
+func (measured) Redact(s string) string      { return Text(s) }
+func (measured) Argument(n, s string) string { return Argument(n, s) }
+func (measured) Profiles() []string          { return tapredact.CurrentRuleset().Profiles() }
+func (measured) RedactProfile(profile string, s string) string {
+	return tapredact.CurrentRuleset().RedactProfile(profile, s)
+}
 
 // Ruleset uses immutable embedded accessors, never the mutable compatibility
 // variable. Failures are finite and contain none of the corpus input.
