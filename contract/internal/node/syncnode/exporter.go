@@ -189,6 +189,20 @@ func (w *Worker) export(ctx context.Context, p Profile, ob *outbox) (int, error)
 		return 0, err
 	}
 	err = w.state.tx(ctx, func(q querier) error {
+		// A local scrub may have fenced a source after this batch was
+		// prepared. Check the durable sidecar fence under its writer before
+		// any copy is stored, including a stale export resuming after scrub.
+		for _, r := range rows {
+			for _, k := range []fenceKey{{fenceID, r.SourceID}, {fenceID, r.RecordID}, {fenceLID, r.LID}} {
+				blocked, err := hasFence(ctx, q, k)
+				if err != nil {
+					return err
+				}
+				if blocked {
+					return nodesync.ErrCancelled
+				}
+			}
+		}
 		if _, err := q.ExecContext(ctx, "INSERT INTO operation VALUES(?,?,?,?,?,0,0,?,'')", opID, ob.dest, op.Bytes(), op.Digest(), statePending, w.state.now().UnixMilli()); err != nil {
 			return errStateInvalid
 		}

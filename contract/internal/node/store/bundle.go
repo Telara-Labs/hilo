@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS restore_fence(singleton INTEGER PRIMARY KEY CHECK(sin
 CREATE TABLE IF NOT EXISTS imported_exposure(id TEXT PRIMARY KEY, fact BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS bundle_export(id TEXT PRIMARY KEY, staging TEXT NOT NULL, digest TEXT NOT NULL, cancelled INTEGER NOT NULL DEFAULT 0 CHECK(cancelled IN(0,1)));
 CREATE TABLE IF NOT EXISTS bundle_export_item(export TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(export,id));
+CREATE TABLE IF NOT EXISTS bundle_export_variant(export TEXT NOT NULL, source TEXT NOT NULL, id TEXT NOT NULL, header BLOB NOT NULL, body BLOB NOT NULL, sigs BLOB NOT NULL, PRIMARY KEY(export,source));
 CREATE TABLE IF NOT EXISTS bundle_receipt(id TEXT PRIMARY KEY, receipt BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS bundle_receipt_issuer(tenant TEXT NOT NULL, key_id TEXT NOT NULL, pub BLOB NOT NULL, PRIMARY KEY(tenant,key_id));
 `
@@ -292,10 +293,20 @@ const (
 
 // bundleSelection is the evaluated content of a selection: the signed
 // selection and, for the erasure lifecycle, the identity of every item and
-// every data or variant source id it carries.
+// every data or variant source id it carries. A variant's identity is its
+// source id together with its salt-free content identity, so a variant built
+// under different redaction, authority or key is a different selection.
 type bundleSelection struct {
-	items   []string
-	sources []string
+	items    []string
+	sources  []string
+	variants []bundleVariantItem
+}
+
+// bundleVariantItem is one governed metadata variant a selection carries,
+// with the source it was built from.
+type bundleVariantItem struct {
+	source string
+	rec    SignedRecord
 }
 
 func (b bundleSelection) digest() string {
@@ -398,8 +409,13 @@ func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[stri
 			if v == nil {
 				break
 			}
-			meta.items = append(meta.items, "v:"+id)
+			identity, ok := variantIdentity(*v)
+			if !ok {
+				return BundleSelection{}, meta, failure("invalid_record")
+			}
+			meta.items = append(meta.items, "v:"+id+":"+identity)
 			meta.sources = append(meta.sources, id)
+			meta.variants = append(meta.variants, bundleVariantItem{source: id, rec: *v})
 			if variants == variantSign {
 				out.Data = append(out.Data, *v)
 			}
