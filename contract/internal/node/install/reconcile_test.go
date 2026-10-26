@@ -90,9 +90,11 @@ func TestInterruptedUpgradePublicationConverges(t *testing.T) {
 					if e := ReconcileUpgrade(ctx, p.Source.Dir); e != nil {
 						t.Fatal(e)
 					}
-					if _, e := VerifiedExecutable(p.Source.Dir); e != nil {
+					image, e := VerifiedExecutable(p.Source.Dir)
+					if e != nil {
 						t.Fatal(e)
 					}
+					defer image.Close()
 					// This test image is not B. Publication recovery cannot grant it admission.
 					if _, e := VerifyRunning(p.Source.Dir); !errors.Is(e, ErrUnverified) {
 						t.Fatal("self-path bypass", e)

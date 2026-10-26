@@ -71,6 +71,17 @@ func (s *Store) Scrub(ctx context.Context, controlID string) (ScrubResult, error
 	if s.conn.QueryRowContext(ctx, "SELECT state FROM scrub_job WHERE control=?", controlID).Scan(&jobState) != nil {
 		return out, failure("unknown_scrub")
 	}
+	sidecarsClean, err := s.scrubSyncCopies(ctx, d)
+	if err != nil {
+		return out, err
+	}
+	if !sidecarsClean {
+		if _, err = s.conn.ExecContext(ctx, "COMMIT"); err != nil {
+			return out, failure("storage_error")
+		}
+		begun = false
+		return out, nil
+	}
 	if _, err := s.conn.ExecContext(ctx, "UPDATE scrub_job SET state='pending',attempts=attempts+1 WHERE control=?", controlID); err != nil {
 		return out, failure("storage_error")
 	}

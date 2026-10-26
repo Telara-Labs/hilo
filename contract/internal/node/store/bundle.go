@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS restore_fence(singleton INTEGER PRIMARY KEY CHECK(sin
 CREATE TABLE IF NOT EXISTS imported_exposure(id TEXT PRIMARY KEY, fact BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS bundle_export(id TEXT PRIMARY KEY, staging TEXT NOT NULL, digest TEXT NOT NULL, cancelled INTEGER NOT NULL DEFAULT 0 CHECK(cancelled IN(0,1)));
 CREATE TABLE IF NOT EXISTS bundle_export_item(export TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(export,id));
+CREATE TABLE IF NOT EXISTS bundle_export_variant(export TEXT NOT NULL, source TEXT NOT NULL, id TEXT NOT NULL, header BLOB NOT NULL, body BLOB NOT NULL, sigs BLOB NOT NULL, PRIMARY KEY(export,source));
 CREATE TABLE IF NOT EXISTS bundle_receipt(id TEXT PRIMARY KEY, receipt BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS bundle_receipt_issuer(tenant TEXT NOT NULL, key_id TEXT NOT NULL, pub BLOB NOT NULL, PRIMARY KEY(tenant,key_id));
 `
@@ -107,6 +108,9 @@ func (d *databaseState) bundleAuthorization(r *record.Record) transport.BundleAu
 	a.Applicable = t.effects.DataPush && policy.AppliesTo(b, t.user)
 	if meta, ok := r.Body.(*record.SessionMetaBody); ok && meta.Repo != nil {
 		a.Repo = meta.Repo.Remote
+	}
+	if r.Header.Type == record.KindTask {
+		a.Repo = d.verifiedRepositoryRemote(r.Header.Subj.RepoID)
 	}
 	if overlay, err := localpolicy.TenantOverlay(b); err == nil && r.Body != nil {
 		a.ShapesSatisfied = bodyPolicyAllowed(r.Body, overlay)
@@ -292,10 +296,20 @@ const (
 
 // bundleSelection is the evaluated content of a selection: the signed
 // selection and, for the erasure lifecycle, the identity of every item and
-// every data or variant source id it carries.
+// every data or variant source id it carries. A variant's identity is its
+// source id together with its salt-free content identity, so a variant built
+// under different redaction, authority or key is a different selection.
 type bundleSelection struct {
-	items   []string
-	sources []string
+	items    []string
+	sources  []string
+	variants []bundleVariantItem
+}
+
+// bundleVariantItem is one governed metadata variant a selection carries,
+// with the source it was built from.
+type bundleVariantItem struct {
+	source string
+	rec    SignedRecord
 }
 
 func (b bundleSelection) digest() string {
@@ -398,8 +412,13 @@ func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[stri
 			if v == nil {
 				break
 			}
-			meta.items = append(meta.items, "v:"+id)
+			identity, ok := variantIdentity(*v)
+			if !ok {
+				return BundleSelection{}, meta, failure("invalid_record")
+			}
+			meta.items = append(meta.items, "v:"+id+":"+identity)
 			meta.sources = append(meta.sources, id)
+			meta.variants = append(meta.variants, bundleVariantItem{source: id, rec: *v})
 			if variants == variantSign {
 				out.Data = append(out.Data, *v)
 			}
@@ -547,8 +566,20 @@ func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (BundleImport
 		return report, failure("storage_error")
 	}
 	hosted := statErr == nil
-	verified := in.ReceiptIssuer.verify(in.Receipts)
 	err := s.write(ctx, func() error {
+		// Verify carried receipts under current receiver authority inside the
+		// writer. A concurrent service rotation cannot race this decision.
+		issuer := in.ReceiptIssuer
+		if issuer != nil && issuer.valid() {
+			current := *issuer
+			if kr, err := s.serviceKeyring(ctx, issuer.Tenant); err == nil {
+				current.state = kr.State()
+			} else if Code(err) != "service_pins_required" {
+				return err
+			}
+			issuer = &current
+		}
+		verified := issuer.verify(in.Receipts)
 		s.bundleImport = true
 		s.controlConfirm = map[string]bool{}
 		for _, id := range in.ConfirmedControls {
@@ -617,21 +648,41 @@ func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (BundleImport
 			}
 			report.Controls++
 		}
-		eligible, excluded, err := s.importEligibility(ctx, in, verified)
-		if err != nil {
-			return err
-		}
-		report.Excluded = excluded
-		for _, item := range eligible {
-			if rc, ok := verified[item.AdvisoryID]; ok {
-				if err := s.persistReceipt(ctx, rc); err != nil {
-					return err
-				}
-			}
-			if err := admit(item, bundleDataKind); err != nil {
+		// Admit signed session repository evidence before task metadata, even
+		// when a bundle lists the task first. Both passes evaluate the complete
+		// carried lineage set; roots never disappear because of line order.
+		tasks := map[string]bool{}
+		for _, item := range in.Data {
+			r, _, err := parseBundleItem(item)
+			if err != nil {
 				return err
 			}
-			report.Data++
+			tasks[item.AdvisoryID] = r.Header.Type == record.KindTask
+		}
+		for phase := 0; phase < 2; phase++ {
+			eligible, excluded, err := s.importEligibility(ctx, in, verified)
+			if err != nil {
+				return err
+			}
+			for _, ex := range excluded {
+				if tasks[ex.ID] == (phase == 1) {
+					report.Excluded = append(report.Excluded, ex)
+				}
+			}
+			for _, item := range eligible {
+				if tasks[item.AdvisoryID] != (phase == 1) {
+					continue
+				}
+				if rc, ok := verified[item.AdvisoryID]; ok {
+					if err := s.persistReceipt(ctx, rc); err != nil {
+						return err
+					}
+				}
+				if err := admit(item, bundleDataKind); err != nil {
+					return err
+				}
+				report.Data++
+			}
 		}
 		if hosted && report.Data > 0 {
 			// A hosted-enrolled node must complete PULL(control)+ENFORCE before
@@ -709,10 +760,10 @@ func (s *Store) importEligibility(ctx context.Context, in BundleImport, verified
 			reason = ExcludedReceiptPending
 		case !c.CompleteSigned:
 			reason = ExcludedUnavailable
-		case !transport.BundlePolicyAllowed(r, c.Authorization) || d.tenant.validateBody(r) != nil:
-			// Admission seals governed data to the current head; a record
-			// that admission would refuse is a policy exclusion, not a
-			// refusal of the whole bundle.
+		case !transport.BundlePolicyAllowed(r, c.Authorization) || d.validateAdmittedBody(r) != nil:
+			// The same current authority and provenance checks apply during
+			// admission. A denied item is a policy exclusion, not a refusal
+			// of the whole bundle.
 			reason = ExcludedPolicy
 		case !transport.BundleEligible(r.ID, candidates):
 			reason = ExcludedLineageIncomplete

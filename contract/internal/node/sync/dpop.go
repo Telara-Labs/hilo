@@ -158,3 +158,10 @@ func decode64(s string, limit int) ([]byte, error) {
 	}
 	return raw, nil
 }
+
+// EnrollmentProof binds a human-authorized enrollment POST to the same native
+// device DPoP signer later used for memory sessions. The caller fixes its TLS
+// origin and refuses redirects before any token is sent.
+func EnrollmentProof(ctx context.Context, key DPoPSigner, target, token string, iat int64) (string, error) {
+	return proof(ctx, key, "POST", target, token, iat)
+}

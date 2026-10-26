@@ -48,6 +48,10 @@ type loginTenant struct {
 	root                 *sig.KeyOp
 	auth                 *ecdsa.PrivateKey
 	service              ed25519.PublicKey
+	// serviceOp is the signed tenant_key of service the authenticated login
+	// response returns; serviceReply, when set, replaces it.
+	serviceOp    record.Envelope
+	serviceReply []record.Envelope
 }
 
 func newLoginTenant(t *testing.T, seed byte, tenant, user string) *loginTenant {
@@ -59,8 +63,12 @@ func newLoginTenant(t *testing.T, seed byte, tenant, user string) *loginTenant {
 		t.Fatal(err)
 	}
 	auth, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	service, _, _ := ed25519.GenerateKey(rand.Reader)
-	l := &loginTenant{t: t, tenant: tenant, user: user, key: key, root: root, auth: auth, service: service}
+	service, servicePriv, _ := ed25519.GenerateKey(rand.Reader)
+	op, err := sig.BuildKeyOp(record.KeyOpBody{Op: record.OpTenantKey, Subject: sig.KeyRefOf(service, record.RoleService, ""), Genesis: tenant}, service, "", time.Now().UnixMilli(), servicePriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &loginTenant{t: t, tenant: tenant, user: user, key: key, root: root, auth: auth, service: service, serviceOp: nodesync.Envelope(op.Rec.HeaderJCS, op.Rec.BodyJCS, op.Sigs, op.Rec.ID)}
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(l.serve))
 	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 	srv.StartTLS()
@@ -127,8 +135,12 @@ func (l *loginTenant) serve(w http.ResponseWriter, r *http.Request) {
 			fail()
 			return
 		}
+		keys := l.serviceReply
+		if keys == nil {
+			keys = []record.Envelope{l.serviceOp}
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(nodesync.LoginReply{Origin: l.origin, Tenant: l.tenant, User: l.user, Config: "config-" + l.tenant, DeviceID: c.Grant.DeviceID, PolicyRoot: nodesync.Envelope(l.root.Rec.HeaderJCS, l.root.Rec.BodyJCS, l.root.Sigs, l.root.Rec.ID)})
+		_ = json.NewEncoder(w).Encode(nodesync.LoginReply{Origin: l.origin, Tenant: l.tenant, User: l.user, Config: "config-" + l.tenant, DeviceID: c.Grant.DeviceID, PolicyRoot: nodesync.Envelope(l.root.Rec.HeaderJCS, l.root.Rec.BodyJCS, l.root.Sigs, l.root.Rec.ID), ServiceKeys: keys})
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
@@ -600,4 +612,79 @@ func TestInstalledLogoutThenLoginToDifferentTenant(t *testing.T) {
 	mustCLI("", "logout")
 	tombSurvives("after final logout")
 	retainedA("after final logout", 0, 2, p2.ID)
+}
+
+// TestReceiptIssuerRequiresServiceKeysPinnedByTLSLogin: receipt authority is a
+// service key the origin's authenticated TLS login response returned. An
+// enrollment document is terminal input, so `sync enroll` records its service
+// keys without pin provenance and gives no receipt authority. A login document
+// that names an attacker's service key is refused even though its policy root
+// is the legitimate one, and nothing is pinned. Only the legitimate login pins
+// the key the response returned.
+func TestReceiptIssuerRequiresServiceKeysPinnedByTLSLogin(t *testing.T) {
+	useBundleVaults(t)
+	old := syncVault
+	syncVault = func(dir string) syncnode.SecretVault {
+		bundleVaults.Lock()
+		defer bundleVaults.Unlock()
+		return bundleVaults.m[dir]
+	}
+	t.Cleanup(func() { syncVault = old })
+	d := newGenesisDevice(t)
+	d.start()
+	cli := func(stdin string, args ...string) error {
+		var out bytes.Buffer
+		return run(context.Background(), append(args, "--data-dir", d.paths.Data), strings.NewReader(stdin), &out)
+	}
+	tenant := newLoginTenant(t, 84, "tenant-service-pin", "service-user")
+	_, policyEnv := tenant.policy(1, "servicepinrulecanary")
+	if err := cli("", "login", "--key"); err != nil {
+		t.Fatal(publicCode(err))
+	}
+
+	// An attacker-chosen service key in otherwise valid terminal input.
+	attacker, _, _ := ed25519.GenerateKey(rand.Reader)
+	var doc syncnode.LoginDocument
+	if err := json.Unmarshal([]byte(tenant.document(d, policyEnv, "telara_mcp_service_pin")), &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc.ServiceKeys = []syncnode.ServiceKey{{KeyID: sig.KeyID(attacker), Public: base64.RawURLEncoding.EncodeToString(attacker)}}
+	enrollOnly, _ := json.Marshal(doc.Enrollment)
+	if err := cli(string(enrollOnly), "sync", "enroll"); err != nil {
+		t.Fatal("sync enroll", publicCode(err))
+	}
+	if p, err := syncnode.LoadProfile(d.paths.Data); err != nil || !p.Enrolled() || p.ServiceKeysPinned() {
+		t.Fatalf("enroll-only profile: pinned=%v err=%v", p.ServiceKeysPinned(), err)
+	}
+	if issuer := receiptIssuer(d.paths.Data); issuer != nil {
+		t.Fatal("an enrollment document established receipt authority")
+	}
+	forged, _ := json.Marshal(doc)
+	if err := cli(string(forged), "login"); publicCode(err) != "login_root_unverified" {
+		t.Fatal("login naming an attacker service key", publicCode(err))
+	}
+	if issuer := receiptIssuer(d.paths.Data); issuer != nil {
+		t.Fatal("a refused login left receipt authority")
+	}
+	// A response returning a key the tenant did not sign is refused too.
+	stranger, strangerPriv, _ := ed25519.GenerateKey(rand.Reader)
+	op, err := sig.BuildKeyOp(record.KeyOpBody{Op: record.OpTenantKey, Subject: sig.KeyRefOf(stranger, record.RoleService, ""), Genesis: "another-tenant"}, stranger, "", time.Now().UnixMilli(), strangerPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant.serviceReply = []record.Envelope{nodesync.Envelope(op.Rec.HeaderJCS, op.Rec.BodyJCS, op.Sigs, op.Rec.ID)}
+	if err := cli(tenant.document(d, policyEnv, "telara_mcp_service_pin"), "login"); publicCode(err) != "login_root_unverified" {
+		t.Fatal("login response with another tenant's service key", publicCode(err))
+	}
+	if issuer := receiptIssuer(d.paths.Data); issuer != nil {
+		t.Fatal("a refused login response left receipt authority")
+	}
+	tenant.serviceReply = nil
+	if err := cli(tenant.document(d, policyEnv, "telara_mcp_service_pin"), "login"); err != nil {
+		t.Fatal("legitimate login", publicCode(err))
+	}
+	issuer := receiptIssuer(d.paths.Data)
+	if issuer == nil || issuer.Tenant != tenant.tenant || len(issuer.Keys) != 1 || !bytes.Equal(issuer.Keys[sig.KeyID(tenant.service)], tenant.service) || issuer.Keys[sig.KeyID(attacker)] != nil {
+		t.Fatal("receipt authority is not the TLS-pinned service key")
+	}
 }

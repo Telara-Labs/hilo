@@ -121,15 +121,7 @@ func writePrivateRecord(dir, name string, b []byte, replace bool) error {
 	if err = privateFile(temp); err != nil {
 		return err
 	}
-	if err = os.Rename(temp, path); err != nil {
-		return failure("storage_error")
-	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return failure("storage_error")
-	}
-	defer d.Close()
-	if d.Sync() != nil {
+	if err = publishPrivateRecord(temp, path, replace); err != nil {
 		return failure("storage_error")
 	}
 	return nil

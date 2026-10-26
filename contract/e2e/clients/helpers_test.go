@@ -5,6 +5,8 @@ package clients_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -113,6 +115,9 @@ func TestHarnessEnvironmentAndArguments(t *testing.T) {
 			}
 			if seen["HOME"] != root || !under(root, seen[s.configVariable]) || !under(root, seen["TMPDIR"]) {
 				t.Fatal("child escaped isolated homes")
+			}
+			if (s.name == "cursor" && seen["AGENT_CLI_CREDENTIAL_STORE"] != "file") || (s.name != "cursor" && seen["AGENT_CLI_CREDENTIAL_STORE"] != "") {
+				t.Fatal("credential-store override escaped Cursor test scope")
 			}
 			for _, key := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "CURSOR_API_KEY", "CLAUDECODE", "NODE_OPTIONS", "BASH_ENV"} {
 				if _, ok := seen[key]; ok {
@@ -358,5 +363,30 @@ func TestHarnessSlowChild(t *testing.T) {
 	// Executed only when explicitly selected by the parent timeout regression.
 	if len(os.Args) == 2 && os.Args[1] == "-test.run=^TestHarnessSlowChild$" {
 		time.Sleep(5 * time.Second)
+	}
+}
+
+func TestHarnessPrecompiledNativeHelper(t *testing.T) {
+	root := canonicalTemp(t)
+	source := filepath.Join(root, "ci-helper")
+	payload := []byte("synthetic helper bytes")
+	if err := privateWrite(source, payload); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(payload)
+	digest := hex.EncodeToString(sum[:])
+	dest := filepath.Join(root, "copied-helper")
+	if err := copyNativeHelper(source, digest, dest); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatal("native utility copy mismatch")
+	}
+	if err := copyNativeHelper(source, strings.Repeat("0", 64), filepath.Join(root, "bad")); err == nil {
+		t.Fatal("untrusted utility accepted")
+	}
+	if err := copyNativeHelper(source, "", filepath.Join(root, "missing")); err == nil {
+		t.Fatal("missing utility digest accepted")
 	}
 }

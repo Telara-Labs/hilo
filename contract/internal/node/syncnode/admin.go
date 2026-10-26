@@ -47,6 +47,16 @@ func ParseEnrollment(r io.Reader) (Enrollment, error) {
 // CreateKey provisions this device's DPoP key once and records a disabled,
 // unenrolled profile. It returns the jkt the hosted enrollment must bind.
 func CreateKey(ctx context.Context, dir string, vault SecretVault) (string, error) {
+	var jkt string
+	err := withProfileLock(ctx, dir, func() error {
+		var err error
+		jkt, err = createKeyLocked(ctx, dir, vault)
+		return err
+	})
+	return jkt, err
+}
+
+func createKeyLocked(ctx context.Context, dir string, vault SecretVault) (string, error) {
 	p, err := LoadProfile(dir)
 	if err == nil {
 		return CredentialThumbprint(ctx, vault, p.Credential)
@@ -73,8 +83,16 @@ func CreateKey(ctx context.Context, dir string, vault SecretVault) (string, erro
 // The grant must name this installation's genesis and device exactly. An
 // enrollment to a different destination, or to a tenant other than the active
 // tenant authority, is refused until an explicit logout.
+//
+// Enrollment is offline terminal input: the service keys it names are kept
+// unpinned and are no receipt authority. Service keys an earlier login pinned
+// for the same destination are kept unchanged.
 func Enroll(ctx context.Context, dir string, vault SecretVault, e Enrollment) error {
 	defer func() { e.RefreshToken = "" }()
+	return withProfileLock(ctx, dir, func() error { return enrollLocked(ctx, dir, vault, e) })
+}
+
+func enrollLocked(ctx context.Context, dir string, vault SecretVault, e Enrollment) error {
 	p, err := LoadProfile(dir)
 	if Disabled(err) {
 		return ErrNotEnrolled
@@ -95,6 +113,10 @@ func Enroll(ctx context.Context, dir string, vault SecretVault, e Enrollment) er
 	if err != nil {
 		return err
 	}
+	if p.ServiceKeysPinned() && sameScope(p, e) {
+		next.ServiceKeys = append([]ServiceKey(nil), p.ServiceKeys...)
+		next.ServiceKeyPins = p.ServiceKeyPins
+	}
 	// A failed deletion of the replaced refresh slot stays recorded and is
 	// reported by Status until a later attempt establishes it.
 	_, err = commitProfile(ctx, dir, vault, p, next, e.RefreshToken)
@@ -104,6 +126,10 @@ func Enroll(ctx context.Context, dir string, vault SecretVault, e Enrollment) er
 // SetEnabled switches sync on or off without touching credentials or state.
 // A running daemon observes the change at its next round.
 func SetEnabled(dir string, enabled bool) error {
+	return withProfileLock(context.Background(), dir, func() error { return setEnabledLocked(dir, enabled) })
+}
+
+func setEnabledLocked(dir string, enabled bool) error {
 	p, err := LoadProfile(dir)
 	if Disabled(err) {
 		if enabled {
