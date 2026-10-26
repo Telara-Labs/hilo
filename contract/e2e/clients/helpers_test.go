@@ -114,6 +114,9 @@ func TestHarnessEnvironmentAndArguments(t *testing.T) {
 			if seen["HOME"] != root || !under(root, seen[s.configVariable]) || !under(root, seen["TMPDIR"]) {
 				t.Fatal("child escaped isolated homes")
 			}
+			if (s.name == "cursor" && seen["AGENT_CLI_CREDENTIAL_STORE"] != "file") || (s.name != "cursor" && seen["AGENT_CLI_CREDENTIAL_STORE"] != "") {
+				t.Fatal("credential-store override escaped Cursor test scope")
+			}
 			for _, key := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "CURSOR_API_KEY", "CLAUDECODE", "NODE_OPTIONS", "BASH_ENV"} {
 				if _, ok := seen[key]; ok {
 					t.Fatal("inherited secret or startup override", key)

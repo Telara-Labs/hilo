@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 
@@ -44,7 +43,7 @@ func OpenSidecarDatabase(ctx context.Context, dir string) (*sql.DB, error) {
 	if err = securePathFiles(path); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String())
+	db, err := sql.Open("sqlite", SQLiteURI(path, ""))
 	if err != nil {
 		return nil, failure("storage_error")
 	}

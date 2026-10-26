@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS policy_equivocation(tenant TEXT NOT NULL,seq INTEGER 
 CREATE TABLE IF NOT EXISTS policy_logout(id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS trusted_time(singleton INTEGER PRIMARY KEY CHECK(singleton=1),floor INTEGER NOT NULL,rollback INTEGER NOT NULL DEFAULT 0 CHECK(rollback IN(0,1)));
 INSERT OR IGNORE INTO trusted_time(singleton,floor) VALUES(1,0);
-`
+` + serviceAuthoritySchema
 
 // TenantPolicyContext is installed, authenticated local authority, never MCP,
 // native transcript, bundle metadata or a signed record's assertion of trust.
@@ -494,7 +494,15 @@ func (s *Store) OfferTenantKeyOperation(ctx context.Context, in SignedRecord) er
 	if !ok {
 		return failure("invalid_policy_context")
 	}
-	if b.Op == record.OpTenantKey || b.Subject.Role != record.RolePolicy {
+	// Initial tenant roots only enter through authenticated TLS login. Keep
+	// the public refusal contract identical for both issuer roles.
+	if b.Op == record.OpTenantKey {
+		return failure("invalid_policy_context")
+	}
+	if b.Subject.Role == record.RoleService {
+		return s.offerServiceKeyOperation(ctx, in, r, b)
+	}
+	if b.Subject.Role != record.RolePolicy {
 		return failure("invalid_policy_context")
 	}
 	return s.write(ctx, func() error {
