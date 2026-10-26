@@ -131,6 +131,12 @@ func (b *observedBackend) Handle(ctx context.Context, h ipc.Hello, req daemon.Re
 // All process modes live in the test binary. It is installed and verified by the
 // real installer. This proves package integration, not cmd release packaging.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 3 && os.Args[1] == "export-native-helper-source" {
+		if err := privateWrite(os.Args[2], []byte(keychainSource)); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if vault.RunHelper(os.Args[1:], os.Stdin, os.Stdout) {
 		os.Exit(0)
 	}
@@ -452,7 +458,11 @@ func (i *installation) setup(ctx context.Context) error {
 	if err = privateWrite(src, []byte(keychainSource)); err != nil {
 		return err
 	}
-	if _, err = run(ctx, cfg.Home, env, nil, "/usr/bin/clang", "-Wno-deprecated-declarations", src, "-framework", "Security", "-framework", "CoreFoundation", "-o", i.keychainTool); err != nil {
+	if *prebuiltNativeHelper != "" || *prebuiltNativeHelperSHA != "" {
+		if err = copyNativeHelper(*prebuiltNativeHelper, *prebuiltNativeHelperSHA, i.keychainTool); err != nil {
+			return err
+		}
+	} else if _, err = run(ctx, cfg.Home, env, nil, "/usr/bin/clang", "-Wno-deprecated-declarations", src, "-framework", "Security", "-framework", "CoreFoundation", "-o", i.keychainTool); err != nil {
 		return err
 	}
 	var password [32]byte
@@ -596,4 +606,29 @@ func (i *installation) cleanup() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// Both flags are explicit operator inputs from one authenticated CI artifact.
+// A missing or mismatched digest refuses the run, without a compile fallback.
+func copyNativeHelper(source, digest, dest string) error {
+	if !filepath.IsAbs(source) || filepath.Clean(source) != source || len(digest) != 64 {
+		return errors.New("invalid precompiled native utility")
+	}
+	resolved, err := filepath.EvalSymlinks(source)
+	if err != nil || resolved != source {
+		return errors.New("invalid precompiled native utility")
+	}
+	raw, err := privateRead(source, 4<<20)
+	defer clear(raw)
+	if err != nil {
+		return errors.New("invalid precompiled native utility")
+	}
+	sum := sha256.Sum256(raw)
+	if hex.EncodeToString(sum[:]) != digest {
+		return errors.New("native utility digest mismatch")
+	}
+	if err = privateWrite(dest, raw); err != nil {
+		return err
+	}
+	return os.Chmod(dest, 0700)
 }

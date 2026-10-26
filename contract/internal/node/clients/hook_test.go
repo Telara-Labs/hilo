@@ -57,7 +57,10 @@ func TestHooksEveryClientEventIdentityOnlyDaemonDown(t *testing.T) {
 					p["workspace_roots"] = []string{o.Home}
 					p["status"] = "completed"
 				}
-				res := RunHook(context.Background(), o, bytes.NewReader(encoded(p)))
+				// Identity and durable spool content use the real synchronous core.
+				// Separate bounded-worker tests retain the 150ms production deadline;
+				// host filesystem latency may legitimately return PublicationUnknown.
+				res := runHook(context.Background(), o, bytes.NewReader(encoded(p)), writeSpool)
 				if !res.Published {
 					t.Fatal(res)
 				}

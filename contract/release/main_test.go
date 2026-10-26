@@ -78,7 +78,7 @@ func TestRejectReplacementAndExistingOutput(t *testing.T) {
 }
 
 func TestExtractRejectsArchiveAttacks(t *testing.T) {
-	for _, h := range []tar.Header{{Name: "../escape", Typeflag: tar.TypeReg}, {Name: "/absolute", Typeflag: tar.TypeReg}, {Name: "link", Typeflag: tar.TypeSymlink, Linkname: "/tmp"}, {Name: "hard", Typeflag: tar.TypeLink, Linkname: "other"}, {Name: "pipe", Typeflag: tar.TypeFifo}} {
+	for _, h := range []tar.Header{{Name: "../escape", Typeflag: tar.TypeReg}, {Name: "/absolute", Typeflag: tar.TypeReg}, {Name: "C:/absolute", Typeflag: tar.TypeReg}, {Name: "C:relative", Typeflag: tar.TypeReg}, {Name: `\absolute`, Typeflag: tar.TypeReg}, {Name: `\\server\share`, Typeflag: tar.TypeReg}, {Name: "link", Typeflag: tar.TypeSymlink, Linkname: "/tmp"}, {Name: "hard", Typeflag: tar.TypeLink, Linkname: "other"}, {Name: "pipe", Typeflag: tar.TypeFifo}} {
 		var b bytes.Buffer
 		w := tar.NewWriter(&b)
 		if e := w.WriteHeader(&h); e != nil {

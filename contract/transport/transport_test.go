@@ -6,6 +6,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/jcs"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -93,8 +94,10 @@ func TestBundleCuts(t *testing.T) {
 
 }
 func TestHookIdentityOnly(t *testing.T) {
-	h := HookSignal{V: 3, At: 1, Client: "c", Event: "Stop", HookPID: 1, TranscriptPath: "/root/transcripts/a"}
-	rules := HookRules{Client: "c", TranscriptRoot: "/root/transcripts", ValidateTranscriptPath: func(s string) bool { return s == "/root/transcripts/a" }, Events: map[string]bool{"Stop": true}}
+	root := filepath.Join(t.TempDir(), "transcripts")
+	transcript := filepath.Join(root, "a")
+	h := HookSignal{V: 3, At: 1, Client: "c", Event: "Stop", HookPID: 1, TranscriptPath: transcript}
+	rules := HookRules{Client: "c", TranscriptRoot: root, ValidateTranscriptPath: func(s string) bool { return s == transcript }, Events: map[string]bool{"Stop": true}}
 	raw, _ := json.Marshal(h)
 	if _, err := ParseHook(raw, rules); err != nil {
 		t.Fatal(err)
@@ -107,7 +110,7 @@ func TestHookIdentityOnly(t *testing.T) {
 		t.Fatal("body-bearing signal accepted")
 	}
 	delete(object, "final_text")
-	object["transcript_path"] = "/root/other/a"
+	object["transcript_path"] = filepath.Join(filepath.Dir(root), "other", "a")
 	raw, _ = json.Marshal(object)
 	if _, err := ParseHook(raw, rules); err == nil {
 		t.Fatal("escaped client root")

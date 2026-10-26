@@ -21,12 +21,17 @@ const loginTimeout = 2 * time.Minute
 // system pool; only in-process tests that serve a private origin replace it.
 var loginTLSRoots *x509.CertPool
 
-// loginError reports store refusals verbatim; fixed sync codes are mapped by
-// publicCode.
+// loginError reports store refusals verbatim, and the login's own fixed
+// refusals by their codes; other fixed sync codes are mapped by publicCode.
 func loginError(err error) error {
 	var s *store.Error
 	if errors.As(err, &s) {
 		return publicError(s.Code)
+	}
+	for _, code := range []error{syncnode.ErrLoginUnverified, syncnode.ErrProfileChanged, syncnode.ErrProfileBusy} {
+		if errors.Is(err, code) {
+			return publicError(code.Error())
+		}
 	}
 	return err
 }
@@ -42,8 +47,9 @@ func runLogin(ctx context.Context, args []string, in io.Reader, out io.Writer) e
 	fs.SetOutput(io.Discard)
 	data := fs.String("data-dir", "", "Owner-only data directory")
 	installDir := fs.String("install-dir", "", "Owner-only installation directory")
+	hosted := fs.Bool("hosted", false, "Enroll over TLS using explicit human consent from stdin")
 	key := fs.Bool("key", false, "Provision the device key and print its thumbprint")
-	if fs.Parse(args) != nil || fs.NArg() != 0 {
+	if fs.Parse(args) != nil || fs.NArg() != 0 || *hosted && *key {
 		return errors.New("invalid_arguments")
 	}
 	ctx, cancel := context.WithTimeout(ctx, loginTimeout)
@@ -58,6 +64,17 @@ func runLogin(ctx context.Context, args []string, in io.Reader, out io.Writer) e
 			return err
 		}
 		return ipc.WriteFrame(out, map[string]string{"jkt": jkt})
+	}
+	if *hosted {
+		input, err := syncnode.ParseHostedEnrollment(in)
+		if err != nil {
+			return loginError(err)
+		}
+		report, err := syncnode.EnrollHosted(ctx, dir, syncVault(dir), loginTLSRoots, input)
+		if err != nil {
+			return loginError(err)
+		}
+		return ipc.WriteFrame(out, report)
 	}
 	doc, err := syncnode.ParseLogin(in)
 	if err != nil {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 
@@ -44,7 +43,7 @@ func OpenSidecarDatabase(ctx context.Context, dir string) (*sql.DB, error) {
 	if err = securePathFiles(path); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String())
+	db, err := sql.Open("sqlite", SQLiteURI(path, ""))
 	if err != nil {
 		return nil, failure("storage_error")
 	}
@@ -133,15 +132,7 @@ func WriteSyncProfile(dir string, b []byte) error {
 	if err = privateFile(name); err != nil {
 		return err
 	}
-	if err = os.Rename(name, filepath.Join(dir, SyncProfileName)); err != nil {
-		return failure("storage_error")
-	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return failure("storage_error")
-	}
-	defer d.Close()
-	if d.Sync() != nil {
+	if err = publishPrivateRecord(name, filepath.Join(dir, SyncProfileName), true); err != nil {
 		return failure("storage_error")
 	}
 	return nil

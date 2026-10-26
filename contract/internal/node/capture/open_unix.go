@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 	"golang.org/x/sys/unix"
 )
 
@@ -19,6 +20,7 @@ type openedUnitHandle struct {
 	initialChange int64
 	directories   []int
 	bindings      []directoryBinding
+	contained     bool
 }
 
 func changeTime(st *unix.Stat_t) int64 { return st.Ctim.Sec*1e9 + st.Ctim.Nsec }
@@ -36,9 +38,46 @@ type directoryBinding struct {
 	name           string
 	initial        unix.Stat_t
 	requirePrivate bool
+	requireOwned   bool
+	fd             int
 }
 
 func openUnit(root, relative string) (*openedUnitHandle, error) {
+	return openUnitPolicy(root, relative, "")
+}
+
+// Only trusted installed adapter configuration supplies home/root. A private
+// configured client directory protects normal native 0755/0644 descendants.
+func openNativeUnit(home, root, relative string) (*openedUnitHandle, error) {
+	anchor := filepath.Dir(root)
+	rel, err := filepath.Rel(home, anchor)
+	if root == home || err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return openUnit(root, relative)
+	}
+	return openUnitPolicy(root, relative, anchor)
+}
+func ownedReadOnly(st *unix.Stat_t, dir bool) bool {
+	want := uint32(unix.S_IFREG)
+	if dir {
+		want = unix.S_IFDIR
+	}
+	return uint32(st.Mode)&unix.S_IFMT == want && st.Uid == uint32(os.Getuid()) && st.Mode&0022 == 0
+}
+func safeSourceAncestor(st *unix.Stat_t) bool {
+	return (st.Uid == 0 || st.Uid == uint32(os.Getuid())) && (st.Mode&0022 == 0 || st.Mode&unix.S_ISVTX != 0)
+}
+func sourceMode(st *unix.Stat_t, contained bool) bool {
+	if st.Nlink != 1 {
+		return false
+	}
+	if contained {
+		return ownedReadOnly(st, false)
+	}
+	return private(st, false)
+}
+func openUnitPolicy(root, relative, anchor string) (*openedUnitHandle, error) {
+	contained := anchor != ""
+	anchorParts := len(strings.Split(strings.TrimPrefix(anchor, "/"), "/"))
 	parts := strings.Split(strings.TrimPrefix(root, "/"), "/")
 	children := strings.Split(relative, string(filepath.Separator))
 	if len(parts)+len(children) > 128 {
@@ -63,7 +102,7 @@ func openUnit(root, relative string) (*openedUnitHandle, error) {
 			}
 		}
 	}()
-	openDir := func(part string, requirePrivate bool) error {
+	openDir := func(part string, requirePrivate, requireOwned bool) error {
 		next, e := unix.Openat(d, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 		if e != nil {
 			if e == unix.ENOENT {
@@ -72,22 +111,28 @@ func openUnit(root, relative string) (*openedUnitHandle, error) {
 			return hold("unsafe_path")
 		}
 		var st unix.Stat_t
-		if unix.Fstat(next, &st) != nil || uint32(st.Mode)&unix.S_IFMT != unix.S_IFDIR || (requirePrivate && !private(&st, true)) {
+		if unix.Fstat(next, &st) != nil || uint32(st.Mode)&unix.S_IFMT != unix.S_IFDIR || (requirePrivate && !private(&st, true)) || (requireOwned && !ownedReadOnly(&st, true)) || (contained && !requireOwned && !safeSourceAncestor(&st)) || ipc.ValidateDescriptorACL(next, requirePrivate) != nil {
 			_ = unix.Close(next)
 			return hold("unsafe_permissions")
 		}
-		bindings = append(bindings, directoryBinding{parent: d, name: part, initial: st, requirePrivate: requirePrivate})
+		bindings = append(bindings, directoryBinding{parent: d, name: part, initial: st, requirePrivate: requirePrivate, requireOwned: requireOwned, fd: next})
 		dirs = append(dirs, next)
 		d = next
 		return nil
 	}
 	for i, part := range parts {
-		if err := openDir(part, i == len(parts)-1); err != nil {
+		requirePrivate := i == len(parts)-1
+		requireOwned := requirePrivate
+		if contained {
+			requirePrivate = i == anchorParts-1
+			requireOwned = i >= anchorParts-1
+		}
+		if err := openDir(part, requirePrivate, requireOwned); err != nil {
 			return nil, err
 		}
 	}
 	for _, part := range children[:len(children)-1] {
-		if err := openDir(part, true); err != nil {
+		if err := openDir(part, !contained, true); err != nil {
 			return nil, err
 		}
 	}
@@ -105,7 +150,7 @@ func openUnit(root, relative string) (*openedUnitHandle, error) {
 		return nil, hold("unsafe_file")
 	}
 	var st unix.Stat_t
-	if unix.Fstat(fd, &st) != nil || !private(&st, false) {
+	if unix.Fstat(fd, &st) != nil || !sourceMode(&st, contained) || ipc.ValidateDescriptorACL(fd, !contained) != nil {
 		_ = file.Close()
 		return nil, hold("unsafe_permissions")
 	}
@@ -114,7 +159,7 @@ func openUnit(root, relative string) (*openedUnitHandle, error) {
 		_ = file.Close()
 		return nil, hold("unit_limit")
 	}
-	h := &openedUnitHandle{file: file, parent: d, name: name, initial: info, initialChange: changeTime(&st), directories: dirs, bindings: bindings}
+	h := &openedUnitHandle{file: file, parent: d, name: name, initial: info, initialChange: changeTime(&st), directories: dirs, bindings: bindings, contained: contained}
 	transferred = true
 	return h, nil
 }
@@ -147,7 +192,7 @@ func (h *openedUnitHandle) bound() bool {
 		if current.Dev != old.Dev || current.Ino != old.Ino || current.Mode != old.Mode || current.Uid != old.Uid || current.Gid != old.Gid || uint32(current.Mode)&unix.S_IFMT != unix.S_IFDIR {
 			return false
 		}
-		if binding.requirePrivate && !private(&current, true) {
+		if binding.requirePrivate && !private(&current, true) || binding.requireOwned && !ownedReadOnly(&current, true) || ipc.ValidateDescriptorACL(binding.fd, binding.requirePrivate) != nil {
 			return false
 		}
 	}
@@ -157,10 +202,10 @@ func (h *openedUnitHandle) bound() bool {
 		return false
 	}
 	var fd, path unix.Stat_t
-	if unix.Fstat(int(h.file.Fd()), &fd) != nil || !private(&fd, false) || unix.Fstatat(h.parent, h.name, &path, unix.AT_SYMLINK_NOFOLLOW) != nil {
+	if unix.Fstat(int(h.file.Fd()), &fd) != nil || !sourceMode(&fd, h.contained) || ipc.ValidateDescriptorACL(int(h.file.Fd()), !h.contained) != nil || unix.Fstatat(h.parent, h.name, &path, unix.AT_SYMLINK_NOFOLLOW) != nil {
 		return false
 	}
-	return private(&path, false) && path.Dev == fd.Dev && path.Ino == fd.Ino && path.Nlink == fd.Nlink && path.Mode == fd.Mode && path.Uid == fd.Uid && path.Gid == fd.Gid
+	return sourceMode(&path, h.contained) && path.Dev == fd.Dev && path.Ino == fd.Ino && path.Nlink == fd.Nlink && path.Mode == fd.Mode && path.Uid == fd.Uid && path.Gid == fd.Gid
 }
 
 // stable compares size, mtime and ctime after checking the filesystem binding.

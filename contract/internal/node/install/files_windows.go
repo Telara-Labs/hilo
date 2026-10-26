@@ -104,9 +104,16 @@ func openHandle(path string, directory, private, root bool) (windows.Handle, err
 	access := uint32(windows.READ_CONTROL | windows.GENERIC_READ)
 	if directory {
 		flags |= windows.FILE_FLAG_BACKUP_SEMANTICS
-		access = windows.READ_CONTROL | windows.FILE_LIST_DIRECTORY
+		access = windows.READ_CONTROL | windows.FILE_LIST_DIRECTORY | windows.FILE_READ_ATTRIBUTES
 	}
-	h, e := windows.CreateFile(u, access, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, flags, 0)
+	// Directory handles pin ancestry against deletion/replacement while allowing
+	// file creation and rename beneath them. Executable handles additionally
+	// refuse write sharing, so their verified bytes cannot change at launch.
+	share := uint32(windows.FILE_SHARE_READ)
+	if directory {
+		share |= windows.FILE_SHARE_WRITE
+	}
+	h, e := windows.CreateFile(u, access, share, nil, windows.OPEN_EXISTING, flags, 0)
 	if e != nil {
 		return 0, e
 	}
