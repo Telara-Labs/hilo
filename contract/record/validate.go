@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/jcs"
 )
 
 var (

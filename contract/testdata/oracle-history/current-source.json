@@ -4,16 +4,16 @@
   "Sources": {
     "jcs/jcs_test.go": "184f33bf121290efd6c4e3c51a8b1546f5f32ab09edebb956ddbd6eb4aa59d9e",
     "record/event_test.go": "c8b51c86ac67a707333059666c80b29ac7e1baa15f9c569d2f5bb4dbd2886b76",
-    "record/real_redactor_test.go": "358d0aa1967ea2ce031b64bd10f57d69d4d8c5c18b21c7852755271f421d2df9",
-    "record/record_test.go": "ffea034fade63235638bc77255ee83f01d6900d28d04e7d12dd1a3240242e0b6",
+    "record/real_redactor_test.go": "6190daede23646f7a20974f9518db0216a168311eca19c54e8e153af3e1520a6",
+    "record/record_test.go": "ff2ee97b590fee31a554d11738b80539befdab23407ea2de740b09601072b0f9",
     "record/ruleset_test.go": "59806957a376c2d406c70ad281d7ac696fbbabf776f79dd78d2e425ca497de6f",
-    "sig/sig_test.go": "c64f39698ea157ac767d52e564f2947d8aa8b6c8a41482cf4d02013ea7fcfe50",
-    "sig/verify_test.go": "2e9dca016fe8f03a971d0c1064f589bcfeb7d081604ee730a19d63a358634f48",
-    "policy/policy_test.go": "d1e8cff0158d52b74d48acfc32a960ea93796dbefe7800f22264b538f33342ff",
-    "invalidate/invalidate_test.go": "f09e7ad772bfc0048bb222fbbe18a46df10acf70feadbdcf6a1bb1ab6c40adee",
-    "conformance_test.go": "3e16e54a36560e204bef29e0253218662ec1cccec87bc4150f9ae4679fc41f91",
-    "cmd/conformance/main.go": "dbd079c4252c6c354ab7d1a7a526c2913a26e3d785b518931ee0009ca40930ed",
-    "cmd/conformance/execution.go": "ab3c812878de6b265e2d084ee1cd6868c9b10f2e55356ce83838165cb4735f3f"
+    "sig/sig_test.go": "f9e277f97aa1d07fc24dc677e42d9f9efe23034a9f47ec4bda16dac2b8d2aa70",
+    "sig/verify_test.go": "f3870122ca007e2da7de51b09fe38f37ca7116e572a56578e9e0cb30ca78c2b9",
+    "policy/policy_test.go": "d1b73193fbc5a5e771a41a423b0e1800d89887cbf2c532a5d96871a9837e75d5",
+    "invalidate/invalidate_test.go": "25717bf62f4372f0393f444c0be232a18721258ffb0d135f93d1ca834bd0f5a1",
+    "conformance_test.go": "1ff4d5a8b71faa704bb0ae6aac917e020b688f6cd62fb1d28bb40573254abf7c",
+    "cmd/conformance/main.go": "7c9086662d18ad5ea36efcdf65d05edf290b46cb2a9f9a740d1b8263f442c29a",
+    "cmd/conformance/execution.go": "ef5ffd35d616721db2ffe77817e50d3ad9a2cd44a31f78ca9adb5ea127998276"
   },
   "canonical_fixtures": {
     "historical-mnc2/v03-records.json": "f7e86a953cc488700da6077930a82c9b579fcb34aff0478c8de2decded5de81e",
@@ -22,7 +22,7 @@
     "historical-mnc2/v05-signature.json": "dcf999a4fbe7b3648abefb40017a6ec81d5116fa9e33d0c28effc89accb55457",
     "historical-mnc2/vectors.json": "14ed14686d4a90b6e6fa2bef6616225803b8c9bbf8f99bdd6cb4d17e0b9bffb3",
     "redact-corpus-v1/README.md": "fbdfad3c7a125b27626e5821260277f7358754a48f9d24dfaf06eac6f3336341",
-    "redact-corpus-v1/actual-engine-golden.json": "ea312ded4de53d96a387a1d1b51f79bc0c050980afa1ee63f0b8d818d87448c2",
+    "redact-corpus-v1/actual-engine-golden.json": "85a00342e2ee3d53b190b4cf70f72e447eaf506b71849d6b3de6c15536b1f1b1",
     "redact-corpus-v1/corpus.json": "544ffaf7e93f8f28305096dae79794568479845dc7e542d74a8b54e014fbb8fc",
     "v01-jcs.json": "b43d78e9d08e17696a558844485ba75345cb6bf84180ae5b192626b12ef80396",
     "v02-identity.json": "94357d935b326c6b0fce9dabb490af76afc5e201ebfe5acebfcff1f69e5a678f",
@@ -60,13 +60,13 @@
     "record/real_redactor_test.go": {
       "original_d67952a_sha256": "e49d3a320e02d47f0a3b9b182cab1e9c3eb6d8fc956bc1757ac8eeda876459ec",
       "historical_provisional_adaptation_sha256": "19bb33539e01bc7796e49c21af16b17b7c69d32b225e6fc919565593162d718c",
-      "current_pure_sha256": "358d0aa1967ea2ce031b64bd10f57d69d4d8c5c18b21c7852755271f421d2df9",
+      "current_pure_sha256": "6190daede23646f7a20974f9518db0216a168311eca19c54e8e153af3e1520a6",
       "note": "Historical source/adaptation declarations retained verbatim; current package/path and approved engine/API adaptations are separately pinned here."
     },
     "record/record_test.go": {
       "original_d67952a_sha256": "77930e6eb042d680de1d4a41b412702ddab23be634fc62f7fc2a0ee08cf278b0",
       "historical_provisional_adaptation_sha256": "ffea034fade63235638bc77255ee83f01d6900d28d04e7d12dd1a3240242e0b6",
-      "current_pure_sha256": "ffea034fade63235638bc77255ee83f01d6900d28d04e7d12dd1a3240242e0b6",
+      "current_pure_sha256": "ff2ee97b590fee31a554d11738b80539befdab23407ea2de740b09601072b0f9",
       "note": "Historical source/adaptation declarations retained verbatim; current package/path and approved engine/API adaptations are separately pinned here."
     },
     "record/ruleset_test.go": {
@@ -78,33 +78,33 @@
     "sig/sig_test.go": {
       "original_d67952a_sha256": "c64f39698ea157ac767d52e564f2947d8aa8b6c8a41482cf4d02013ea7fcfe50",
       "historical_provisional_adaptation_sha256": "c64f39698ea157ac767d52e564f2947d8aa8b6c8a41482cf4d02013ea7fcfe50",
-      "current_pure_sha256": "c64f39698ea157ac767d52e564f2947d8aa8b6c8a41482cf4d02013ea7fcfe50",
+      "current_pure_sha256": "f9e277f97aa1d07fc24dc677e42d9f9efe23034a9f47ec4bda16dac2b8d2aa70",
       "note": "Historical source/adaptation declarations retained verbatim; current package/path and approved engine/API adaptations are separately pinned here."
     },
     "sig/verify_test.go": {
       "original_d67952a_sha256": "c880e60838334e9fa922f8d661acd84ce4ec983b29c3e423a06950b297d33dfa",
       "historical_provisional_adaptation_sha256": "2e9dca016fe8f03a971d0c1064f589bcfeb7d081604ee730a19d63a358634f48",
-      "current_pure_sha256": "2e9dca016fe8f03a971d0c1064f589bcfeb7d081604ee730a19d63a358634f48",
+      "current_pure_sha256": "f3870122ca007e2da7de51b09fe38f37ca7116e572a56578e9e0cb30ca78c2b9",
       "note": "Historical source/adaptation declarations retained verbatim; current package/path and approved engine/API adaptations are separately pinned here."
     },
     "policy/policy_test.go": {
       "original_d67952a_sha256": "0b026cfe182ca1235f267744811bd10b88e1f6c945192c22ab2075ad2fd5b698",
       "historical_provisional_adaptation_sha256": "d1e8cff0158d52b74d48acfc32a960ea93796dbefe7800f22264b538f33342ff",
-      "current_pure_sha256": "d1e8cff0158d52b74d48acfc32a960ea93796dbefe7800f22264b538f33342ff",
+      "current_pure_sha256": "d1b73193fbc5a5e771a41a423b0e1800d89887cbf2c532a5d96871a9837e75d5",
       "note": "Historical source/adaptation declarations retained verbatim; current package/path and approved engine/API adaptations are separately pinned here."
     },
     "invalidate/invalidate_test.go": {
       "original_d67952a_sha256": "9883b026c2cc8507836fb6f3357202720ab5616574b7ac572b827f9642e8d0f2",
       "historical_provisional_adaptation_sha256": "f09e7ad772bfc0048bb222fbbe18a46df10acf70feadbdcf6a1bb1ab6c40adee",
-      "current_pure_sha256": "f09e7ad772bfc0048bb222fbbe18a46df10acf70feadbdcf6a1bb1ab6c40adee",
+      "current_pure_sha256": "25717bf62f4372f0393f444c0be232a18721258ffb0d135f93d1ca834bd0f5a1",
       "note": "Historical source/adaptation declarations retained verbatim; current package/path and approved engine/API adaptations are separately pinned here."
     }
   },
   "canonical_fixture_adaptations": {
     "redact-corpus-v1/actual-engine-golden.json": {
       "historical_copied_node3_sha256": "818dc5632865d663a68ec3d47f1dc30e68e0022df9d136cb1574647208d1e777",
-      "current_pure_sha256": "ea312ded4de53d96a387a1d1b51f79bc0c050980afa1ee63f0b8d818d87448c2",
-      "reason": "Root-approved actualR4 measured a711 engine binding; original historical SOURCE and golden remain immutable."
+      "current_pure_sha256": "85a00342e2ee3d53b190b4cf70f72e447eaf506b71849d6b3de6c15536b1f1b1",
+      "reason": "Current accepted epoch53 measured b606 engine binding; original historical SOURCE and golden remain immutable."
     }
   },
   "original_source_commit": "d67952a3239d88a58f61006eddc4887797ec3185",

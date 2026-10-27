@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // Exhaustion is a refusal, never an empty/partial successful invalidation.

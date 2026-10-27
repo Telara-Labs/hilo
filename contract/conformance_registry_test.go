@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	contractdata "github.com/Telara-Labs/telara-memory/contract"
+	contractdata "github.com/Telara-Labs/hilo/contract"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -22,7 +22,7 @@ import (
 const historyRoot = "testdata/oracle-history/"
 const nodeVectorSetSHA256 = "638d59ed3c90a303a09572a45a5688ae9f183829f4b9616a6801d65dc2ebd893"
 const nodeSourceManifestSHA256 = "5d185d07e55cfe83400177adcef0394621df5fd7aa8d34dfdbd04d844ad9b354"
-const currentSourceManifestSHA256 = "b9dbc14db67d246b9b8fba543dab86d443de5e9025cf1a046114b5a05d6defd3"
+const currentSourceManifestSHA256 = "cf9795fcf5b28987fdc97767fc69f6503c3a3cb461e68c2c0003f383c3f62c51"
 
 type vectorSelector struct {
 	Package string `json:"package"`

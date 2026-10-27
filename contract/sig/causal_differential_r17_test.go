@@ -8,7 +8,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // referenceStateR17 is the pre-round-17 definition: every op is authorized

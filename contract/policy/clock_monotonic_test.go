@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/jcs"
 )
 
 func TestClockAcceptsLargeRuntimeMonotonicOffsets(t *testing.T) {

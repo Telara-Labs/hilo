@@ -9,8 +9,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	contractdata "github.com/Telara-Labs/telara-memory/contract"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	contractdata "github.com/Telara-Labs/hilo/contract"
+	"github.com/Telara-Labs/hilo/contract/record"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +46,7 @@ type result struct {
 	Error           string          `json:"error,omitempty"`
 }
 
-const nodeModule = "github.com/Telara-Labs/telara-memory/contract/internal/node"
+const nodeModule = "github.com/Telara-Labs/hilo/contract/internal/node"
 
 // Exact registry package identities only; no arbitrary path-prefix dispatch.
 var purePackages = map[string]bool{
@@ -54,9 +54,12 @@ var purePackages = map[string]bool{
 	"./invalidate": true, "./policy": true, "./view": true, "./transport": true,
 	"./replay": true, "./conformance": true,
 }
+
+// Registry keys are immutable historical fixture identities. Only the exact
+// dispatch destination follows the Hilo runtime command directory.
 var runtimePackages = map[string]string{
 	"./internal/node/store": "./store", "./internal/node/bundle": "./bundle",
-	"./internal/node/syncnode": "./syncnode", "./cmd/telara-memory": "./cmd/telara-memory",
+	"./internal/node/syncnode": "./syncnode", "./cmd/telara-memory": "./cmd/hilo",
 }
 
 type report struct {

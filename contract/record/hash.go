@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/jcs"
 )
 
 // H returns lowercase hex(sha256(JCS(["mnc1", tag, parts...]))). The JSON

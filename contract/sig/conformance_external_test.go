@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	contractdata "github.com/Telara-Labs/telara-memory/contract"
+	contractdata "github.com/Telara-Labs/hilo/contract"
 	"regexp"
 	"testing"
 )

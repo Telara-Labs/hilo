@@ -3,7 +3,7 @@ package invalidate
 import (
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 func TestV3MissingMembershipSessionBanRecovery(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // KeyStatus is the state of a key in the folded keyring.

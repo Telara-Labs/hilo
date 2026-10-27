@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // randomModelR17 builds DAGs with device and tenant owners, hosted grants,

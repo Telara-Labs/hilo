@@ -2,7 +2,9 @@
 package releaseauth
 
 import (
+	"crypto"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	_ "embed"
@@ -14,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -65,6 +68,8 @@ func read(path string, limit int64) ([]byte, error) {
 	return b, nil
 }
 
+// The v1 domain is an immutable authentication-format identifier. Hilo keeps
+// it so historical signed artifacts remain verifiable; it is not a product name.
 func payload(build, sums []byte) []byte {
 	b := append([]byte("telara-memory-release-v1\x00"), build...)
 	b = append(b, 0)
@@ -150,13 +155,7 @@ func manifest(dir string, key ed25519.PublicKey) (Provenance, map[string]string,
 	if e != nil {
 		return p, nil, "", ErrInvalid
 	}
-	if key == nil {
-		key, e = PublicKey()
-		if e != nil {
-			return p, nil, "", e
-		}
-	}
-	if !ed25519.Verify(key, payload(build, sums), raw) {
+	if verifyReleaseSignature(build, sums, raw, key) != nil {
 		return p, nil, "", ErrInvalid
 	}
 	d := json.NewDecoder(strings.NewReader(string(build)))
@@ -226,17 +225,78 @@ func target(dir, platform, arch string, key ed25519.PublicKey) (string, string, 
 	return path, digest, p.Source, nil
 }
 
-// Sign seals only a complete clean-tag release. Development builds are refused.
-// The private key must match the public key compiled into this source tree.
+// Sign retains the file-key API for callers holding an Ed25519 private key.
 func Sign(dir string, key ed25519.PrivateKey) error {
-	pub, e := PublicKey()
-	if e != nil || len(key) != ed25519.PrivateKeySize || !key.Public().(ed25519.PublicKey).Equal(pub) {
+	if len(key) != ed25519.PrivateKeySize {
 		return ErrInvalid
 	}
-	return sign(dir, key)
+	return SignWithSigner(dir, key)
 }
 
+// SignWithSigner signs the exact release payload with a crypto.Signer whose
+// Ed25519 public key matches the compiled project pin. It does not establish
+// hardware custody; that requires a separately provisioned and audited signer.
+func SignWithSigner(dir string, signer crypto.Signer) error {
+	pub, err := PublicKey()
+	if err != nil {
+		return ErrInvalid
+	}
+	return signWithSigner(dir, signer, pub)
+}
+
+// sign keeps the existing synthetic-key test seam.
 func sign(dir string, key ed25519.PrivateKey) error {
+	if len(key) != ed25519.PrivateKeySize {
+		return ErrInvalid
+	}
+	return signWithSigner(dir, key, key.Public().(ed25519.PublicKey))
+}
+
+// Provider boundaries refuse typed nils and convert provider panics to errors.
+// They do not establish the custody or trustworthiness of a provider.
+func nilSigner(signer crypto.Signer) bool {
+	if signer == nil {
+		return true
+	}
+	v := reflect.ValueOf(signer)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
+
+func signerPublic(signer crypto.Signer) (public crypto.PublicKey, err error) {
+	defer func() {
+		if recover() != nil {
+			public, err = nil, ErrInvalid
+		}
+	}()
+	return signer.Public(), nil
+}
+
+func signerSign(signer crypto.Signer, message []byte) (signature []byte, err error) {
+	defer func() {
+		if recover() != nil {
+			signature, err = nil, ErrInvalid
+		}
+	}()
+	return signer.Sign(rand.Reader, append([]byte(nil), message...), crypto.Hash(0))
+}
+
+func signWithSigner(dir string, signer crypto.Signer, expected ed25519.PublicKey) error {
+	if nilSigner(signer) || len(expected) != ed25519.PublicKeySize {
+		return ErrInvalid
+	}
+	public, err := signerPublic(signer)
+	if err != nil {
+		return ErrInvalid
+	}
+	pub, ok := public.(ed25519.PublicKey)
+	if !ok || len(pub) != ed25519.PublicKeySize || !pub.Equal(expected) {
+		return ErrInvalid
+	}
 	b, e := read(filepath.Join(dir, "BUILD.json"), 16384)
 	if e != nil {
 		return e
@@ -265,13 +325,17 @@ func sign(dir string, key ed25519.PrivateKey) error {
 		return e
 	}
 	b = append(b, '\n')
+	message := payload(b, sums)
+	signature, e := signerSign(signer, message)
+	if e != nil || len(signature) != ed25519.SignatureSize || !ed25519.Verify(expected, message, signature) {
+		return ErrInvalid
+	}
 	if e = os.WriteFile(filepath.Join(dir, "BUILD.json"), b, 0600); e != nil {
 		return e
 	}
-	signature := ed25519.Sign(key, payload(b, sums))
 	if e = os.WriteFile(filepath.Join(dir, "RELEASE.sig"), []byte(base64.StdEncoding.EncodeToString(signature)+"\n"), 0600); e != nil {
 		return e
 	}
-	_, e = verify(dir, key.Public().(ed25519.PublicKey))
+	_, e = verify(dir, expected)
 	return e
 }

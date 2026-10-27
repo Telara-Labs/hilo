@@ -8,7 +8,7 @@ import (
 	"io"
 	"reflect"
 
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/jcs"
 )
 
 // Build constructs a NEW private candidate using independent internal CSPRNG

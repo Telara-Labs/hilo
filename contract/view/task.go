@@ -1,8 +1,8 @@
 package view
 
 import (
-	"github.com/Telara-Labs/telara-memory/contract/heads"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/heads"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // TaskStatus only reduces records of this exact verified owner and task.

@@ -17,7 +17,7 @@ func TestPurePackageDependencyBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list packages failed %v\n%s", err, out)
 	}
-	const prefix = "github.com/Telara-Labs/telara-memory/contract"
+	const prefix = "github.com/Telara-Labs/hilo/contract"
 	packages := strings.Fields(string(out))
 	seen := map[string]bool{}
 	for _, p := range packages {

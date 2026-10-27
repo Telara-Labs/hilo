@@ -5,7 +5,7 @@ package replay
 import (
 	"encoding/json"
 	"errors"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 const Unavailable = "The operation was recorded, but its prior memory content is no longer available to this caller."

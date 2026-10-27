@@ -1,6 +1,6 @@
 package sig
 
-import "github.com/Telara-Labs/telara-memory/contract/record"
+import "github.com/Telara-Labs/hilo/contract/record"
 
 // IssuerProvenance records the adapter's authenticated trust source. These facts
 // are not decoded from records, envelopes, bundle metadata or asserted tenant IDs.

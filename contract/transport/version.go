@@ -3,7 +3,7 @@ package transport
 import (
 	"encoding/base64"
 	"errors"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // CheckEnvelope gates transport and signed header versions independently. The

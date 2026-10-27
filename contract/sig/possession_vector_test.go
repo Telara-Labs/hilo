@@ -12,8 +12,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // The possession-bootstrap vector pins how a node acquires its first keys:

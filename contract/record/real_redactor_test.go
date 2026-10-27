@@ -29,7 +29,7 @@ func TestRedactBeforeBoundaryAndActualGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	up := tapredact.CurrentRuleset()
-	current := Ruleset{Epoch: up.Epoch, Digest: up.Digest, Engine: "tap-discover/a711ce77ba63", Behavior: behavior}
+	current := Ruleset{Epoch: up.Epoch, Digest: up.Digest, Engine: "tap-discover/b60687139cee", Behavior: behavior}
 	rawGolden, err := os.ReadFile("../testdata/redact-corpus-v1/actual-engine-golden.json")
 	if err != nil {
 		t.Fatalf("golden missing; measured %+v", current)

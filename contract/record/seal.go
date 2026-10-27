@@ -2,7 +2,7 @@ package record
 
 import (
 	"fmt"
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/jcs"
 	"unicode/utf8"
 )
 

@@ -17,7 +17,7 @@ import (
 	"strings"
 )
 
-const pureModule = "github.com/Telara-Labs/telara-memory/contract"
+const pureModule = "github.com/Telara-Labs/hilo/contract"
 
 type packageSources struct {
 	Dir, ImportPath, Name     string

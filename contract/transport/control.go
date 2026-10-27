@@ -2,7 +2,7 @@ package transport
 
 import (
 	"errors"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 type ControlDecision struct {

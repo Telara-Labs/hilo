@@ -1,7 +1,7 @@
 package main
 
 import (
-	contractdata "github.com/Telara-Labs/telara-memory/contract"
+	contractdata "github.com/Telara-Labs/hilo/contract"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -139,7 +139,7 @@ func TestFullDispatchUsesExplicitNodeModuleRootAndExactPackageMap(t *testing.T) 
 	runtimeCalls := 0
 	type invocation struct{ dir, pkg, selector string }
 	wantCalls := []invocation{}
-	exactRuntime := map[string]string{"./internal/node/store": "./store", "./internal/node/bundle": "./bundle", "./internal/node/syncnode": "./syncnode", "./cmd/telara-memory": "./cmd/telara-memory"}
+	exactRuntime := map[string]string{"./internal/node/store": "./store", "./internal/node/bundle": "./bundle", "./internal/node/syncnode": "./syncnode", "./cmd/telara-memory": "./cmd/hilo"}
 	for _, v := range r.Vectors {
 		for _, tc := range v.Tests {
 			dir, pkg := "pure-source", tc.Package
@@ -156,7 +156,7 @@ func TestFullDispatchUsesExplicitNodeModuleRootAndExactPackageMap(t *testing.T) 
 		calls++
 		if dir == node {
 			runtimeCalls++
-			if pkg != "./store" && pkg != "./bundle" && pkg != "./syncnode" && pkg != "./cmd/telara-memory" {
+			if pkg != "./store" && pkg != "./bundle" && pkg != "./syncnode" && pkg != "./cmd/hilo" {
 				t.Fatal("invalid runtime remap", pkg)
 			}
 		} else if dir != "pure-source" || !purePackages[pkg] {

@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 func TestEmbeddedRedactionDataIsPinnedAndDetached(t *testing.T) {
@@ -41,7 +41,7 @@ func TestEmbeddedRedactionDataIsPinnedAndDetached(t *testing.T) {
 	if err := json.Unmarshal(contract.RedactionGoldenV1(), &golden); err != nil {
 		t.Fatal(err)
 	}
-	if golden.Epoch != 51 || golden.Engine != "tap-discover/a711ce77ba63" || golden.Digest != "d3a4f9967de87a3025b30ddbcf0c7cee562201dcbad61d0b6d181e638f6fab17" || golden.Behavior != "ae83f631a285ace70469636cf4d0ae13236944fa45c47a4030ea5a1507c23b5d" {
+	if golden.Epoch != 53 || golden.Engine != "tap-discover/b60687139cee" || golden.Digest != "30039c3ec29821b7f78599054342882c0545b5d973969e65514b887c3da0b397" || golden.Behavior != "ae83f631a285ace70469636cf4d0ae13236944fa45c47a4030ea5a1507c23b5d" {
 		t.Fatal("pinned golden changed")
 	}
 }

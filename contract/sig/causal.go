@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // Complex DAG histories and conflict cascades have a fixed work limit. Linear

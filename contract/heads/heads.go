@@ -8,7 +8,7 @@ package heads
 import (
 	"sort"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // Version is what head selection reads from one admitted header.

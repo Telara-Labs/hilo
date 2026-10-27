@@ -1,8 +1,8 @@
 package transport
 
 import (
-	"github.com/Telara-Labs/telara-memory/contract/policy"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/policy"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // BundleAuthorization is verified CURRENT receiver authority for either export

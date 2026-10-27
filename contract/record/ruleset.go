@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	contractdata "github.com/Telara-Labs/telara-memory/contract"
+	contractdata "github.com/Telara-Labs/hilo/contract"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/jcs"
 )
 
 // Ruleset identifies the redaction behaviour a record was sealed under
