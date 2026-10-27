@@ -1,6 +1,6 @@
 # Security
 
-telara-memory stores records of your agent sessions on your machine, signs
+Hilo stores records of your agent sessions on your machine, signs
 them, and can erase them. Its canonical encoding, record signatures, key
 enrollment, erasure rules and policy checks are security boundaries.
 

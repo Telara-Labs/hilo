@@ -1,9 +1,9 @@
-# telara-memory
+# Hilo
 
 > **Pre-release.** There is no tagged or signed release yet. Build from source, and read the
 > [status table](#status) before relying on it.
 
-telara-memory is a local, cross-client memory node for AI coding agents. It captures sessions
+Hilo is a local, cross-client memory node for AI coding agents. It captures sessions
 from Claude Code, Codex CLI, Cursor and Pi into one signed, erasable store on your machine, and
 serves that memory back to any of those clients over MCP. It works with no account and sends
 nothing off the machine by default. If you choose to, you can log in to a hosted tenant and turn
@@ -54,11 +54,14 @@ module needs Go 1.26.
 
 ### Build
 
+This source snapshot uses the legacy `cmd/telara-memory` directory. The binary built below
+is named `hilo`.
+
 ```sh
-git clone https://github.com/Telara-Labs/telara-memory.git
-cd telara-memory/contract
+git clone https://github.com/Telara-Labs/hilo.git
+cd hilo/contract
 mkdir -p "$HOME/.local/bin"
-GOWORK=off go build -o "$HOME/.local/bin/telara-memory" ./cmd/telara-memory
+GOWORK=off go build -o "$HOME/.local/bin/hilo" ./cmd/telara-memory
 ```
 
 ### Install the node
@@ -68,7 +71,7 @@ copies a verified image into the install directory, provisions the device key in
 starts the service and waits until it is ready.
 
 ```sh
-BIN="$HOME/.local/bin/telara-memory"
+BIN="$HOME/.local/bin/hilo"
 SUM="$(shasum -a 256 "$BIN" | cut -d' ' -f1)"   # on Linux, sha256sum works too
 "$BIN" install --source "$BIN" --sha256 "$SUM" --version dev
 "$BIN" status
@@ -79,8 +82,8 @@ SUM="$(shasum -a 256 "$BIN" | cut -d' ' -f1)"   # on Linux, sha256sum works too
 ### Connect a client
 
 ```sh
-telara-memory clients status
-telara-memory clients install --client claude   # also codex, cursor, pi
+hilo clients status
+hilo clients install --client claude   # also codex, cursor, pi
 ```
 
 For Claude Code, Codex CLI and Cursor, the command prints the MCP server and hook snippets and
@@ -91,8 +94,8 @@ changing anything, and use `clients uninstall` to remove what was installed.
 ### Check health
 
 ```sh
-telara-memory doctor          # human-readable
-telara-memory doctor --json
+hilo doctor          # human-readable
+hilo doctor --json
 ```
 
 `doctor` never starts the daemon, never changes the installation and never reads record content.
@@ -100,9 +103,9 @@ telara-memory doctor --json
 ### Erase
 
 ```sh
-telara-memory erase --id <record-id>              # asks you to type "erase"
-telara-memory erase --id <id1> --id <id2> --yes --json
-telara-memory erase --scrub-pending               # retry unfinished physical scrubs
+hilo erase --id <record-id>              # asks you to type "erase"
+hilo erase --id <id1> --id <id2> --yes --json
+hilo erase --scrub-pending               # retry unfinished physical scrubs
 ```
 
 `--reason` accepts `user_request` (the default), `redaction_miss`, `device_compromise` or
@@ -111,16 +114,16 @@ telara-memory erase --scrub-pending               # retry unfinished physical sc
 ### Bundles, sync and removal
 
 ```sh
-telara-memory bundle backup --id <record-id> --out backup.age   # passphrase read from stdin
-telara-memory bundle restore --in backup.age --backup
+hilo bundle backup --id <record-id> --out backup.age   # passphrase read from stdin
+hilo bundle restore --in backup.age --backup
 
-telara-memory login --key                  # print the device key thumbprint to bind
-telara-memory login < login.json           # login document on stdin, never in argv
-telara-memory sync select --id my-rule --repo <repo-id> --kinds session,task
-telara-memory sync status
-telara-memory logout
+hilo login --key                  # print the device key thumbprint to bind
+hilo login < login.json           # login document on stdin, never in argv
+hilo sync select --id my-rule --repo <repo-id> --kinds session,task
+hilo sync status
+hilo logout
 
-telara-memory uninstall
+hilo uninstall
 ```
 
 Device-to-device transfer uses `bundle invite`, `join`, `add-device` and `enroll`, then
