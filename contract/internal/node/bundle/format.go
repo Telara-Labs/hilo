@@ -7,6 +7,7 @@ package bundle
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"io"
@@ -241,7 +242,14 @@ func keyringOf(genesis string, parts ...[]store.SignedRecord) (*sig.State, error
 				return nil, ErrInvalid
 			}
 			b, ok := parsed.Body.(*record.KeyOpBody)
-			if !ok || b.Genesis != genesis || b.Subject.Role != record.RoleDevice {
+			if !ok || b.Subject.Role != record.RoleDevice {
+				return nil, ErrInvalid
+			}
+			authority := b.Genesis
+			if b.Op == record.OpGenesis && authority == "" {
+				authority = b.Subject.KeyID
+			}
+			if authority != genesis {
 				return nil, ErrInvalid
 			}
 			if kr.Add(&sig.KeyOp{Rec: parsed, Body: b, Sigs: r.Sigs}) != nil {
@@ -249,7 +257,7 @@ func keyringOf(genesis string, parts ...[]store.SignedRecord) (*sig.State, error
 			}
 		}
 	}
-	return kr.State(), nil
+	return kr.StateContext(context.Background())
 }
 
 // Verify requires the exporter to be an active device of the pinned genesis

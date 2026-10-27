@@ -14,6 +14,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/custodyguard"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
@@ -129,6 +130,16 @@ func readExportKey(dir string) (exportKey, bool, error) {
 // EnsureExportKey returns this device's export key offer, creating the X25519
 // key in the vault on first use.
 func EnsureExportKey(ctx context.Context, dir string, v Vault, id Identity) (Offer, error) {
+	var out Offer
+	err := custodyguard.With(ctx, dir, func(locked context.Context) error {
+		var err error
+		out, err = ensureExportKey(locked, dir, v, id)
+		return err
+	})
+	return out, err
+}
+
+func ensureExportKey(ctx context.Context, dir string, v Vault, id Identity) (Offer, error) {
 	k, ok, err := readExportKey(dir)
 	if err != nil {
 		return Offer{}, err

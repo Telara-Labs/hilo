@@ -341,6 +341,11 @@ func twoClientWorld(t *testing.T, claude, codex []byte) (*Collector, *store.Stor
 	if err != nil {
 		t.Fatal(err)
 	}
+	// testing.TempDir's numbered child uses 0777 before umask. This fixture
+	// supplies Home itself as the configured private containment ancestor.
+	if err = os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{51}, 32))
 	pub := key.Public().(ed25519.PublicKey)
 	cfg := Config{Home: home, OwnerGenesis: sig.KeyID(pub), MachineID: syntheticSession, Roots: map[string]Root{}, CaptureEnabled: true}

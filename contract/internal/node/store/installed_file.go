@@ -16,15 +16,16 @@ func ReadInstalledRecord(dir string) ([]byte, error) {
 // Profile records beside the store hold public pins, public keys and opaque
 // vault handles only. Each name is fixed; no caller chooses a path.
 const (
-	DeviceJoinName       = "device-join.json"
-	JoinPendingName      = "join-pending.json"
-	ExportKeyName        = "export-key.json"
-	ExportRecipientsName = "export-recipients.json"
+	DeviceJoinName         = "device-join.json"
+	JoinPendingName        = "join-pending.json"
+	ExportKeyName          = "export-key.json"
+	ExportRecipientsName   = "export-recipients.json"
+	RepositoryContextsName = "repository-contexts.json"
 )
 
 func profileRecordName(name string) bool {
 	switch name {
-	case DeviceJoinName, JoinPendingName, ExportKeyName, ExportRecipientsName:
+	case DeviceJoinName, JoinPendingName, ExportKeyName, ExportRecipientsName, RepositoryContextsName:
 		return true
 	}
 	return false
@@ -39,12 +40,12 @@ func ReadProfileRecord(dir, name string) ([]byte, error) {
 }
 
 // WriteProfileRecord durably publishes one fixed owner-only profile record.
-// Only the recipient list may be replaced; the others are written once.
+// Only recipient and repository context state may be replaced; other pins are written once.
 func WriteProfileRecord(dir, name string, b []byte) error {
 	if !profileRecordName(name) {
 		return failure("unsafe_path")
 	}
-	return writePrivateRecord(dir, name, b, name == ExportRecipientsName)
+	return writePrivateRecord(dir, name, b, name == ExportRecipientsName || name == RepositoryContextsName)
 }
 
 // RemoveProfileRecord deletes a pending record once its successor is durable.
@@ -121,15 +122,7 @@ func writePrivateRecord(dir, name string, b []byte, replace bool) error {
 	if err = privateFile(temp); err != nil {
 		return err
 	}
-	if err = os.Rename(temp, path); err != nil {
-		return failure("storage_error")
-	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return failure("storage_error")
-	}
-	defer d.Close()
-	if d.Sync() != nil {
+	if err = publishPrivateRecord(temp, path, replace); err != nil {
 		return failure("storage_error")
 	}
 	return nil

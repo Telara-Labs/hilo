@@ -153,7 +153,10 @@ func (s *Store) makeCaptureTxn(ctx context.Context, d *databaseState, q CaptureR
 	if s.conn.QueryRowContext(ctx, "SELECT authority_epoch FROM meta WHERE singleton=1").Scan(&epoch) != nil {
 		return nil, failure("storage_error")
 	}
-	t.context = CaptureContext{"", s.opts.PinnedGenesisID, s.opts.LocalMachineID, q.AuthorKeyID, epoch, d.generation, p.Version}
+	t.context = CaptureContext{OwnerGenesis: s.opts.PinnedGenesisID, MachineID: s.opts.LocalMachineID, CheckedAuthorKeyID: q.AuthorKeyID, AuthorityGeneration: epoch, ErasureGeneration: d.generation, ProgressVersion: p.Version, RepositoryBinding: q.RepositoryBinding, RepositoryGeneration: q.RepositoryGeneration}
+	if q.Repository != nil {
+		t.context.Repository = *q.Repository
+	}
 	total := 0
 	addBytes := func(x *stored) bool {
 		total += len(x.rec.HeaderJCS)

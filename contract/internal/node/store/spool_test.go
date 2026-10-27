@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,7 +16,7 @@ import (
 const spoolTestID = "01K00000000000000000000000"
 
 func spoolTestHint() transport.HookSignal {
-	return transport.HookSignal{V: 3, At: 1761150000000, Client: "claude", Event: "Stop", NativeSession: "22222222-2222-4222-8222-222222222222", TranscriptPath: "/synthetic/22222222-2222-4222-8222-222222222222.jsonl", HookPID: 12, Ancestry: []transport.Proc{{PID: 11, StartMS: 1761149999000, Argv0: "claude"}}}
+	return transport.HookSignal{V: 3, At: 1761150000000, Client: "claude", Event: "Stop", NativeSession: "22222222-2222-4222-8222-222222222222", TranscriptPath: filepath.Join(os.TempDir(), "synthetic", "22222222-2222-4222-8222-222222222222.jsonl"), HookPID: 12, Ancestry: []transport.Proc{{PID: 11, StartMS: 1761149999000, Argv0: "claude"}}}
 }
 func spoolCount(t *testing.T, s *Store, table string) int {
 	t.Helper()

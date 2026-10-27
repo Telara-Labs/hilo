@@ -235,6 +235,10 @@ func (p *Pipeline) capture(ctx context.Context, unit Unit, prepare preparationSt
 	if inspection.Suppression.Suppressed {
 		return skipSuppressed(ctx, query)
 	}
+	repository, err := p.store.CaptureRepository(ctx, query)
+	if err != nil {
+		return refused(storeFailure(err))
+	}
 	batch, h, err := prepare(ctx, c, u, func(ctx context.Context, _ sourceOccurrence) (gateState, error) {
 		gate, e := p.store.Suppressed(ctx, query)
 		return gateState{suppressed: gate.Suppressed, ownerBlocked: gate.OwnerBlocked}, e
@@ -258,6 +262,11 @@ func (p *Pipeline) capture(ctx context.Context, unit Unit, prepare preparationSt
 		ids[i] = e.ID
 	}
 	request := store.CaptureRequest{PolicyID: policyID, Occurrence: query, AuthorKeyID: p.keys.keyID, ExpectedVersion: inspection.Progress.Version, Reader: record.SourceRef{Reader: root.Client, ReaderVersion: runtimeReaderVersion}, RulesetFingerprint: p.ruleset.Fingerprint(), EventIDs: ids, Range: store.CaptureRange{First: 0, LastExclusive: int64(len(events))}}
+	if repository.ID != "" {
+		request.RepositoryBinding = repository.ID
+		request.RepositoryGeneration = repository.Generation
+		request.Repository = &record.RepoRef{ID: repository.Repo, Remote: repository.Remote}
+	}
 	if ctx.Err() != nil {
 		return empty, hold("cancelled")
 	}

@@ -77,6 +77,7 @@ func Open(ctx context.Context, dir string, provider RuntimeProvider) (*Backend, 
 		return nil, err
 	}
 	control := newOwnerControl(st, runtime.CaptureKeys)
+	control.dir, control.vault, control.service = dir, runtime.SyncVault, service
 	stop := startSync(ctx, dir, st, runtime, closeStore)
 	backend := NewDisclosure(service, source, func() error {
 		// The signing copy is cleared before the store closes; a retried

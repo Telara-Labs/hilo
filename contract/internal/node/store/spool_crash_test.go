@@ -7,13 +7,16 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
 	"modernc.org/sqlite"
 )
 
@@ -35,6 +38,13 @@ func TestSpoolCrashChild(t *testing.T) {
 	}
 	if mode == "" {
 		return
+	}
+	initializing := time.Now()
+	// A new process verifies the complete immutable corpus before opening the
+	// store. Race instrumentation makes this cold verification substantial;
+	// it is setup, separately bounded by the parent, not crash-transaction time.
+	if _, err := localpolicy.Ruleset(); err != nil {
+		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -70,6 +80,11 @@ func TestSpoolCrashChild(t *testing.T) {
 	default:
 		t.Fatal("unknown mode")
 	}
+	fmt.Printf("SPOOL_INIT_READY %d\n", time.Since(initializing).Milliseconds())
+	var start [1]byte
+	if _, err = io.ReadFull(os.Stdin, start[:]); err != nil || start[0] != 'S' {
+		t.Fatal("invalid transaction start barrier")
+	}
 	if mode == "observe-announcement" || mode == "observed" {
 		err = s.ObserveSignal(context.Background(), spoolTestHint(), spoolTestID)
 	} else {
@@ -100,7 +115,7 @@ func TestSpoolKillAtomicityAndRestartDrainExactlyOnce(t *testing.T) {
 			if err = f.w.s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			cmd := exec.Command(os.Args[0], "-test.run=^TestSpoolCrashChild$", "--", "--spool-crash", mode, path)
+			cmd := exec.Command(os.Args[0], "-test.run=^TestSpoolCrashChild$", "-test.timeout=150s", "--", "--spool-crash", mode, path)
 			stdout, err := cmd.StdoutPipe()
 			if err != nil {
 				t.Fatal(err)
@@ -115,30 +130,67 @@ func TestSpoolKillAtomicityAndRestartDrainExactlyOnce(t *testing.T) {
 			if err = cmd.Start(); err != nil {
 				t.Fatal(err)
 			}
-			defer cmd.Process.Kill()
-			ready := make(chan bool, 1)
+			waited := false
+			wait := func() error {
+				waited = true
+				return cmd.Wait()
+			}
+			defer func() {
+				if !waited {
+					_ = cmd.Process.Kill()
+					_ = wait()
+				}
+			}()
+			ready := make(chan string, 2)
 			go func() {
 				scan := bufio.NewScanner(stdout)
 				for scan.Scan() {
-					if strings.TrimSpace(scan.Text()) == "SPOOL_CHECKPOINT" {
-						ready <- true
+					line := strings.TrimSpace(scan.Text())
+					if strings.HasPrefix(line, "SPOOL_INIT_READY ") {
+						ready <- line
+					} else if line == "SPOOL_CHECKPOINT" {
+						ready <- line
 						return
 					}
 				}
-				ready <- false
+				ready <- "EOF"
 			}()
 			select {
+			case phase := <-ready:
+				if !strings.HasPrefix(phase, "SPOOL_INIT_READY ") {
+					_ = cmd.Process.Kill()
+					_ = wait()
+					t.Fatalf("child failed before initialization %s", stderr.String())
+				}
+				elapsed, err := strconv.ParseInt(strings.TrimPrefix(phase, "SPOOL_INIT_READY "), 10, 64)
+				if err != nil || elapsed < 0 {
+					t.Fatal("invalid child initialization receipt")
+				}
+				t.Logf("cold initialization including golden verification %dms", elapsed)
+			case <-time.After(2 * time.Minute):
+				_ = cmd.Process.Kill()
+				_ = wait()
+				t.Fatalf("child initialization timeout %s", stderr.String())
+			}
+			if _, err = stdin.Write([]byte{'S'}); err != nil {
+				t.Fatal(err)
+			}
+			select {
 			case found := <-ready:
-				if !found {
+				if found != "SPOOL_CHECKPOINT" {
+					_ = cmd.Process.Kill()
+					_ = wait()
 					t.Fatalf("child failed before checkpoint %s", stderr.String())
 				}
 			case <-time.After(30 * time.Second):
-				t.Fatal("crash checkpoint timeout")
+				_ = cmd.Process.Kill()
+				_ = wait()
+				t.Fatalf("crash checkpoint timeout %s", stderr.String())
 			}
 			if err = cmd.Process.Kill(); err != nil {
 				t.Fatal(err)
 			}
-			if err = cmd.Wait(); err == nil {
+			if err = wait(); err == nil {
 				t.Fatal("child was not killed")
 			}
 			s, err := Open(ctx, f.w.o)

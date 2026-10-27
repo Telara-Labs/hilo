@@ -1,0 +1,6 @@
+{
+  "contract": "mnc/3.0",
+  "test_only_secret_hex": "04040404040404040404040404040404",
+  "salt": "BAQEBAQEBAQEBAQEBAQEBA",
+  "note": "TEST-ONLY fixed independent entropy input. Production uses CSPRNG16; no deterministic key/content derivation."
+}

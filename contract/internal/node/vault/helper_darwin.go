@@ -39,6 +39,12 @@ func RunHelper(args []string, in io.Reader, out io.Writer) bool {
 		return true
 	}
 	op := raw[0]
+	if op < 1 || op > 10 {
+		// Removed operations (including account-wide enumeration opcode11)
+		// are refused before even selecting/opening a native Keychain.
+		_, _ = out.Write([]byte{3})
+		return true
+	}
 	h := string(raw[1:33])
 	n := int(binary.BigEndian.Uint16(raw[33:35]))
 	if n > 4096 || 35+n > len(raw) {
@@ -85,8 +91,6 @@ func RunHelper(args []string, in io.Reader, out io.Writer) bool {
 			result, e = v.nativeLegacySlot(h)
 		case 9:
 			result, e = v.nativeGetOwn(h)
-		case 11:
-			result, e = v.nativeForeignSlots(h, string(secret))
 		case 10:
 			result, e = nativeDefaultKeychain()
 		case 5:
@@ -137,8 +141,6 @@ func (v *Vault) operation(ctx context.Context, op, h string, b []byte) ([]byte, 
 		code = 8
 	case "get-own":
 		code = 9
-	case "foreign-slots":
-		code = 11
 	case "default-keychain":
 		code = 10
 	}

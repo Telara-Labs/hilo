@@ -142,7 +142,7 @@ func (s *Store) loadAuthority(ctx context.Context) (*databaseState, error) {
 		x.sigs = sigs
 		x.owner = owner
 		op := &sig.KeyOp{Rec: r, Body: r.Body.(*record.KeyOpBody), Sigs: sigs, AdmittedSeq: x.seq}
-		if d.kr.Add(op) != nil {
+		if d.kr.AddContext(ctx, op) != nil {
 			return nil, failure("corrupt_database")
 		}
 		d.records = append(d.records, x)
@@ -159,7 +159,10 @@ func (s *Store) loadAuthority(ctx context.Context) (*databaseState, error) {
 	// any operation that descends from it, until every parent is present. It
 	// therefore leaves the evaluated key state exactly what it would be without
 	// it, and authority stays evaluable while it waits.
-	st := d.kr.State()
+	st, evaluationErr := d.kr.StateContext(ctx)
+	if evaluationErr != nil {
+		return nil, contractEvaluationError(evaluationErr)
+	}
 	for _, x := range d.records {
 		switch st.Status[x.rec.ID] {
 		case sig.OpInvalid:
@@ -205,7 +208,11 @@ func (e *DisclosureEngine) checkAuthority(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	k := d.keyState().KeyFor(e.authority.keyID, record.RoleDevice, "")
+	authority, err := d.keyStateContext(ctx)
+	if err != nil {
+		return err
+	}
+	k := authority.KeyFor(e.authority.keyID, record.RoleDevice, "")
 	if k == nil || k.Status != sig.KeyActive || k.MachineID != e.config.MachineID {
 		return failure("unauthorized")
 	}
@@ -274,12 +281,19 @@ func (s *Store) appendGuardedKeyOp(ctx context.Context, r *record.Record, signat
 	if err = s.verifyCandidate(d, r, signatures, d.nextSeq); err != nil {
 		return AdmissionResult{}, err
 	}
-	before := d.kr.State().Status
+	prior, evaluationErr := d.kr.StateContext(ctx)
+	if evaluationErr != nil {
+		return AdmissionResult{}, contractEvaluationError(evaluationErr)
+	}
+	before := prior.Status
 	op := &sig.KeyOp{Rec: r, Body: r.Body.(*record.KeyOpBody), Sigs: signatures, AdmittedSeq: d.nextSeq}
-	if d.kr.Add(op) != nil {
+	if d.kr.AddContext(ctx, op) != nil {
 		return AdmissionResult{}, failure("invalid_record")
 	}
-	st := d.kr.State()
+	st, evaluationErr := d.kr.StateContext(ctx)
+	if evaluationErr != nil {
+		return AdmissionResult{}, contractEvaluationError(evaluationErr)
+	}
 	// Under the guard an operation is admitted when it is authorized at its
 	// position, or when it is the missing parent that completes a retained held
 	// operation: refusing that parent would leave the held operation waiting

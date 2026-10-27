@@ -1,0 +1,26 @@
+{
+  "version": "redact-corpus-v1",
+  "entries": [
+    {"id": "aws-access-key", "kind": "text", "parts": ["key is AKIA", "IOSFODNN7EXAMPLE now"], "note": "documentation example key"},
+    {"id": "github-token", "kind": "text", "parts": ["export GH=ghp", "_0123456789abcdefABCDEF0123456789abcd"]},
+    {"id": "gitlab-token", "kind": "text", "parts": ["glpat", "-AbCdEf0123456789xyzQ"]},
+    {"id": "slack-token", "kind": "text", "parts": ["xoxb", "-000000000000-000000000000-AbCdEfGhIjKlMnOpQrStUvWx"]},
+    {"id": "groq-key", "kind": "text", "parts": ["gsk", "_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfGhIjKlMnOp"]},
+    {"id": "password-in-url", "kind": "text", "parts": ["git clone https://oauth2:", "s3cretT0ken", "@gitlab.example.com/acme/api.git"]},
+    {"id": "private-key-header", "kind": "text", "parts": ["-----BEGIN ", "PRIVATE KEY-----\nMIIEv", "QIBADANBgkqhkiG9w0BAQEFAASC\n-----END ", "PRIVATE KEY-----"]},
+    {"id": "jwt", "kind": "text", "parts": ["Authorization: Bearer eyJ", "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.", "dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk"]},
+    {"id": "webhook-url", "kind": "text", "parts": ["https://hooks.slack.com/services/", "T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"]},
+    {"id": "email", "kind": "text", "parts": ["mail alice", "@example.com about it"]},
+    {"id": "ipv4", "kind": "text", "parts": ["host 192.0.2.10 port 22"]},
+    {"id": "nested-json", "kind": "text", "parts": ["{\"config\":{\"auth\":{\"token\":\"", "tok_live_9f8e7d6c5b4a\"}},\"retries\":3}"]},
+    {"id": "secret-at-boundary", "kind": "text", "parts": ["padding before the secret ", "ghp", "_ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210 and after"]},
+    {"id": "short-password-arg", "kind": "argument", "name": "password", "parts": ["pw1"]},
+    {"id": "api-key-arg", "kind": "argument", "name": "api_key", "parts": ["abc123"]},
+    {"id": "token-arg-camel", "kind": "argument", "name": "accessToken", "parts": ["opaque-value"]},
+    {"id": "benign-arg", "kind": "argument", "name": "path", "parts": ["src/retry.go"]},
+    {"id": "command-arg", "kind": "argument", "name": "command", "parts": ["curl -H 'Authorization: Bearer ", "sk-proj-AbCdEf0123456789AbCdEf0123456789", "' https://api.example.com"]},
+    {"id": "benign-config", "kind": "text", "parts": ["timeout=30\nlog_level: debug\nmax_retries: 5"]},
+    {"id": "benign-prose", "kind": "text", "parts": ["Fixed the retry loop in src/retry.go and added a test."]},
+    {"id": "unicode", "kind": "text", "parts": ["café résumé — naïve"]}
+  ]
+}

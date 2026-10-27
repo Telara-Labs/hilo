@@ -1,0 +1,521 @@
+[
+  {
+    "id": "V1",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": ".",
+        "run": "^TestV1JSON$"
+      },
+      {
+        "package": "./jcs",
+        "run": "^Test(Canonicalize|RecordProfile|FormatNumberRFC8785AppendixB|MarshalRecordGoValues|StringArray)"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V2",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": ".",
+        "run": "^TestV2JSON$"
+      },
+      {
+        "package": "./record",
+        "run": "^TestHAndKeys$"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V3",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": ".",
+        "run": "^TestV3JSON$"
+      },
+      {
+        "package": "./record",
+        "run": "^Test(BuildAndParseEveryKind|ParseRejections|UnknownBodyFieldKept)$"
+      },
+      {
+        "package": "./record",
+        "run": "^TestV3(ClosedSchemas|CommitmentDependencies)"
+      },
+      {
+        "package": ".",
+        "run": "^TestV3PublishedContractExample$"
+      },
+      {
+        "package": ".",
+        "run": "^TestV3SignedCommitmentGraph$"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V4",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": ".",
+        "run": "^TestV4JSON$"
+      },
+      {
+        "package": "./record",
+        "run": "^TestSalt$"
+      },
+      {
+        "package": "./record",
+        "run": "^TestProtectedEventSaltAndFailure$"
+      },
+      {
+        "package": ".",
+        "run": "^TestV4EventJSON$"
+      },
+      {
+        "package": "./record",
+        "run": "^Test(ProductionEventDerivationMatchesFrozenVector|BuildPreservesCorrectionFrontier)$"
+      },
+      {
+        "package": "./record",
+        "run": "^TestV3(IndependentSecrets|BodyEntropyFailure)"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V5",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": ".",
+        "run": "^TestV5JSON$"
+      },
+      {
+        "package": "./sig",
+        "run": "^Test(SignedBytes|VerifyRecord|KeyOpShapeRejects)$"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V6",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./sig",
+        "run": "^Test(Keyring|Tenant|CompromiseAndLosingRotationDescendants|StateOperationSnapshotsDetached|OpsAccessorDetached|ConflictRetirementNeverRevivesLosingRotator|DuplicateKeyOpCannotDowngradeIssuer)"
+      },
+      {
+        "package": "./sig",
+        "run": "^TestV3(TenantRoot|GenesisOptional)"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V7",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./sig",
+        "run": "^TestValidityAcrossRevocation$"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V8",
+    "status": "NOT_APPLICABLE",
+    "applicable_selectors": [],
+    "not_applicable_selectors": [
+      {
+        "package": "./heads",
+        "run": "^Test",
+        "reason": "The gateway memorycontract port has no heads reducer. Durable head/supersession behavior belongs to the node, outside this pure verifier port."
+      }
+    ],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V9",
+    "status": "NOT_APPLICABLE",
+    "applicable_selectors": [],
+    "not_applicable_selectors": [
+      {
+        "package": "./view",
+        "run": "^Test(CausalEventRepackingAndConflicts|SessionMultiMachineCorrectionSurvivesRepack|LaterMissingPageKeepsEarlierSettledPrefix|SaltedIndependentCapturesAndCausalOccurrences|EqualityWitnessDependencyInvalidationAndRestart|KnownErasedVersusUnknownPredecessorAndHeadLimit|AvailableInvalidBodyCannotReauthorizePresence|EqualCaptureTaintAndComplementaryCoverage|BodylessInvalidSourceOverridesRetainedHistory)$",
+        "reason": "The gateway memorycontract port has no view reducer or model-facing retrieval renderer. Binding, coverage and taint projection are node responsibilities."
+      }
+    ],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V10",
+    "status": "NOT_APPLICABLE",
+    "applicable_selectors": [],
+    "not_applicable_selectors": [
+      {
+        "package": "./view",
+        "run": "^TestBindingTopRankTieAndCorrection$",
+        "reason": "The gateway memorycontract port has no view reducer or model-facing retrieval renderer. Binding, coverage and taint projection are node responsibilities."
+      }
+    ],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V11",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./invalidate",
+        "run": "^Test(Closure|ErasureChainEveryOrder|ErasureSelectorKinds|AncestryPendingAndRebuild|OrderIndependenceProperty)$"
+      },
+      {
+        "package": "./invalidate",
+        "run": "^TestV3SignedEvent"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V12",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./invalidate",
+        "run": "^TestRetractionClosureAndReplacement$"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V13",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./invalidate",
+        "run": "^TestErasureChainEveryOrder$"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": [
+      {
+        "requirement": "Concurrent node SQLite and hosted Postgres admission/erase transactions must share the prescribed locks and demonstrate no live late record. Pure sequential arrival permutations are not concurrent storage proof.",
+        "reason": "This gate requires a real node/storage/transport adapter. Pure memorycontract tests cannot establish it; outside this test-only gateway port scope and UNVERIFIED here."
+      }
+    ]
+  },
+  {
+    "id": "V14",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./record",
+        "run": "^Test(BuildAndParseEveryKind|ParseRejections)$"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V15",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./record",
+        "run": "^TestReducersAndClasses$"
+      },
+      {
+        "package": "./sig",
+        "run": "^TestVerifyRecord$"
+      },
+      {
+        "package": ".",
+        "run": "^TestV15MatrixJSON$"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V16",
+    "status": "NOT_APPLICABLE",
+    "applicable_selectors": [],
+    "not_applicable_selectors": [
+      {
+        "package": "./transport",
+        "run": "^TestOutboxRevalidatesExplicitAuthority$",
+        "reason": "The gateway memorycontract port has no node transport, outbox, hook spool or encrypted bundle adapter. Hosted endpoint transport lives outside this package and is not proved here."
+      }
+    ],
+    "adapter_exclusions": [
+      {
+        "requirement": "Node outbox cancellation and eligibility revalidation must commit atomically with authority or lineage changes.",
+        "reason": "This gate requires a real node/storage/transport adapter. Pure memorycontract tests cannot establish it; outside this test-only gateway port scope and UNVERIFIED here."
+      }
+    ]
+  },
+  {
+    "id": "V17",
+    "status": "NOT_APPLICABLE",
+    "applicable_selectors": [],
+    "not_applicable_selectors": [
+      {
+        "package": "./transport",
+        "run": "^Test(InterleavedCursorSnapshots|OwnControlCannotBeFiltered)$",
+        "reason": "The gateway memorycontract port has no node transport, outbox, hook spool or encrypted bundle adapter. Hosted endpoint transport lives outside this package and is not proved here."
+      }
+    ],
+    "adapter_exclusions": [
+      {
+        "requirement": "Node crash/restart after each persisted page, ctl_pending replay and transaction rollback.",
+        "reason": "This gate requires a real node/storage/transport adapter. Pure memorycontract tests cannot establish it; outside this test-only gateway port scope and UNVERIFIED here."
+      }
+    ]
+  },
+  {
+    "id": "V18",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./policy",
+        "run": "^Test"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V19",
+    "status": "NOT_APPLICABLE",
+    "applicable_selectors": [],
+    "not_applicable_selectors": [
+      {
+        "package": "./transport",
+        "run": "^TestHook",
+        "reason": "The gateway memorycontract port has no node transport, outbox, hook spool or encrypted bundle adapter. Hosted endpoint transport lives outside this package and is not proved here."
+      }
+    ],
+    "adapter_exclusions": [
+      {
+        "requirement": "Node filesystem tests must suspend writer between write/rename, abandon tmp, drain all new files, admit before ack, crash before unlink, and verify no unknown body field survives any bad archive.",
+        "reason": "This gate requires a real node/storage/transport adapter. Pure memorycontract tests cannot establish it; outside this test-only gateway port scope and UNVERIFIED here."
+      }
+    ]
+  },
+  {
+    "id": "V20",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./sig",
+        "run": "^TestTenantKeys$"
+      }
+    ],
+    "not_applicable_selectors": [
+      {
+        "package": "./transport",
+        "run": "^TestBundleCuts$",
+        "reason": "The gateway memorycontract port has no node transport, outbox, hook spool or encrypted bundle adapter. Hosted endpoint transport lives outside this package and is not proved here."
+      },
+      {
+        "package": "./transport",
+        "run": "^Test(ContractMajorGates|VersionGatesCannotOverrideSignedHeader)$",
+        "reason": "The gateway memorycontract port has no node transport, outbox, hook spool or encrypted bundle adapter. Hosted endpoint transport lives outside this package and is not proved here."
+      }
+    ],
+    "adapter_exclusions": [
+      {
+        "requirement": "Node age transfer must use verified device EKs; backup must use sole scrypt recipient. Restore after co-signed device_add and verify signed manifest before atomic exposure union and data admission.",
+        "reason": "This gate requires a real node/storage/transport adapter. Pure memorycontract tests cannot establish it; outside this test-only gateway port scope and UNVERIFIED here."
+      }
+    ]
+  },
+  {
+    "id": "V21",
+    "status": "NOT_APPLICABLE",
+    "applicable_selectors": [],
+    "not_applicable_selectors": [
+      {
+        "package": "./view",
+        "run": "^Test(CoverageAndTaintBySequence|ReadBackAndOwnerTaskBoundary)$",
+        "reason": "The gateway memorycontract port has no view reducer or model-facing retrieval renderer. Binding, coverage and taint projection are node responsibilities."
+      }
+    ],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V22",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./record",
+        "run": "^TestRedactBeforeBoundaryAndActualGolden$"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": [
+      {
+        "requirement": "Node sealing pipeline must prove no raw source hash or parser buffer reaches any durable store.",
+        "reason": "This gate requires a real node/storage/transport adapter. Pure memorycontract tests cannot establish it; outside this test-only gateway port scope and UNVERIFIED here."
+      }
+    ]
+  },
+  {
+    "id": "V23",
+    "status": "NOT_APPLICABLE",
+    "applicable_selectors": [],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": [
+      {
+        "requirement": "Node modernc.org/sqlite v1.60.1 must verify FTS5 secure-delete config1 at open and planted token absence in DB WAL and shadow tables after FULL-synchronous erasure. Contract module has no database.",
+        "reason": "This gate requires a real node/storage/transport adapter. Pure memorycontract tests cannot establish it; outside this test-only gateway port scope and UNVERIFIED here."
+      },
+      {
+        "requirement": "Contract2 event salts and nonce intermediates must be absent from every persisted equality workspace, cache, diagnostic and erased event copy; recapture tombs apply before sealing.",
+        "reason": "This gate requires a real node/storage/transport adapter. Pure memorycontract tests cannot establish it; outside this test-only gateway port scope and UNVERIFIED here."
+      }
+    ]
+  },
+  {
+    "id": "V24",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./invalidate",
+        "run": "^TestOpCacheRows$"
+      },
+      {
+        "package": "./record",
+        "run": "^TestV3IndependentSecrets"
+      }
+    ],
+    "not_applicable_selectors": [
+      {
+        "package": "./replay",
+        "run": "^Test",
+        "reason": "The gateway memorycontract port has no node tool replay cache or delivery generation adapter. Those node transactions are outside this package."
+      }
+    ],
+    "adapter_exclusions": [
+      {
+        "requirement": "Node must atomically persist mutation, original tool/args, exposure, render version, dedup generation and confirmation with actual store transactions.",
+        "reason": "This gate requires a real node/storage/transport adapter. Pure memorycontract tests cannot establish it; outside this test-only gateway port scope and UNVERIFIED here."
+      }
+    ]
+  },
+  {
+    "id": "V25",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./invalidate",
+        "run": "^Test(WithdrawalByGrant|WithdrawalBeforeFirstArrival|UnresolvedSemanticAncestryAndDuplicateGrants|LateAuthenticatedGrantResolvesPending)$"
+      },
+      {
+        "package": "./sig",
+        "run": "^TestDeliveryGrantBindings$"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V26",
+    "status": "NOT_APPLICABLE",
+    "applicable_selectors": [],
+    "not_applicable_selectors": [
+      {
+        "package": "./view",
+        "run": "^TestCoverageAndTaintBySequence$",
+        "reason": "The gateway memorycontract port has no view reducer or model-facing retrieval renderer. Binding, coverage and taint projection are node responsibilities."
+      }
+    ],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V27",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./invalidate",
+        "run": "^TestLateExposureAndOwnerScopedAbsentTask$"
+      }
+    ],
+    "not_applicable_selectors": [
+      {
+        "package": "./view",
+        "run": "^TestReadBackAndOwnerTaskBoundary$",
+        "reason": "The gateway memorycontract port has no view reducer or model-facing retrieval renderer. Binding, coverage and taint projection are node responsibilities."
+      },
+      {
+        "package": "./heads",
+        "run": "^TestIgnoredSupersedes$",
+        "reason": "The gateway memorycontract port has no heads reducer. Durable head/supersession behavior belongs to the node, outside this pure verifier port."
+      }
+    ],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V28",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./invalidate",
+        "run": "^Test(LineageHold|LateExposureAndOwnerScopedAbsentTask|UnresolvedSemanticAncestryAndDuplicateGrants|PendingToHoldTransitiveSemanticClosure|EventOccurrenceErasureAndRecaptureBan)$"
+      }
+    ],
+    "not_applicable_selectors": [
+      {
+        "package": "./transport",
+        "run": "^TestBundleCuts$",
+        "reason": "The gateway memorycontract port has no node transport, outbox, hook spool or encrypted bundle adapter. Hosted endpoint transport lives outside this package and is not proved here."
+      }
+    ],
+    "adapter_exclusions": [
+      {
+        "requirement": "Node bundle transfer/restore must persist late binding and selector identities, exclude incomplete roots without auto-selecting private records, and retain exposure facts after compaction and body erasure.",
+        "reason": "This gate requires a real node/storage/transport adapter. Pure memorycontract tests cannot establish it; outside this test-only gateway port scope and UNVERIFIED here."
+      }
+    ]
+  },
+  {
+    "id": "V29",
+    "status": "APPLICABLE",
+    "applicable_selectors": [
+      {
+        "package": "./record",
+        "run": "^Test(RulesetFingerprintAndGolden|RedactBeforeBoundaryAndActualGolden)$"
+      }
+    ],
+    "not_applicable_selectors": [],
+    "adapter_exclusions": []
+  },
+  {
+    "id": "V30",
+    "status": "NOT_APPLICABLE",
+    "applicable_selectors": [],
+    "not_applicable_selectors": [
+      {
+        "package": "./view",
+        "run": "^TestCoverageAndTaintBySequence$",
+        "reason": "The gateway memorycontract port has no view reducer or model-facing retrieval renderer. Binding, coverage and taint projection are node responsibilities."
+      }
+    ],
+    "adapter_exclusions": []
+  }
+]

@@ -24,6 +24,7 @@ import (
 type authorityView struct {
 	devices *sig.Keyring
 	tenant  *sig.Keyring
+	service *sig.Keyring
 	name    string
 	// policy is the verification-only chain: the committed sequence and id
 	// plus every staged policy in log order. Its head is a private copy.
@@ -60,6 +61,11 @@ func (s *Store) stagedView(ctx context.Context, d *databaseState, staged []Signe
 			return nil, err
 		}
 		v.tenant, v.name = kr, d.tenant.tenant
+		if service, err := s.serviceKeyring(ctx, v.name); err == nil {
+			v.service = service
+		} else if Code(err) != "service_pins_required" {
+			return nil, err
+		}
 		c := d.tenant.chain
 		v.policy = &policy.Chain{Tenant: c.Tenant, HighestSeq: c.HighestSeq, HighestID: c.HighestID, Tampered: c.Tampered}
 	}
@@ -82,23 +88,30 @@ func (s *Store) stagedView(ctx context.Context, d *databaseState, staged []Signe
 				// Tenant roots come only from an authenticated login.
 				return nil, failure("unauthorized_staged")
 			case b.Subject.Role == record.RoleDevice:
-				if b.Genesis != s.opts.PinnedGenesisID {
+				if keyOpGenesis(b) != s.opts.PinnedGenesisID {
 					return nil, failure("unauthorized_staged")
 				}
+			case b.Subject.Role == record.RoleService && v.service != nil && b.Genesis == v.name:
+				op.Issuer = receiptIssuerContext(v.name)
+				kr = v.service
 			case b.Subject.Role == record.RolePolicy && v.tenant != nil && b.Genesis == v.name:
 				op.Issuer = sig.TrustedIssuer{Tenant: v.name, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin}
 				kr = v.tenant
 			default:
 				return nil, failure("unauthorized_staged")
 			}
-			if st := sig.VerifyKeyOp(kr, op).Status; st != sig.OpAuthorized && st != sig.OpConflictLost {
+			if st := sig.VerifyKeyOpContext(ctx, kr, op).Status; st != sig.OpAuthorized && st != sig.OpConflictLost {
 				return nil, failure("unauthorized_staged")
 			}
 		case *record.PolicyBody:
 			if v.tenant == nil {
 				return nil, failure("policy_context_required")
 			}
-			p, err := policy.Verify(r, in.Sigs, v.tenant.State(), sig.TrustedIssuer{Tenant: v.name, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin})
+			authority, err := v.tenant.StateContext(ctx)
+			if err != nil {
+				return nil, contractEvaluationError(err)
+			}
+			p, err := policy.Verify(r, in.Sigs, authority, sig.TrustedIssuer{Tenant: v.name, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin})
 			if err != nil {
 				return nil, failure("invalid_policy")
 			}
@@ -189,7 +202,11 @@ func (s *Store) stagePolicy(ctx context.Context, in SignedRecord, staged []Signe
 			return failure("invalid_policy")
 		}
 		defer v.release()
-		p, err := policy.Verify(r, in.Sigs, v.tenant.State(), sig.TrustedIssuer{Tenant: v.name, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin})
+		authority, err := v.tenant.StateContext(ctx)
+		if err != nil {
+			return contractEvaluationError(err)
+		}
+		p, err := policy.Verify(r, in.Sigs, authority, sig.TrustedIssuer{Tenant: v.name, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin})
 		if err != nil {
 			return failure("invalid_policy")
 		}
@@ -290,12 +307,19 @@ func (s *Store) ApplySupplement(ctx context.Context, in SignedRecord, staged []S
 				return err
 			}
 			v.release()
-			view = v.devices.State()
+			view, err = v.devices.StateContext(ctx)
+			if err != nil {
+				return contractEvaluationError(err)
+			}
 		}
 		// A staged rotation of this device's key retires the old key durably
 		// at once while its successor is active only in the view, so
 		// enrollment is satisfied by either.
-		if !localEnrolled(d.keyState(), s.opts) && !localEnrolled(view, s.opts) {
+		localState, err := d.keyStateContext(ctx)
+		if err != nil {
+			return err
+		}
+		if !localEnrolled(localState, s.opts) && !localEnrolled(view, s.opts) {
 			return failure("device_not_enrolled")
 		}
 		s.verifyView = view
@@ -348,7 +372,7 @@ func (s *Store) StageKeyOperation(ctx context.Context, in SignedRecord, staged [
 			return err
 		}
 		b, ok := r.Body.(*record.KeyOpBody)
-		if !ok || b.Subject.Role != record.RoleDevice || b.Genesis != s.opts.PinnedGenesisID {
+		if !ok || b.Subject.Role != record.RoleDevice || keyOpGenesis(b) != s.opts.PinnedGenesisID {
 			return failure("unauthorized_staged")
 		}
 		if d.byID[r.ID] != nil {
@@ -405,7 +429,7 @@ func (s *Store) loadKeyRestrictions(ctx context.Context, d *databaseState) error
 			return failure("corrupt_database")
 		}
 		body := r.Body.(*record.KeyOpBody)
-		if body.Genesis != s.opts.PinnedGenesisID {
+		if keyOpGenesis(body) != s.opts.PinnedGenesisID {
 			return failure("corrupt_database")
 		}
 		d.restrict = append(d.restrict, &sig.KeyOp{Rec: r, Body: body, Sigs: signatures, AdmittedSeq: seq})
@@ -419,25 +443,46 @@ func (s *Store) loadKeyRestrictions(ctx context.Context, d *databaseState) error
 // keyState is the effective device key state: completed authority restricted
 // by the staged key-restriction overlay.
 func (d *databaseState) keyState() *sig.State {
-	st := d.kr.State()
+	st, err := d.keyStateContext(d.ctx)
+	if err != nil {
+		return sig.RefusedState(err)
+	}
+	return st
+}
+
+// keyStateContext returns a detached authority snapshot before applying the
+// staged restriction overlay. Refusal never falls back to less restricted keys.
+func (d *databaseState) keyStateContext(ctx context.Context) (*sig.State, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	st, err := d.kr.StateContext(ctx)
+	if err != nil {
+		return nil, contractEvaluationError(err)
+	}
 	if len(d.restrict) == 0 {
-		return st
+		return st, nil
 	}
 	kr := sig.NewKeyring(d.kr.Pinned())
 	ops := d.kr.Ops()
 	for _, op := range ops {
-		if kr.Add(op) != nil {
-			return st
+		if err := kr.AddContext(ctx, op); err != nil {
+			return nil, contractEvaluationError(err)
 		}
 	}
 	for _, op := range d.restrict {
 		if ops[op.Rec.ID] == nil {
-			// A row that no longer adds to the keyring restricts nothing more.
-			_ = kr.Add(op)
+			if err := kr.AddContext(ctx, op); err != nil {
+				return nil, contractEvaluationError(err)
+			}
 		}
 	}
-	restrictKeys(st, kr.State())
-	return st
+	combined, err := kr.StateContext(ctx)
+	if err != nil {
+		return nil, contractEvaluationError(err)
+	}
+	restrictKeys(st, combined)
+	return st, nil
 }
 
 func keySeverity(s sig.KeyStatus) int {
@@ -500,7 +545,11 @@ func (s *Store) DeviceKeyStatus(ctx context.Context, keyID string) (string, erro
 		if err != nil {
 			return err
 		}
-		if k := d.keyState().KeyFor(keyID, record.RoleDevice, ""); k != nil {
+		authority, err := d.keyStateContext(ctx)
+		if err != nil {
+			return err
+		}
+		if k := authority.KeyFor(keyID, record.RoleDevice, ""); k != nil {
 			out = string(k.Status)
 		}
 		return nil

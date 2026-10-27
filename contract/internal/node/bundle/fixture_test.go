@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -55,7 +54,7 @@ func fixtureNode(t *testing.T) (*store.Store, ed25519.PrivateKey, string) {
 
 func fixturePlaintext(t *testing.T) []byte {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "v20-exposures.json"))
+	raw, err := readPinnedPureFixture("..", queryPureModule)
 	if err != nil {
 		t.Fatal(err)
 	}

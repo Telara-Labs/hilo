@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	tapredact "github.com/Telara-Labs/TAP-Runtime/discover/redact"
 	"sort"
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
@@ -40,8 +41,10 @@ func (r exportRedactor) Argument(n, s string) string {
 	}
 	return localpolicy.Argument(n, s)
 }
-func (exportRedactor) Profiles() []string                        { return nil }
-func (r exportRedactor) RedactProfile(_ string, s string) string { return r.Redact(s) }
+func (exportRedactor) Profiles() []string { return nil }
+func (r exportRedactor) RedactProfile(profile string, s string) string {
+	return tapredact.CurrentRuleset().RedactProfile(profile, r.Redact(s))
+}
 
 type candidate struct {
 	entry store.Entry
@@ -160,6 +163,18 @@ func (w *Worker) export(ctx context.Context, p Profile, ob *outbox) (int, error)
 		if meta, ok := variant.Body.(*record.SessionMetaBody); ok && meta.Repo != nil {
 			remote = meta.Repo.Remote
 		}
+		if variant.Header.Type == record.KindTask && pol.Governed {
+			resolver, ok := w.cfg.Store.(interface {
+				RepositoryRemote(context.Context, string) (string, error)
+			})
+			if !ok {
+				continue
+			}
+			remote, err = resolver.RepositoryRemote(ctx, h.Subj.RepoID)
+			if err != nil || remote == "" {
+				continue
+			}
+		}
 		if !pol.PushAllowed(remote) {
 			continue
 		}
@@ -171,6 +186,9 @@ func (w *Worker) export(ctx context.Context, p Profile, ob *outbox) (int, error)
 		if _, err := nodesync.NewOperation("probe", []nodesync.SignedRecord{signed}); err != nil {
 			// The exact allowlist refuses this variant before any queueing.
 			continue
+		}
+		if err = w.cfg.Store.RegisterRepositoryVariant(ctx, c.entry.ID, store.SignedRecord{HeaderJCS: variant.HeaderJCS, BodyJCS: variant.BodyJCS, Sigs: signed.Sigs, AdvisoryID: variant.ID}); err != nil {
+			return 0, err
 		}
 		batch = append(batch, signed)
 		rows = append(rows, queuedRow{RecordID: variant.ID, SourceID: c.entry.ID, LID: h.LID, Kind: string(h.Type), Repo: h.Subj.RepoID, Remote: remote, Authority: rule.authority(), Profile: record.ProfilePushMetadata})
@@ -189,6 +207,32 @@ func (w *Worker) export(ctx context.Context, p Profile, ob *outbox) (int, error)
 		return 0, err
 	}
 	err = w.state.tx(ctx, func(q querier) error {
+		// A local scrub may have fenced a source after this batch was
+		// prepared. Check the durable sidecar fence under its writer before
+		// any copy is stored, including a stale export resuming after scrub.
+		for _, r := range rows {
+			if r.Kind == string(record.KindTask) && pol.Governed {
+				resolver, ok := w.cfg.Store.(interface {
+					RepositoryRemote(context.Context, string) (string, error)
+				})
+				if !ok {
+					return nodesync.ErrCancelled
+				}
+				remote, err := resolver.RepositoryRemote(ctx, r.Repo)
+				if err != nil || remote == "" || remote != r.Remote {
+					return nodesync.ErrCancelled
+				}
+			}
+			for _, k := range []fenceKey{{fenceID, r.SourceID}, {fenceID, r.RecordID}, {fenceLID, r.LID}} {
+				blocked, err := hasFence(ctx, q, k)
+				if err != nil {
+					return err
+				}
+				if blocked {
+					return nodesync.ErrCancelled
+				}
+			}
+		}
 		if _, err := q.ExecContext(ctx, "INSERT INTO operation VALUES(?,?,?,?,?,0,0,?,'')", opID, ob.dest, op.Bytes(), op.Digest(), statePending, w.state.now().UnixMilli()); err != nil {
 			return errStateInvalid
 		}

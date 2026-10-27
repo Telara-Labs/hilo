@@ -59,6 +59,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := s.initializeCapture(ctx); err != nil {
 		return err
 	}
+	if _, err := s.conn.ExecContext(ctx, repositorySchema); err != nil {
+		return failure("storage_error")
+	}
 	if err := s.initializeDisclosure(ctx); err != nil {
 		return err
 	}

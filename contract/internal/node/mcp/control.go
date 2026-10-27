@@ -7,6 +7,7 @@ import (
 
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/capture"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
 )
@@ -19,9 +20,12 @@ const ScrubWait = 15 * time.Second
 // key: erasure and physical scrub retry. It is reachable only from direct
 // control connections, never from forwarded MCP requests.
 type ownerControl struct {
-	mu     sync.Mutex
-	st     *store.Store
-	signer *capture.PreloadedKeyMaterial
+	dir     string
+	vault   disclosure.SecretVault
+	service *disclosure.Service
+	mu      sync.Mutex
+	st      *store.Store
+	signer  *capture.PreloadedKeyMaterial
 }
 
 func newOwnerControl(st *store.Store, keys capture.PreloadedKeyMaterial) *ownerControl {
@@ -59,7 +63,7 @@ type EraseResult struct {
 // Control handles owner control methods. The boolean is false for methods it
 // does not own, so the daemon reports them as unsupported.
 func (b *Backend) Control(ctx context.Context, req daemon.Request) (daemon.Response, bool) {
-	if req.Method != "erase" && req.Method != "scrub" {
+	if req.Method != "erase" && req.Method != "scrub" && req.Method != "repository_inspect" && req.Method != "repository_enroll" && req.Method != "repository_revoke" {
 		return daemon.Response{}, false
 	}
 	c := b.control
@@ -73,6 +77,52 @@ func (b *Backend) Control(ctx context.Context, req daemon.Request) (daemon.Respo
 	}
 	out := daemon.Response{JSONRPC: "2.0", ID: req.ID}
 	switch req.Method {
+	case "repository_inspect":
+		if len(req.Params) > 0 && string(req.Params) != "{}" {
+			return daemon.Error(req.ID, "invalid_arguments"), true
+		}
+		result, err := c.st.InspectRepositories(ctx)
+		if err != nil {
+			return daemon.Error(req.ID, store.Code(err)), true
+		}
+		out.Result = result
+	case "repository_enroll":
+		var p struct {
+			Observation string `json:"observation"`
+			ProjectRoot string `json:"project_root"`
+			Remote      string `json:"remote"`
+		}
+		if ipc.DecodeStrict(req.Params, &p) != nil {
+			return daemon.Error(req.ID, "invalid_arguments"), true
+		}
+		if c.service == nil || c.vault == nil {
+			return daemon.Error(req.ID, "runtime_authority_unavailable"), true
+		}
+		admin, err := c.service.Administration(ctx)
+		if err != nil {
+			return daemon.Error(req.ID, "runtime_authority_unavailable"), true
+		}
+		result, err := disclosure.EnrollRepositoryContext(ctx, c.dir, c.st, admin, c.vault, store.RepositoryEnrollment{Observation: p.Observation, ProjectRoot: p.ProjectRoot, Remote: p.Remote})
+		if err != nil {
+			return daemon.Error(req.ID, store.Code(err)), true
+		}
+		out.Result = result
+	case "repository_revoke":
+		var p struct {
+			Binding string `json:"binding"`
+		}
+		if ipc.DecodeStrict(req.Params, &p) != nil {
+			return daemon.Error(req.ID, "invalid_arguments"), true
+		}
+		if c.signer == nil || c.vault == nil {
+			return daemon.Error(req.ID, "runtime_authority_unavailable"), true
+		}
+		controls, err := disclosure.RetireRepositoryContext(ctx, c.dir, p.Binding, c.st, c.vault, c.signer)
+		if err != nil {
+			return daemon.Error(req.ID, store.Code(err)), true
+		}
+		out.Result = map[string]any{"binding": p.Binding, "controls": controls, "state": "retired"}
+
 	case "erase":
 		var p struct {
 			IDs    []string `json:"ids"`

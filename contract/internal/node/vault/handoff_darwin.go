@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -44,6 +43,13 @@ func handoffTarget(r install.Record, digest string) string {
 }
 
 func privateRead(path string) ([]byte, error) {
+	return privateReadLimit(path, 16384)
+}
+
+func privateReadLimit(path string, limit int64) ([]byte, error) {
+	if limit <= 0 || limit > 131072 {
+		return nil, ErrUnavailable
+	}
 	if ipc.ValidateDir(filepath.Dir(path), false) != nil {
 		return nil, ErrUnavailable
 	}
@@ -51,7 +57,7 @@ func privateRead(path string) ([]byte, error) {
 	if e != nil {
 		return nil, e
 	}
-	if !trustedCustodyStat(before, true, false) || !custodyACLReadOnly(path, true) || before.Size() > 16384 {
+	if !trustedCustodyStat(before, true, false) || !custodyACLReadOnly(path, true) || before.Size() > limit {
 		return nil, ErrUnavailable
 	}
 	f, e := os.Open(path)
@@ -63,8 +69,8 @@ func privateRead(path string) ([]byte, error) {
 	if e != nil || !os.SameFile(before, after) {
 		return nil, ErrUnavailable
 	}
-	b, e := io.ReadAll(io.LimitReader(f, 16385))
-	if e != nil || len(b) > 16384 {
+	b, e := io.ReadAll(io.LimitReader(f, limit+1))
+	if e != nil || int64(len(b)) > limit {
 		return nil, ErrUnavailable
 	}
 	return b, nil
@@ -283,147 +289,11 @@ func CheckUpgradeTarget(ctx context.Context, source install.Record, target strin
 	return checkTargetCapabilities(ctx, handoffTarget(source, target), target)
 }
 
-// abortUnpublished authenticates the still-current source and proves its custody
-// before removing a historical incompatible-target marker. Metadata enumeration
-// refuses unexplained foreign slots even when a target cannot run any helper.
-// Caller holds custody-upgrade.lock and lifecycle/db writer admission.
-func (v *Vault) abortUnpublished(ctx context.Context, current install.Record, m custodyHandoff) error {
-	report, e := install.Status(ctx, current.Dir)
-	if (e != nil && !errors.Is(e, install.ErrUnavailable)) || report.Record != current || current != m.Source || m.Keychain != v.keychainPath {
-		return install.ErrUnverified
-	}
-	h, e := installedHandle(current.DataDir)
-	if e != nil || h != m.Handle {
-		return ErrUnavailable
-	}
-	f, e := pinHandoffImage(handoffTarget(current, m.Target), m.Target)
-	if e != nil {
-		return e
-	}
-	f.Close()
-	secret, e := v.imageOperation(ctx, current.Executable, current.SHA256, 2, h, nil)
-	if e != nil {
-		return e
-	}
-	clear(secret)
-	own, e := v.imageOperation(ctx, current.Executable, current.SHA256, 5, h, nil)
-	if e != nil {
-		return e
-	}
-	if m.Legacy {
-		own = []byte(service)
-	}
-	probe := func() error {
-		b, e := v.operation(ctx, "foreign-slots", h, own)
-		if e != nil || len(b) != 1 || b[0] != 0 {
-			return ErrUnavailable
-		}
-		return nil
-	}
-	if probe() != nil {
-		// Older helpers can lack the handshake yet still support exact-slot cleanup.
-		target, e := v.imageOperation(ctx, handoffTarget(current, m.Target), m.Target, 5, h, nil)
-		if e != nil {
-			return e
-		}
-		if m.Legacy {
-			own = []byte(service)
-		}
-		if string(own) != string(target) {
-			if _, e = v.imageOperation(ctx, handoffTarget(current, m.Target), m.Target, 6, h, nil); e != nil {
-				return e
-			}
-		}
-		if e = probe(); e != nil {
-			return e
-		}
-	}
-	if e = os.Remove(filepath.Join(current.DataDir, handoffFile)); e != nil {
-		return e
-	}
-	return syncHandoffDir(current.DataDir)
-}
-
-// PrepareUpgrade runs in the old verified daemon before quiescence. The install
-// lifecycle lock has already authenticated and staged Target. Secrets go only
-// through bounded anonymous pipes into that exact image's native helper.
-func (v *Vault) PrepareUpgrade(ctx context.Context, source install.Record, target string) error {
-	if ctx == nil {
-		return ErrInvalid
-	}
-	if e := ctx.Err(); e != nil {
-		return e
-	}
-	if v == nil || v.closed || !digestValid(target) || source.Executable != handoffTarget(source, source.SHA256) {
-		return ErrInvalid
-	}
-	self, e := os.Executable()
-	if e != nil || self != source.Executable {
-		return install.ErrUnverified
-	}
-	r, e := install.Status(ctx, source.Dir)
-	if (e != nil && !errors.Is(e, install.ErrUnavailable)) || r.Record != source {
-		return install.ErrUnverified
-	}
-	if e = v.bindCustody(ctx, source.DataDir, false); e != nil {
-		return e
-	}
-	targetImage, e := pinHandoffImage(handoffTarget(source, target), target)
-	if e != nil {
-		return e
-	}
-	defer targetImage.Close()
-	// Refuse incompatible targets before even creating the transfer lock file.
-	if e = checkTargetCapabilities(ctx, handoffTarget(source, target), target); e != nil {
-		return e
-	}
-	lock, e := ipc.Lock(filepath.Join(source.DataDir, "custody-upgrade.lock"))
-	if e != nil {
-		return e
-	}
-	defer lock.Close()
-	handle, e := installedHandle(source.DataDir)
-	if e != nil {
-		return e
-	}
-	m, e := readHandoff(source.DataDir)
-	if e == nil && m.Source == source && m.Handle == handle && m.Keychain == v.keychainPath &&
-		(m.Target != target || checkTargetCapabilities(ctx, handoffTarget(source, m.Target), m.Target) != nil) {
-		if e = v.abortUnpublished(ctx, source, m); e != nil {
-			return e
-		}
-		e = os.ErrNotExist
-	}
-	if os.IsNotExist(e) {
-		slot, e := v.operation(ctx, "legacy-slot", handle, nil)
-		if e != nil || len(slot) != 1 || slot[0] > 1 {
-			return ErrUnavailable
-		}
-		m = custodyHandoff{1, source, target, handle, v.keychainPath, "prepared", slot[0] == 1}
-		if e = writeHandoff(m); e != nil {
-			return e
-		}
-	} else if e != nil || m.Source != source || m.Target != target || m.Handle != handle || m.Keychain != v.keychainPath {
-		return ErrUnavailable
-	}
-	secret, e := v.Get(ctx, handle)
-	if e != nil {
-		return e
-	}
-	defer clear(secret)
-	readback, e := v.imageOperation(ctx, handoffTarget(source, target), target, 4, handle, secret)
-	defer clear(readback)
-	if e != nil || subtle.ConstantTimeCompare(secret, readback) != 1 {
-		return ErrUnavailable
-	}
-	m.Phase = "ready"
-	return writeHandoff(m)
-}
-
-// RecoverUpgrade runs under db.lock before opening a managed backend. Old receipt
-// means old custody remains authoritative. New receipt means verify new readback,
-// then retire only the old build's slot and durably remove the pending marker.
-func (v *Vault) RecoverUpgrade(ctx context.Context, current install.Record) error {
+// recoverRuntimeUpgrade reconciles the single recorded v1 runtime handle before
+// opening a managed backend. The full-profile lifecycle calls it only after
+// target proofs. An old receipt retains source custody; a new receipt verifies
+// its readback before retiring the exact old slot and removing the marker.
+func (v *Vault) recoverRuntimeUpgrade(ctx context.Context, current install.Record) error {
 	if ctx == nil {
 		return ErrInvalid
 	}
@@ -526,7 +396,7 @@ func runHandoffHelper(args []string, in io.Reader, out io.Writer) bool {
 		_, _ = out.Write([]byte{1})
 		return true
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), profileLifecycleWait)
 	defer cancel()
 	v := New()
 	var e error
@@ -573,24 +443,10 @@ func (v *Vault) ResumeUpgrade(ctx context.Context, source install.Record, target
 	if (e != nil && !errors.Is(e, install.ErrUnavailable)) || report.Record != source {
 		return install.ErrUnverified
 	}
+	if e = CheckProfileUpgradeSource(ctx, source); e != nil {
+		return e
+	}
 	if e = checkTargetCapabilities(ctx, handoffTarget(source, target), target); e != nil {
-		return e
-	}
-	if e = v.bindCustody(ctx, source.DataDir, false); e != nil {
-		return e
-	}
-	lock, e := ipc.Lock(filepath.Join(source.DataDir, "custody-upgrade.lock"))
-	if e != nil {
-		return e
-	}
-	m, e := readHandoff(source.DataDir)
-	if e == nil && (m.Target != target || checkTargetCapabilities(ctx, handoffTarget(source, m.Target), m.Target) != nil) {
-		e = v.abortUnpublished(ctx, source, m)
-	} else if os.IsNotExist(e) {
-		e = nil
-	}
-	lock.Close()
-	if e != nil {
 		return e
 	}
 	return v.lifecycleImage(ctx, source, target, resumeArg)
@@ -624,7 +480,7 @@ func (v *Vault) lifecycleImage(ctx context.Context, source install.Record, targe
 	if e != nil {
 		return e
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, profileLifecycleWait)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, source.Executable, arg)
 	cmd.WaitDelay = time.Second
@@ -673,6 +529,11 @@ func (v *Vault) DeleteForInstall(ctx context.Context, current install.Record, ha
 	if h, e := installedHandle(current.DataDir); e != nil || h != handle {
 		return ErrUnavailable
 	}
+	// Complete-profile staging must be settled before the caller takes its
+	// database writer lock. Never acquire custody admission from this path.
+	if _, e := readProfileHandoff(current.DataDir); !os.IsNotExist(e) {
+		return ErrUnavailable
+	}
 	if e = v.bindCustody(ctx, current.DataDir, false); e != nil {
 		return e
 	}
@@ -681,6 +542,12 @@ func (v *Vault) DeleteForInstall(ctx context.Context, current install.Record, ha
 		return e
 	}
 	if e == nil {
+		if m.Handle != handle || m.Keychain != v.keychainPath {
+			return ErrUnavailable
+		}
+		if checkTargetCapabilities(ctx, handoffTarget(m.Source, m.Target), m.Target) != nil {
+			return ErrLegacyCustody
+		}
 		if current != m.Source {
 			if e = v.lifecycleImage(ctx, current, "", recoverArg); e != nil {
 				return e
@@ -697,11 +564,10 @@ func (v *Vault) DeleteForInstall(ctx context.Context, current install.Record, ha
 				return ErrUnavailable
 			}
 			if checkTargetCapabilities(ctx, handoffTarget(current, m.Target), m.Target) != nil {
-				if e = v.abortUnpublished(ctx, current, m); e != nil {
-					return e
-				}
-				_, e = v.imageOperation(ctx, current.Executable, current.SHA256, 3, handle, nil)
-				return e
+				// An incompatible image cannot establish native ownership.
+				// Neither absence guesses nor account-wide enumeration may
+				// authorize cleanup of an unrecorded staging slot.
+				return ErrLegacyCustody
 			}
 			oldService, e := v.imageOperation(ctx, current.Executable, current.SHA256, 5, handle, nil)
 			if e != nil {

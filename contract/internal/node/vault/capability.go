@@ -2,14 +2,22 @@ package vault
 
 import (
 	"bytes"
+	"errors"
 	"io"
+	"time"
 )
 
 const capabilityArg = "native-custody-capabilities"
 
+const profileLifecycleWait = 5 * time.Minute
+
+var ErrLegacyCustody = errors.New("custody_maintenance_migration_required")
+
 // The capability request has no handle, keychain path or secret and must never
-// open native custody. Version 1 requires transfer, own-slot read and cleanup.
-var capabilityRequest = []byte{'T', 'M', 'V', 'C', 0, 1}
+// open native custody. Version 2 additionally requires complete typed profile
+// inventory, writer fencing and per-handle creator evidence. Legacy callers
+// cannot negotiate this protocol and must retain their current custody.
+var capabilityRequest = []byte{'T', 'M', 'V', 'C', 0, 2}
 
 func runCapabilities(args []string, in io.Reader, out io.Writer, native bool) bool {
 	if len(args) != 1 || args[0] != capabilityArg {

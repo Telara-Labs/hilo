@@ -1,0 +1,51 @@
+name: native-cross
+
+on:
+  push:
+    branches: [ci-native-cross]
+
+permissions:
+  contents: read
+
+jobs:
+  native-cross:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: cross compile exact native acceptance driver and CLI
+        working-directory: contract/internal/node
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+          GOTOOLCHAIN: local
+          GOENV: "off"
+        run: |
+          test "$(go version)" = "go version go1.26.1 linux/amd64"
+          go test -mod=readonly -p 2 -trimpath -buildvcs=false -ldflags=-buildid= -tags e2e -c -o "$GITHUB_WORKSPACE/clients-darwin-arm64.test" ./e2e/clients
+          go build -mod=readonly -p 2 -trimpath -buildvcs=false -ldflags=-buildid= -o "$GITHUB_WORKSPACE/telara-memory-darwin-arm64" ./cmd/telara-memory
+      - name: source and artifact receipts
+        run: |
+          git rev-parse HEAD > SOURCE_COMMIT
+          git rev-parse HEAD:contract > CONTRACT_TREE
+          git status --porcelain --untracked-files=all -- contract > SOURCE_STATUS
+          test ! -s SOURCE_STATUS
+          sha256sum clients-darwin-arm64.test telara-memory-darwin-arm64 > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-cross-darwin-arm64
+          path: |
+            clients-darwin-arm64.test
+            telara-memory-darwin-arm64
+            SOURCE_COMMIT
+            CONTRACT_TREE
+            SOURCE_STATUS
+            SHA256SUMS
+          retention-days: 3

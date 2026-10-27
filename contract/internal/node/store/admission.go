@@ -317,7 +317,11 @@ func (s *Store) enrichBody(ctx context.Context, d *databaseState, x *stored, r *
 	if err := s.verifyCandidate(d, r, x.sigs, x.seq); err != nil {
 		return AdmissionResult{}, err
 	}
-	res := sig.VerifyRecord(r, x.sigs, d.keyState(), sig.Context{Route: record.RouteLocal, AdmittedSeq: x.seq})
+	authority, evaluationErr := d.keyStateContext(ctx)
+	if evaluationErr != nil {
+		return AdmissionResult{}, evaluationErr
+	}
+	res := sig.VerifyRecord(r, x.sigs, authority, sig.Context{RequestContext: ctx, Route: record.RouteLocal, AdmittedSeq: x.seq})
 	if res.Status != sig.StatusVerified || res.Owner != x.owner || !s.authorMachineAllowed(r, res) {
 		return AdmissionResult{}, failure("unauthorized_record")
 	}
@@ -390,7 +394,11 @@ func (s *Store) prepareNew(d *databaseState, r *record.Record, signatures []reco
 	// evaluation-only block and the barrier row are one owner block. A held
 	// operation admitted earlier, before any block, stays retained but outside
 	// authority, and the parent that completes it remains admissible.
-	if r.Header.Type == record.KindKeyOp && d.blocked && d.kr.State().Status[r.ID] == sig.OpHeldParents {
+	authority, evaluationErr := d.kr.StateContext(d.evaluationContext())
+	if evaluationErr != nil {
+		return nil, contractEvaluationError(evaluationErr)
+	}
+	if r.Header.Type == record.KindKeyOp && d.blocked && authority.Status[r.ID] == sig.OpHeldParents {
 		return nil, failure("authority_evaluation_required")
 	}
 	return x, nil
@@ -419,26 +427,38 @@ func (s *Store) persistPrepared(ctx context.Context, d *databaseState, added []*
 	return s.persistState(ctx, d)
 }
 
+// keyOpGenesis selects scope only; callers still require canonical Parse and
+// possession/authority verification. It never fills a received signed field.
+func keyOpGenesis(b *record.KeyOpBody) string {
+	if b.Op == record.OpGenesis && b.Genesis == "" {
+		return b.Subject.KeyID
+	}
+	return b.Genesis
+}
+
 // verifyCandidate is shared by ordinary admission and producer verification,
 // including a full candidate whose identity is already retained in SQL.
 func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures []record.Signature, sequence int64) error {
-	if err := d.tenant.validateBody(r); err != nil {
+	if err := d.validateAdmittedBody(r); err != nil {
 		return err
 	}
 	if r.Header.Type == record.KindCall && r.Body != nil && record.ValidateCommitmentDependencies(r, knownCallRoots(d, r)) != nil {
 		return failure("commitment_dependencies")
 	}
-	st := d.keyState()
+	st, evaluationErr := d.keyStateContext(d.ctx)
+	if evaluationErr != nil {
+		return evaluationErr
+	}
 	if r.Header.Type == record.KindKeyOp {
 		if d.authorityEpoch == math.MaxInt64 {
 			return failure("ordinal_limit")
 		}
 		body := r.Body.(*record.KeyOpBody)
-		if body.Genesis != s.opts.PinnedGenesisID {
+		if keyOpGenesis(body) != s.opts.PinnedGenesisID {
 			return failure("unsupported_context")
 		}
 		op := &sig.KeyOp{Rec: r, Body: body, Sigs: signatures, AdmittedSeq: sequence}
-		checked := sig.VerifyKeyOp(d.kr, op)
+		checked := sig.VerifyKeyOpContext(d.evaluationContext(), d.kr, op)
 		if checked.Err != nil || checked.Status == sig.OpInvalid || checked.Status == sig.OpIgnored || checked.Status == sig.OpHeldGenesis {
 			return failure("invalid_record")
 		}
@@ -446,7 +466,10 @@ func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures [
 		if s.verifyView != nil && r.Header.Type == record.KindErasure {
 			st = s.verifyView
 		}
-		res := d.verifyWithReceipt(r, signatures, st, 0, nil)
+		res, evaluationErr := d.verifyWithReceipt(r, signatures, st, 0, nil)
+		if evaluationErr != nil {
+			return evaluationErr
+		}
 		if res.Status != sig.StatusVerified || res.Owner != s.opts.PinnedGenesisID || !s.authorMachineAllowed(r, res) {
 			return failure("unauthorized_record")
 		}
@@ -457,14 +480,21 @@ func (s *Store) verifyCandidate(d *databaseState, r *record.Record, signatures [
 		}
 	}
 	if b, ok := r.Body.(*record.ErasureBody); ok {
-		if len(b.Selectors.Tasks)+len(b.Selectors.Sessions)+len(b.Selectors.LIDs)+len(b.Selectors.Sources) > 0 {
-			return failure("bulk_confirmation_required")
-		}
-		// Event selectors have unbounded future effect too, even with zero
-		// current matches. A bundle applies one only after the receiving
-		// owner's local confirmation; the local erase command and hosted
-		// browser re-authentication confirm on their own routes.
-		if len(b.Selectors.Events) > 0 && s.controlConfirm != nil && !s.controlConfirm[r.ID] {
+		// Task, session, LID, source and event selectors have unbounded
+		// future effect, even with zero current matches. Inside a bundle
+		// import each such control applies only after the receiving owner's
+		// local confirmation of that exact control; the issuer checks above
+		// and the cumulative effect bound still apply to a confirmed one.
+		// Elsewhere task, session, LID and source selectors are never
+		// admitted, and event selectors are confirmed by the local erase
+		// command and hosted browser re-authentication on their own routes.
+		sel := b.Selectors
+		bulk := len(sel.Tasks)+len(sel.Sessions)+len(sel.LIDs)+len(sel.Sources) > 0
+		if s.controlConfirm != nil {
+			if (bulk || len(sel.Events) > 0) && !s.controlConfirm[r.ID] {
+				return failure("bulk_confirmation_required")
+			}
+		} else if bulk {
 			return failure("bulk_confirmation_required")
 		}
 	}

@@ -77,6 +77,9 @@ func (*AutostartError) Error() string { return "autostart_unverified_install" }
 // Spawn delegates only to the verified owner installation's service manager.
 // It never clears stop intent or launches the current executable directly.
 func Spawn(p ipc.Paths) error {
+	if p.Data == "" || p.Run == "" {
+		return &AutostartError{}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	dir, err := install.DefaultDir()

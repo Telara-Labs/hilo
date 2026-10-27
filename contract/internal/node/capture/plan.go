@@ -176,6 +176,15 @@ func (p *Pipeline) produce(tx *store.CaptureTxn, q store.CaptureRequest, batch p
 		return empty, hold("authority_changed")
 	}
 	q.PolicyID = c.PolicyID
+	if c.RepositoryBinding != q.RepositoryBinding || c.RepositoryGeneration != q.RepositoryGeneration {
+		return empty, hold("authority_changed")
+	}
+	if c.Repository.ID != "" {
+		copy := c.Repository
+		q.Repository = &copy
+	} else {
+		q.Repository = nil
+	}
 	progress, err := tx.Progress()
 	if err != nil {
 		return empty, hold("transaction_expired")
@@ -372,6 +381,10 @@ func (p *Pipeline) produce(tx *store.CaptureTxn, q store.CaptureRequest, batch p
 	for i := 0; i < pageCount; i++ {
 		end := min(len(members), (i+1)*record.MaxSnapshotChunks)
 		body := &record.SessionBody{NativeID: batch.nativeSession, NativeIDKind: record.NativeGlobal, Page: int64(i), Chunks: append([]string(nil), members[i*record.MaxSnapshotChunks:end]...), SettledThrough: q.Range.LastExclusive - 1, Reader: &record.SourceRef{Reader: q.Reader.Reader, ReaderVersion: q.Reader.ReaderVersion}}
+		if q.Repository != nil {
+			copy := *q.Repository
+			body.Repo = &copy
+		}
 		links := record.Links{}
 		id := ""
 		if old, ok := oldPages[int64(i)]; ok {
@@ -408,12 +421,22 @@ func (p *Pipeline) produce(tx *store.CaptureTxn, q store.CaptureRequest, batch p
 }
 
 func (p *Pipeline) reusableHeader(h record.Header, q store.CaptureRequest) bool {
+	expectedRepo := ""
+	if q.Repository != nil {
+		expectedRepo = q.Repository.ID
+	}
+	if h.Subj.RepoID != expectedRepo {
+		return false
+	}
 	return h.Pol == q.PolicyID && h.Prov == record.ProvTranscript && h.Author.MachineID == p.config.MachineID && h.Subj.SessionKey == q.Occurrence.SessionKey && h.Subj.Source == q.Occurrence.Source && h.Subj.Client != nil && h.Subj.Client.ID == q.Reader.Reader && h.Red.Profile == record.ProfileLocal && h.Red.Epoch == p.ruleset.Epoch && h.Red.Fingerprint == q.RulesetFingerprint && h.Trust.Coverage == "incomplete" && equalStrings(h.Trust.Taint, []string{"taint-unknown"})
 }
 func (p *Pipeline) build(q store.CaptureRequest, kind record.Kind, lid string, body any, links record.Links, lease PreloadedKeyMaterial) (store.SignedRecord, error) {
 	defer lease.Clear()
 	h := record.Header{Type: kind, LID: lid, Author: record.Author{MachineID: p.config.MachineID, KeyID: lease.keyID}, At: time.Now().UnixMilli(), Prov: record.ProvTranscript, Subj: record.Subject{SessionKey: q.Occurrence.SessionKey, Source: q.Occurrence.Source, Client: &record.ClientRef{ID: q.Reader.Reader, Surface: "cli"}}, Red: record.Redact{Profile: record.ProfileLocal, Epoch: p.ruleset.Epoch, Fingerprint: q.RulesetFingerprint}, Trust: record.Trust{Taint: []string{"taint-unknown"}, Coverage: "incomplete"}, Links: links}
 	// PolicyID comes from the same acquired store writer as authority/progress.
+	if q.Repository != nil {
+		h.Subj.RepoID = q.Repository.ID
+	}
 	// The preparation snapshot alone cannot authorize a seal after a policy race.
 	h.Pol = q.PolicyID
 	r, err := record.Build(h, body)

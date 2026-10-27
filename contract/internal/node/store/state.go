@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 
@@ -32,6 +33,7 @@ type stored struct {
 	state                   string
 }
 type databaseState struct {
+	repositoryHeld                      map[string]bool
 	tenant                              *tenantState
 	policyTenants                       map[string]string
 	policyLogout                        map[string]bool
@@ -85,7 +87,10 @@ func (s *Store) load(ctx context.Context) (*databaseState, error) {
 		}
 		d.blocked = true
 		d.projectionBlocked = true
-		d.eval = invalidate.NewModel().Evaluate()
+		d.eval, err = invalidate.NewModel().EvaluateDetachedContext(ctx)
+		if err != nil {
+			return nil, contractEvaluationError(err)
+		}
 		return d, nil
 	}
 	d := &databaseState{store: s, ctx: ctx, byID: map[string]*stored{}, facts: map[string]view.EventFacts{}}
@@ -235,6 +240,14 @@ func (s *Store) load(ctx context.Context) (*databaseState, error) {
 		}
 		return nil, err
 	}
+	if err = s.loadRepositoryFacts(ctx, d); err != nil {
+		return nil, err
+	}
+	if len(d.repositoryHeld) > 0 {
+		if err = d.rebuild(s.opts); err != nil {
+			return nil, err
+		}
+	}
 	for _, x := range d.records {
 		x.previousLive = (x.state == "live" || x.state == "privacy-hold") && x.sigStatus == sig.StatusVerified && x.rec.Body != nil
 	}
@@ -265,7 +278,7 @@ func (d *databaseState) rebuild(o Options) error {
 			return failure("corrupt_database")
 		}
 		op := &sig.KeyOp{Rec: x.rec, Body: b, Sigs: x.sigs, AdmittedSeq: x.seq}
-		if err := d.kr.Add(op); err != nil {
+		if err := d.kr.AddContext(d.evaluationContext(), op); err != nil {
 			return failure("corrupt_database")
 		}
 	}
@@ -293,7 +306,10 @@ func (d *databaseState) rebuild(o Options) error {
 			}
 		}
 	}
-	st := d.keyState()
+	st, err := d.keyStateContext(d.ctx)
+	if err != nil {
+		return err
+	}
 	for _, x := range d.records {
 		h := x.rec.Header
 		if h.Type == record.KindKeyOp {
@@ -303,7 +319,10 @@ func (d *databaseState) rebuild(o Options) error {
 				x.sigStatus = sig.StatusUnknownSigner
 			}
 		} else {
-			x.sigStatus = d.recordSigStatus(x, st)
+			x.sigStatus, err = d.recordSigStatus(x, st)
+			if err != nil {
+				return err
+			}
 		}
 		it := invalidate.Item{BodyAvailable: x.rec.Body != nil, EventMembershipComplete: x.membershipComplete, ID: x.rec.ID, LID: h.LID, Kind: h.Type, Prov: h.Prov, Owner: x.owner, TaskID: h.Subj.TaskID, SessionKey: h.Subj.SessionKey, Source: h.Subj.Source, Deps: x.deps, Events: x.events, Recalls: x.recalls, Origin: h.Links.Origin, Route: record.RouteLocal, OriginMachine: h.Author.MachineID, Explicit: h.Prov == record.ProvMCPExplicit, SessionSeq: x.lastSeq}
 		if a, ok := d.attrs[x.rec.ID]; ok {
@@ -336,7 +355,11 @@ func (d *databaseState) rebuild(o Options) error {
 	if err := d.importedSemanticFacts(); err != nil {
 		return err
 	}
-	d.eval = d.model.Evaluate()
+	evaluated, err := d.model.EvaluateDetachedContext(d.evaluationContext())
+	if err != nil {
+		return contractEvaluationError(err)
+	}
+	d.eval = evaluated
 	if d.eval.OwnerPending[o.PinnedGenesisID] {
 		d.blocked = true
 	}
@@ -348,6 +371,9 @@ func (d *databaseState) rebuild(o Options) error {
 	}
 	for _, x := range d.records {
 		x.state = string(d.eval.StatusOf(x.rec.ID))
+		if x.state == "live" && d.repositoryHeld[x.rec.ID] {
+			x.state = "lineage-hold"
+		}
 		if x.sigStatus != sig.StatusVerified && x.state != string(invalidate.Invalidated) {
 			x.state = "unverified"
 		}
@@ -477,4 +503,23 @@ func containsID(ids []string, id string) bool {
 		}
 	}
 	return false
+}
+
+func (d *databaseState) evaluationContext() context.Context {
+	if d.ctx != nil {
+		return d.ctx
+	}
+	return context.Background()
+}
+
+// Keep budget exhaustion distinct from corrupt wire input and preserve the
+// caller's cancellation. No partial evaluator result reaches projection writes.
+func contractEvaluationError(err error) error {
+	if errors.Is(err, invalidate.ErrEvaluationBudget) {
+		return &projectionLimit{}
+	}
+	if errors.Is(err, sig.ErrHistoryBudget) {
+		return failure("authority_evaluation_required")
+	}
+	return err
 }

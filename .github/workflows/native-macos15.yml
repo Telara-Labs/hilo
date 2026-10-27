@@ -1,0 +1,54 @@
+name: native-macos15
+on:
+  push:
+    branches: [ci-native-macos15]
+permissions:
+  contents: read
+jobs:
+  native-driver:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: private native test directory
+        run: |
+          mkdir -m 700 "$HOME/.memory-ci-tmp"
+          echo "TMPDIR=$HOME/.memory-ci-tmp" >> "$GITHUB_ENV"
+      - name: native custody acceptance driver and actual CLI
+        working-directory: contract/internal/node
+        run: |
+          test "$(go env GOOS)" = darwin
+          test "$(go env GOARCH)" = arm64
+          test "$(go env CGO_ENABLED)" = 1
+          go test -mod=readonly -p 2 -tags e2e -v -count=1 -run '^TestHarness(AuthIsolation|EnvironmentAndArguments|PrecompiledNativeHelper|ExplicitCursorAPIKeyScope|AdapterMergeAndHookSpool)$' ./e2e/clients
+          go test -mod=readonly -p 2 -count=1 -run '^TestPiCompositeCallIdentity$' ./capture
+          go test -mod=readonly -p 2 -tags e2e -c -o "$GITHUB_WORKSPACE/clients.test" ./e2e/clients
+          go build -mod=readonly -p 2 -trimpath -o "$GITHUB_WORKSPACE/telara-memory-darwin-arm64" ./cmd/telara-memory
+      - name: compile exact native utility and record source
+        run: |
+          ./clients.test export-native-helper-source "$PWD/native-helper.c"
+          /usr/bin/clang -Wno-deprecated-declarations native-helper.c -framework Security -framework CoreFoundation -o keychain-helper
+          shasum -a 256 clients.test telara-memory-darwin-arm64 keychain-helper native-helper.c > SHA256SUMS
+          git rev-parse HEAD > SOURCE_COMMIT
+          git rev-parse HEAD:contract > CONTRACT_TREE
+          git status --porcelain --untracked-files=all -- contract > SOURCE_STATUS
+          test ! -s SOURCE_STATUS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-macos15-driver
+          path: |
+            clients.test
+            telara-memory-darwin-arm64
+            keychain-helper
+            native-helper.c
+            SHA256SUMS
+            SOURCE_COMMIT
+            CONTRACT_TREE
+            SOURCE_STATUS
+          retention-days: 3

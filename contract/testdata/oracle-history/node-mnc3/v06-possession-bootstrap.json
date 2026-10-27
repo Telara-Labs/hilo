@@ -1,0 +1,920 @@
+{
+  "contract": "mnc/3.0",
+  "description": "V6 possession bootstrap. Genesis is self-signed by its subject; device_add carries the new key's possession signature and one active co-signer of the same genesis in the op's history; a tenant root key needs exactly one subject possession signature, empty parents and a matching pinned TLS login, and neither the signature nor the login alone suffices. Seeds are public TEST-ONLY inputs. Statuses are what VerifyKeyOp reports for op after the prior ops are added to a keyring pinned to pinned_genesis; bootstrap must fold to the same key state in every arrival order.",
+  "pinned_genesis": "c26288f445968c5f0bd839c6e4b296e8",
+  "keys": [
+    {
+      "name": "A",
+      "test_seed_hex": "a2eab632829045890b26d5f56844f3f9e84102d45ca8a021944affbf86304a9d",
+      "pub": "5fbQCh9N12AcEmuGDYr93lWu1akXCQPkXilKGFi7EDs",
+      "key_id": "c26288f445968c5f0bd839c6e4b296e8"
+    },
+    {
+      "name": "B",
+      "test_seed_hex": "d23f478a183b9f5ffed88539f6a6df3162cc2f24d02b48a0c95f28c9844915b8",
+      "pub": "EWPlnwKfp0Zf_wwICNWZWCtxSqb7ygn9KupldkGeShE",
+      "key_id": "1a9e58437a3bc4793a6ef74b2e55fc93"
+    },
+    {
+      "name": "C",
+      "test_seed_hex": "626934757fef204f13488ed6960e9652a6d707f9cfce72e1cab7772e629ddeb5",
+      "pub": "qbCVIEtxRSkArabUCQoPEXB8l98LiQFvChNrXMi93iI",
+      "key_id": "9c99aa04f9be6075575e61517948c25e"
+    },
+    {
+      "name": "T",
+      "test_seed_hex": "7071499b1c1143706aabf2349b7edd16c6cb74effe3465eae73cc9250e633ec0",
+      "pub": "NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4",
+      "key_id": "8af33f3b1251dd9bb291f14124aaed64"
+    },
+    {
+      "name": "T2",
+      "test_seed_hex": "bed2251e6f17394db920a121528fb56eb9eb8bce32b8d559af1f6d568a6c6fcf",
+      "pub": "Yh32QZ49N6n4iuXRjQahmg6Ad8qG5hDmvQV795ywTL4",
+      "key_id": "2aca9ea73b1527b9183ccd7d5387bb9e"
+    },
+    {
+      "name": "P",
+      "test_seed_hex": "dc410dbc07c995aad8a98dfebed5669e832a39c56702f9233f6b2c165c0acb51",
+      "pub": "KD2q18Fe6pHPoKcFNCPbeWJ2RJxo2ulrt9QAIsBjiL0",
+      "key_id": "001c718fa39eb08074381a40f7320118"
+    },
+    {
+      "name": "X",
+      "test_seed_hex": "2ef6e98b1d8a573481e8587e241927706eb2853b7615c700ed5afada8d889c6e",
+      "pub": "ahPDVhhOpyBUc7AewnCVOMeOsnZwmBESOd6vkVcMKms",
+      "key_id": "bff561c3a3f72cb437f334f9c039f43c"
+    }
+  ],
+  "ops": [
+    {
+      "name": "genesis",
+      "header_jcs": "{\"at\":1761160000001,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"3868e694a65d230793b9c8f8be58390bb77815625b3bb5ff0a4f2ac5b1886a99\",\"size\":253},\"lid\":\"64499f2d9729019c8783b77014f7f254f475a1054918b4ce6fe544ebc7c795aa\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"genesis\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\",\"pub\":\"5fbQCh9N12AcEmuGDYr93lWu1akXCQPkXilKGFi7EDs\",\"role\":\"device\"}}",
+      "id": "827d8c3a666ba598311173ab56d5fde0eedf2d5f489d8c137f1c16af22d739bc",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+          "ctx": "mnc/v1/record",
+          "value": "Q59yJRChDX1gZcuExobUGS9ikqqFOpbSGSizRBLRT-n1jYvv0EMtlExOkxB9fLuE8f4xe4Q11OfCAd4HbB76Cw"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "addB",
+      "header_jcs": "{\"at\":1761160000002,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"913ac36fc041373d3f5e91dce25e77cdaddd1dded58bb5f7fc3c411e81b6b5ff\",\"size\":335},\"lid\":\"b0ea75e79b701ba6fc9eae923c474168c23393a6a9b3c6b5adfae2e954dc14b6\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"device_add\",\"parents\":[\"827d8c3a666ba598311173ab56d5fde0eedf2d5f489d8c137f1c16af22d739bc\"],\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"1a9e58437a3bc4793a6ef74b2e55fc93\",\"machine_id\":\"22222222-2222-4222-8222-222222222222\",\"pub\":\"EWPlnwKfp0Zf_wwICNWZWCtxSqb7ygn9KupldkGeShE\",\"role\":\"device\"}}",
+      "id": "8c0a945e7228bcb6e4051ca9ccf287832a70c5df00861ad009311b2c33860217",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "1a9e58437a3bc4793a6ef74b2e55fc93",
+          "ctx": "mnc/v1/record",
+          "value": "pcd2wI-wElZdvsQMf2kb0rzzjp4f9HSr6naV-VWY_HBYjDfVn5CyV79CMd3zsCUZRsljoweciY38TzMxjBi2AQ"
+        },
+        {
+          "alg": "ed25519",
+          "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+          "ctx": "mnc/v1/record",
+          "value": "HXlOMMOrlry4BZF2N8bGYOMr6hMF66_zIn6xzSpYfxFjfWA3xGnNTkxaMWB57BnVtwx1kk64Ox-QlMthqxcODg"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "tskT",
+      "header_jcs": "{\"at\":1761160000003,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"69f10af83dde2758805eb2972fcfe45d4b20fe5427c8fb69377f829477b88341\",\"size\":177},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "e86e4121f6d47aef8bcfd92533268a18137bdd2d1161f778c3f0e344c2bf3601",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "KqfWIt9GfzTLKiRcD_22XtZCi4rqihV6a7Irqz2dBfHwNID0z-AZtA5ilporvFEPKz36zxkBnWUAXuW--AISDg"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "service",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tpkP",
+      "header_jcs": "{\"at\":1761160000004,\"author\":{\"key_id\":\"001c718fa39eb08074381a40f7320118\"},\"body\":{\"digest\":\"818c1852ab1fe594cd7e632d52b2d7169d25883b22611f0a868703e8bb268800\",\"size\":176},\"lid\":\"a28fe2f8c51ee59e141a0c299f39bb52267e991e2419fa9d33e0bc6e422076eb\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"001c718fa39eb08074381a40f7320118\",\"pub\":\"KD2q18Fe6pHPoKcFNCPbeWJ2RJxo2ulrt9QAIsBjiL0\",\"role\":\"policy\"}}",
+      "id": "dba4ff727fb3e4373465d8d5695d36059aa503d47b4c3027dd8c565ae3626b0e",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "001c718fa39eb08074381a40f7320118",
+          "ctx": "mnc/v1/record",
+          "value": "sqirOkSrkhCVX0ndy_El7lNH3SI1d0W5lFVhjNk_UZ4r6KBe43Lo6vGRs68wEgCKtNieyCa57nz9P1YWwjdGBw"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "policy",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tskT2sync",
+      "header_jcs": "{\"at\":1761160000005,\"author\":{\"key_id\":\"2aca9ea73b1527b9183ccd7d5387bb9e\"},\"body\":{\"digest\":\"6bdaaacd50af2acc1190304a7575ab05702b2ac8dba04baa6e3c41f8860b6897\",\"size\":177},\"lid\":\"f69f1fa95ec175aaa9771a45afd0d46e9b3b71ba619efd1e1af5e14a8332681e\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"2aca9ea73b1527b9183ccd7d5387bb9e\",\"pub\":\"Yh32QZ49N6n4iuXRjQahmg6Ad8qG5hDmvQV795ywTL4\",\"role\":\"service\"}}",
+      "id": "36cc45c5d147d0854d587e8240e6def62418a80ed51daace2fb3805174d54309",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "2aca9ea73b1527b9183ccd7d5387bb9e",
+          "ctx": "mnc/v1/record",
+          "value": "XhXE9rRL3QQxC8LyOZPobhKmvVFKNQs2NUCH4dDS2lxg93Kf2U_27CwyF0cRSt7z4HQNEh8tndcYfCEh4I_BAg"
+        }
+      ],
+      "from_login": false,
+      "issuer": {
+        "tenant": "acme",
+        "role": "service",
+        "provenance": "authenticated-admission"
+      }
+    },
+    {
+      "name": "gNoSig",
+      "header_jcs": "{\"at\":1761160000006,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"3868e694a65d230793b9c8f8be58390bb77815625b3bb5ff0a4f2ac5b1886a99\",\"size\":253},\"lid\":\"64499f2d9729019c8783b77014f7f254f475a1054918b4ce6fe544ebc7c795aa\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"genesis\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\",\"pub\":\"5fbQCh9N12AcEmuGDYr93lWu1akXCQPkXilKGFi7EDs\",\"role\":\"device\"}}",
+      "id": "bcd937d9c2068559abca0acaba2679756c35f7add2124cb420ea444b0a39dca5",
+      "sigs": [],
+      "from_login": false
+    },
+    {
+      "name": "gForeign",
+      "header_jcs": "{\"at\":1761160000007,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"3868e694a65d230793b9c8f8be58390bb77815625b3bb5ff0a4f2ac5b1886a99\",\"size\":253},\"lid\":\"64499f2d9729019c8783b77014f7f254f475a1054918b4ce6fe544ebc7c795aa\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"genesis\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\",\"pub\":\"5fbQCh9N12AcEmuGDYr93lWu1akXCQPkXilKGFi7EDs\",\"role\":\"device\"}}",
+      "id": "227327e58d845bb584bcb1e0823afa37d031507a918e3e1a04046c16f7654420",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "bff561c3a3f72cb437f334f9c039f43c",
+          "ctx": "mnc/v1/record",
+          "value": "jzIrvBIwFTIW4LT5YE0CezgDmkTgfGd0ckBREkffKT7bZjyhoaBUvBjd_dZHVmQyuDjuBtwsahBXEK_IdvpFDw"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "gForged",
+      "header_jcs": "{\"at\":1761160000008,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"3868e694a65d230793b9c8f8be58390bb77815625b3bb5ff0a4f2ac5b1886a99\",\"size\":253},\"lid\":\"64499f2d9729019c8783b77014f7f254f475a1054918b4ce6fe544ebc7c795aa\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"genesis\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\",\"pub\":\"5fbQCh9N12AcEmuGDYr93lWu1akXCQPkXilKGFi7EDs\",\"role\":\"device\"}}",
+      "id": "8d262d9396dea457bb68cace45bdb5db00fcae6915868b8645c9392f4587102c",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+          "ctx": "mnc/v1/record",
+          "value": "jdQQ9iJkszF6aMyy3Vkjg41vsfYqwYAZK159hTtCnsTOYwh1tKP5J1vRkBUL5NMry4S58ZiwwY9ziSz4tBriBg"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "gBundleCtx",
+      "header_jcs": "{\"at\":1761160000009,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"3868e694a65d230793b9c8f8be58390bb77815625b3bb5ff0a4f2ac5b1886a99\",\"size\":253},\"lid\":\"64499f2d9729019c8783b77014f7f254f475a1054918b4ce6fe544ebc7c795aa\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"genesis\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\",\"pub\":\"5fbQCh9N12AcEmuGDYr93lWu1akXCQPkXilKGFi7EDs\",\"role\":\"device\"}}",
+      "id": "91a9abde2503204a08a1db22e5a6ee6bd888bce3c5649bcf7931e1a20d3f6c16",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+          "ctx": "mnc/v1/record",
+          "value": "KgLEDTcyaakDPvW1vZjR3pABlyvOcfHlB-QCVlEpkSiC8wRs9_TqMGpsAeDw7XVkMLn-mSB-TBTCvO11eXfPBQ"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "gParents",
+      "header_jcs": "{\"at\":1761160000010,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"a1bcb90fe5d417827b5496c4e0c3ae9c6507022271fdfdf18123bdf872e00356\",\"size\":332},\"lid\":\"64499f2d9729019c8783b77014f7f254f475a1054918b4ce6fe544ebc7c795aa\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"genesis\",\"parents\":[\"5ad38304b535c2987dbd24657c1a11b884984ff600d9f389deb0d4e634fee792\"],\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\",\"pub\":\"5fbQCh9N12AcEmuGDYr93lWu1akXCQPkXilKGFi7EDs\",\"role\":\"device\"}}",
+      "id": "34ddc5df1fdd88f977e01cb1ede598226396ae7097b1e0031f043efc5122d4b8",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+          "ctx": "mnc/v1/record",
+          "value": "LgmZLoKIEpkYi6dlX9pWZWZVjdt3YACqzZqUJn3kKylavZ1UpRxa-rNC3sbZ0VTckDFROY4UGqtQaIBMXBjeDw"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "addBpossOnly",
+      "header_jcs": "{\"at\":1761160000011,\"author\":{\"key_id\":\"1a9e58437a3bc4793a6ef74b2e55fc93\",\"machine_id\":\"22222222-2222-4222-8222-222222222222\"},\"body\":{\"digest\":\"913ac36fc041373d3f5e91dce25e77cdaddd1dded58bb5f7fc3c411e81b6b5ff\",\"size\":335},\"lid\":\"b0ea75e79b701ba6fc9eae923c474168c23393a6a9b3c6b5adfae2e954dc14b6\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"device_add\",\"parents\":[\"827d8c3a666ba598311173ab56d5fde0eedf2d5f489d8c137f1c16af22d739bc\"],\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"1a9e58437a3bc4793a6ef74b2e55fc93\",\"machine_id\":\"22222222-2222-4222-8222-222222222222\",\"pub\":\"EWPlnwKfp0Zf_wwICNWZWCtxSqb7ygn9KupldkGeShE\",\"role\":\"device\"}}",
+      "id": "2b95ceb900e67a1e35ed382d48c0e915b73a03e41dc65308de697b18deeb9215",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "1a9e58437a3bc4793a6ef74b2e55fc93",
+          "ctx": "mnc/v1/record",
+          "value": "xo6aacufsWbwnaAqB-pIqVgKL3dq4CqL59xojjM3KOeLANvdJdPZXqUo-Rlwwd4Jef4LEIaiJEA9sAsbIOaFAQ"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "addBauthOnly",
+      "header_jcs": "{\"at\":1761160000012,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"913ac36fc041373d3f5e91dce25e77cdaddd1dded58bb5f7fc3c411e81b6b5ff\",\"size\":335},\"lid\":\"b0ea75e79b701ba6fc9eae923c474168c23393a6a9b3c6b5adfae2e954dc14b6\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"device_add\",\"parents\":[\"827d8c3a666ba598311173ab56d5fde0eedf2d5f489d8c137f1c16af22d739bc\"],\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"1a9e58437a3bc4793a6ef74b2e55fc93\",\"machine_id\":\"22222222-2222-4222-8222-222222222222\",\"pub\":\"EWPlnwKfp0Zf_wwICNWZWCtxSqb7ygn9KupldkGeShE\",\"role\":\"device\"}}",
+      "id": "1b6b741323116bc34cbfd103b39e6b69823f840a3aca9efa88f8ad5dc6388c29",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+          "ctx": "mnc/v1/record",
+          "value": "78tfKqhhb0DTBRBFs2i8aLIeOS10WJZYrpAq6Su3KKB9yiek6KMF2gGJYeXZTMTSnO339XUVvoCD3aD4-kD3Dw"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "addBforeignPoss",
+      "header_jcs": "{\"at\":1761160000013,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"913ac36fc041373d3f5e91dce25e77cdaddd1dded58bb5f7fc3c411e81b6b5ff\",\"size\":335},\"lid\":\"b0ea75e79b701ba6fc9eae923c474168c23393a6a9b3c6b5adfae2e954dc14b6\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"device_add\",\"parents\":[\"827d8c3a666ba598311173ab56d5fde0eedf2d5f489d8c137f1c16af22d739bc\"],\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"1a9e58437a3bc4793a6ef74b2e55fc93\",\"machine_id\":\"22222222-2222-4222-8222-222222222222\",\"pub\":\"EWPlnwKfp0Zf_wwICNWZWCtxSqb7ygn9KupldkGeShE\",\"role\":\"device\"}}",
+      "id": "6c8783957b29d769fd07019b0a45f27ebb58247c7d3da54cef7ce30e84b510b7",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "bff561c3a3f72cb437f334f9c039f43c",
+          "ctx": "mnc/v1/record",
+          "value": "rEBTNVmauYSCIr-K5g9m6QJyrtViBFlA6tVeiQE6Y7j4FEzpEB7IIrOXtxTqt_OGRtOniTbClAnHkmjpwPo1Bg"
+        },
+        {
+          "alg": "ed25519",
+          "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+          "ctx": "mnc/v1/record",
+          "value": "GIXKrfdrL9EwTc2TaplHrHqyNkMw8WRe6vzrZvcK7fdIx5UTs-xhOie0BnYLoWwPCLABxka82IPcFycZrrMZBA"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "addBforgedPoss",
+      "header_jcs": "{\"at\":1761160000014,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"913ac36fc041373d3f5e91dce25e77cdaddd1dded58bb5f7fc3c411e81b6b5ff\",\"size\":335},\"lid\":\"b0ea75e79b701ba6fc9eae923c474168c23393a6a9b3c6b5adfae2e954dc14b6\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"device_add\",\"parents\":[\"827d8c3a666ba598311173ab56d5fde0eedf2d5f489d8c137f1c16af22d739bc\"],\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"1a9e58437a3bc4793a6ef74b2e55fc93\",\"machine_id\":\"22222222-2222-4222-8222-222222222222\",\"pub\":\"EWPlnwKfp0Zf_wwICNWZWCtxSqb7ygn9KupldkGeShE\",\"role\":\"device\"}}",
+      "id": "496edea38c8bf4efec73dee66795d2823fe01c8dfcc660f5a85c176722a2c271",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "1a9e58437a3bc4793a6ef74b2e55fc93",
+          "ctx": "mnc/v1/record",
+          "value": "QfvY3BbcK6AtARzHlof_gKHxjy0PVEwoxELpTYGAuAOJkco9RHjth8iR7f9f9AGxpWsIuNAOEMWOvh9lOSLrCg"
+        },
+        {
+          "alg": "ed25519",
+          "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+          "ctx": "mnc/v1/record",
+          "value": "HE1qnXr4JtlBWcsJrCIYwl7aTLzw7LnwW2M2ltTpeVjxUYg0F6cSsNq1pMgrii85qhLPcsg_H9gnVepqede8BA"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "addBbundleCtx",
+      "header_jcs": "{\"at\":1761160000015,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"913ac36fc041373d3f5e91dce25e77cdaddd1dded58bb5f7fc3c411e81b6b5ff\",\"size\":335},\"lid\":\"b0ea75e79b701ba6fc9eae923c474168c23393a6a9b3c6b5adfae2e954dc14b6\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"device_add\",\"parents\":[\"827d8c3a666ba598311173ab56d5fde0eedf2d5f489d8c137f1c16af22d739bc\"],\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"1a9e58437a3bc4793a6ef74b2e55fc93\",\"machine_id\":\"22222222-2222-4222-8222-222222222222\",\"pub\":\"EWPlnwKfp0Zf_wwICNWZWCtxSqb7ygn9KupldkGeShE\",\"role\":\"device\"}}",
+      "id": "27668cb9a4d7259d6d1dd3d4a1d9bc25aa48271c2674b717cc1e798b8f1d2462",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "1a9e58437a3bc4793a6ef74b2e55fc93",
+          "ctx": "mnc/v1/record",
+          "value": "EY_BPdO6tRMAcOnYsPRCq4AIQy9kL55jb-ZuS-H3ttPSCGiDu9PwXjNxSF3QKIhYSgJ9mmAdP2gCNZg0wgwqAw"
+        },
+        {
+          "alg": "ed25519",
+          "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+          "ctx": "mnc/v1/record",
+          "value": "UTxOWSUzOARghH7PmDY4EEytbW6U25iv5dbtJja5ShtGlyzrRmbMASN-6MjUr8nCOHqzeEo79yF8rAgUIIjJBQ"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "addBwrongMachine",
+      "header_jcs": "{\"at\":1761160000016,\"author\":{\"key_id\":\"c26288f445968c5f0bd839c6e4b296e8\",\"machine_id\":\"33333333-3333-4333-8333-333333333333\"},\"body\":{\"digest\":\"913ac36fc041373d3f5e91dce25e77cdaddd1dded58bb5f7fc3c411e81b6b5ff\",\"size\":335},\"lid\":\"b0ea75e79b701ba6fc9eae923c474168c23393a6a9b3c6b5adfae2e954dc14b6\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"device_add\",\"parents\":[\"827d8c3a666ba598311173ab56d5fde0eedf2d5f489d8c137f1c16af22d739bc\"],\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"1a9e58437a3bc4793a6ef74b2e55fc93\",\"machine_id\":\"22222222-2222-4222-8222-222222222222\",\"pub\":\"EWPlnwKfp0Zf_wwICNWZWCtxSqb7ygn9KupldkGeShE\",\"role\":\"device\"}}",
+      "id": "b923d9927471f55d031d5bad41e62181fbda3891467af0fd3e1d17a3142f1533",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "1a9e58437a3bc4793a6ef74b2e55fc93",
+          "ctx": "mnc/v1/record",
+          "value": "2PmYSwup4FR1lLSRlk78nvDpNWFJXUe3Am54ZwrznlLDyQQ36qAP6AXolze_zo_IQQ86spKPpd_uXBhNFbigBQ"
+        },
+        {
+          "alg": "ed25519",
+          "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+          "ctx": "mnc/v1/record",
+          "value": "hPnUueBUBTN0tp8qaWdVChynOf1wST11qdHk5V2cWYgc_YjxJY3iCrrLW9CxgdiaqxH5J34XtOyc5a5Mba__CA"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "addCbyBoutsideHistory",
+      "header_jcs": "{\"at\":1761160000017,\"author\":{\"key_id\":\"1a9e58437a3bc4793a6ef74b2e55fc93\",\"machine_id\":\"22222222-2222-4222-8222-222222222222\"},\"body\":{\"digest\":\"c5213ab5a943179b54c192736f9bc3d5ccdbe93271e681d02d4d8584570437d7\",\"size\":335},\"lid\":\"36cd60f4110a5e1e8507341b92166a50440b4b9d053ce698f069b06ed9344fed\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"device_add\",\"parents\":[\"827d8c3a666ba598311173ab56d5fde0eedf2d5f489d8c137f1c16af22d739bc\"],\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"9c99aa04f9be6075575e61517948c25e\",\"machine_id\":\"33333333-3333-4333-8333-333333333333\",\"pub\":\"qbCVIEtxRSkArabUCQoPEXB8l98LiQFvChNrXMi93iI\",\"role\":\"device\"}}",
+      "id": "71765a1c7b041668e522383aeecc1dcfd0c3ae0c43976d72a21e0ab4fba81628",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "9c99aa04f9be6075575e61517948c25e",
+          "ctx": "mnc/v1/record",
+          "value": "hoMPI6y8vDzNR7MGAhQSOPfABIjuqPkGoKqsbIVBw0t7EYlpyKFZjodMlAkRdvu5Hp1LZgr9mFn6qKUBXN6OBw"
+        },
+        {
+          "alg": "ed25519",
+          "key_id": "1a9e58437a3bc4793a6ef74b2e55fc93",
+          "ctx": "mnc/v1/record",
+          "value": "TJiplVd_edPO9hyvvd_gnoS2kS-X6skc1hDA2OkblDrFHBz-1abcUZWHMf2xTn8bPsm_QUggruQE4cu-0qbrAg"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "addCbyTenantKey",
+      "header_jcs": "{\"at\":1761160000018,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"c5213ab5a943179b54c192736f9bc3d5ccdbe93271e681d02d4d8584570437d7\",\"size\":335},\"lid\":\"36cd60f4110a5e1e8507341b92166a50440b4b9d053ce698f069b06ed9344fed\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"c26288f445968c5f0bd839c6e4b296e8\",\"op\":\"device_add\",\"parents\":[\"827d8c3a666ba598311173ab56d5fde0eedf2d5f489d8c137f1c16af22d739bc\"],\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"9c99aa04f9be6075575e61517948c25e\",\"machine_id\":\"33333333-3333-4333-8333-333333333333\",\"pub\":\"qbCVIEtxRSkArabUCQoPEXB8l98LiQFvChNrXMi93iI\",\"role\":\"device\"}}",
+      "id": "ca256dea48aa40fc20fa544ae4a8b6d617b45abae9d134032cddfe2b9951518d",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "9c99aa04f9be6075575e61517948c25e",
+          "ctx": "mnc/v1/record",
+          "value": "BdDp_vE8HamAOt5L9HOvBdvhtsQAjcVHnZKKF5PF6CbiDV6lGYc10Sb0L-zg_cgf-CUcYOjsgmB77iJVr-2FBA"
+        },
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "qwCC5phsRplfIDkxQQyDCxF22jSkC4i-APcdIeD2SSkvhh3QEwg3irPp9oGESNodtQdGSWhbksWSDiOGtAH7DA"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "tskNoSig",
+      "header_jcs": "{\"at\":1761160000019,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"69f10af83dde2758805eb2972fcfe45d4b20fe5427c8fb69377f829477b88341\",\"size\":177},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "e1045ea5bbb9ee4a339a9013730a38b54f27005f073d0536cc0d5be354f46526",
+      "sigs": [],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "service",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tskTwoSigs",
+      "header_jcs": "{\"at\":1761160000020,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"69f10af83dde2758805eb2972fcfe45d4b20fe5427c8fb69377f829477b88341\",\"size\":177},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "7797e96b4f9c5c4d42e71f81e3781bd73d5288532179b9935a17574f6c9dd4bd",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "EYymyrXC4tNRTHYOiyV8-WiidwhsmZanGmrFd2ZcVY6icMVckm1AesBrrlhGEK4xiiGScmu2t8SVUwgE30NsCA"
+        },
+        {
+          "alg": "ed25519",
+          "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+          "ctx": "mnc/v1/record",
+          "value": "7tFS0i-Y6RRYZItjxTTibGs_RB4V2jb4iWKeKENt4PJWXTG80KjXIcTvIxb63DissDuV3s6lMQJ7ZO1HWNzoAA"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "service",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tskForeign",
+      "header_jcs": "{\"at\":1761160000021,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"69f10af83dde2758805eb2972fcfe45d4b20fe5427c8fb69377f829477b88341\",\"size\":177},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "260416ee596f94f6c4de9799e22bf7b1678e15cbc9ef19dbabda5860e370166f",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "bff561c3a3f72cb437f334f9c039f43c",
+          "ctx": "mnc/v1/record",
+          "value": "0CY0nxyo0R9K2uGBbs2qyqLkE55DoECNuRLvqDQfCFF4Hl2V9ixRaQnxdP119xjA4v4Vd1smmYx9EEbA_w_ZBA"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "service",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tskForged",
+      "header_jcs": "{\"at\":1761160000022,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"69f10af83dde2758805eb2972fcfe45d4b20fe5427c8fb69377f829477b88341\",\"size\":177},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "98bef757f406340f7ebc23f474acd93e17bd31ec63c680769e44ec0bc20e541d",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "IOZIJ3d8MriMddg8ZBFqBJ0KDOf5gv8RGrhArFVLl8o1a9bn_II3UtR2cATJ3cK99XnhPPB0iQser-4ejNe4CA"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "service",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tskBundleCtx",
+      "header_jcs": "{\"at\":1761160000023,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"69f10af83dde2758805eb2972fcfe45d4b20fe5427c8fb69377f829477b88341\",\"size\":177},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "87f47fb151cc1b8720d9a2a4722568158be08bd00b0eb169b74c25ffef3f2730",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "eH91jbfQf_znTcdxj6UQbIKLQBHIYfmXhKC7_qymMXikX07asLBFt6VuWXn3bs0qz8vbGFMMgXbgD4j31UQAAQ"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "service",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tskParents",
+      "header_jcs": "{\"at\":1761160000024,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"2bbfafac07ebf0c2274383f5a5adbd1017aaa52f490da685bf8c16e5902406a4\",\"size\":256},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"parents\":[\"827d8c3a666ba598311173ab56d5fde0eedf2d5f489d8c137f1c16af22d739bc\"],\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "1511bcfd4eea2af63a0f816535bd9eff7f147c329b55270ef33c4cee45112390",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "jVud5AnvYYGPqupImU6WybsKhN50AarE25IRWGtA6T8X_JLAuyHZkXWfyom8lNs0LMmwgx8KgkmIJULpM3VMCw"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "service",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tskAuthorMachine",
+      "header_jcs": "{\"at\":1761160000025,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"69f10af83dde2758805eb2972fcfe45d4b20fe5427c8fb69377f829477b88341\",\"size\":177},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "c89a4592d5842ed67225c41bca068ab2a744981b7d188e24e2996b3923131733",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "IfpypYtxenghFnV6jMK32SrgYW76twuY8trPuZxT-k5rRfjBzUNdgmYTbb4cuxuVWS14KG_lLrSyD_1KwMMhAg"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "service",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tskDeviceRole",
+      "header_jcs": "{\"at\":1761160000026,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\"},\"body\":{\"digest\":\"485f1431abfb6809ddb9bc20447927b8bbc0ca1ac20aeb559971815f1bfc99cd\",\"size\":228},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"machine_id\":\"11111111-1111-4111-8111-111111111111\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"device\"}}",
+      "id": "154e2896a0b058be2cb20346d65c1a47583a997699591224d559b28375543f4a",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "Va3TeMBiQGVNCsjhL4xB0b8CJS_v0ZaQ3KNG4W7R3IJ3MDaT5X8cgD9WLXcK-1IYTDDvY2-bauesksQ74u9nCw"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "service",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tskBundleNoIssuer",
+      "header_jcs": "{\"at\":1761160000027,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"69f10af83dde2758805eb2972fcfe45d4b20fe5427c8fb69377f829477b88341\",\"size\":177},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "36b5229145721caaa7e3c0e50b8a38157966cb00d6b4f776f1c259908f90ec75",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "UkMUQCQLAAVL5muPpUWiwLDYoCqOyC42DPpwgMPGBZ0w6sboFIg0cHE3SuR4ocZyzZgJH5OrtoMnT6BIMBhWBw"
+        }
+      ],
+      "from_login": false
+    },
+    {
+      "name": "tskPinOtherTenant",
+      "header_jcs": "{\"at\":1761160000028,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"69f10af83dde2758805eb2972fcfe45d4b20fe5427c8fb69377f829477b88341\",\"size\":177},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "7888d9c78435dc94027aed67318593152053a5d6d18cea086ce2e40a7491770f",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "gg6w5yLOERLUilbfI5xx5glbh_SHm7HgeFgtnxe75qUlxggjvnKtZf_MO7QXuUOpqr3f6K0QdrBty51XfaBnBw"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "globex",
+        "role": "service",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tskPinOtherRole",
+      "header_jcs": "{\"at\":1761160000029,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"69f10af83dde2758805eb2972fcfe45d4b20fe5427c8fb69377f829477b88341\",\"size\":177},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "89f952091fdd7fda180a524daef0963b040415ef31f660761b7701209d1274dd",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "68AJUiFiyFi9XpkpEzXBroJbRbQVhcq2pabg-SquXzpLU__IsyRzIrxoQPlj1bo-edsAriiJjzsmHA5SBEA9BA"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "policy",
+        "provenance": "pinned-tls-login"
+      }
+    },
+    {
+      "name": "tskLoginFlagAdmission",
+      "header_jcs": "{\"at\":1761160000030,\"author\":{\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\"},\"body\":{\"digest\":\"69f10af83dde2758805eb2972fcfe45d4b20fe5427c8fb69377f829477b88341\",\"size\":177},\"lid\":\"9c25c8100d23d0f5a1ebfee09afc43443c26cbf5b0243930a217a503457cb3d2\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"genesis\":\"acme\",\"op\":\"tenant_key\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"8af33f3b1251dd9bb291f14124aaed64\",\"pub\":\"NHgpzBGn9jcrFFckv1GLksPHn3YN5RR8W6t84ULTyL4\",\"role\":\"service\"}}",
+      "id": "c1ddf834f5c5d36529d86b9690a28292bb034d14b25c797147d25300a60cc979",
+      "sigs": [
+        {
+          "alg": "ed25519",
+          "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+          "ctx": "mnc/v1/record",
+          "value": "f8EcHQVUgbml-yPthvL7zHFJ6TM_nWLkCHBIyXhiAFWMYuHRA_7iun2Y3JVXIDFxYAUTs0vbkswFGeDjrOn_Cw"
+        }
+      ],
+      "from_login": true,
+      "issuer": {
+        "tenant": "acme",
+        "role": "service",
+        "provenance": "authenticated-admission"
+      }
+    }
+  ],
+  "bootstrap": {
+    "ops": [
+      "genesis",
+      "addB",
+      "tskT",
+      "tpkP",
+      "tskT2sync"
+    ],
+    "expected": {
+      "addB": "authorized",
+      "genesis": "authorized",
+      "tpkP": "authorized",
+      "tskT": "authorized",
+      "tskT2sync": "ignored"
+    },
+    "keys": [
+      {
+        "role": "device",
+        "domain": "c26288f445968c5f0bd839c6e4b296e8",
+        "key_id": "c26288f445968c5f0bd839c6e4b296e8",
+        "machine_id": "11111111-1111-4111-8111-111111111111",
+        "status": "active"
+      },
+      {
+        "role": "device",
+        "domain": "c26288f445968c5f0bd839c6e4b296e8",
+        "key_id": "1a9e58437a3bc4793a6ef74b2e55fc93",
+        "machine_id": "22222222-2222-4222-8222-222222222222",
+        "status": "active"
+      },
+      {
+        "role": "policy",
+        "domain": "acme",
+        "key_id": "001c718fa39eb08074381a40f7320118",
+        "machine_id": "",
+        "status": "active"
+      },
+      {
+        "role": "service",
+        "domain": "acme",
+        "key_id": "8af33f3b1251dd9bb291f14124aaed64",
+        "machine_id": "",
+        "status": "active"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "genesis_self_possession",
+      "rule": "genesis needs one signature by its subject",
+      "prior": [],
+      "op": "genesis",
+      "expected": "authorized"
+    },
+    {
+      "name": "genesis_missing_possession",
+      "rule": "genesis needs one signature by its subject",
+      "prior": [],
+      "op": "gNoSig",
+      "expected": "invalid"
+    },
+    {
+      "name": "genesis_foreign_possession",
+      "rule": "the possession signature verifies under the body's subject pub",
+      "prior": [],
+      "op": "gForeign",
+      "expected": "invalid"
+    },
+    {
+      "name": "genesis_forged_possession_label",
+      "rule": "a key_id label does not make a foreign signature verify",
+      "prior": [],
+      "op": "gForged",
+      "expected": "invalid"
+    },
+    {
+      "name": "genesis_signed_under_bundle_context",
+      "rule": "possession is signed over the record context",
+      "prior": [],
+      "op": "gBundleCtx",
+      "expected": "invalid"
+    },
+    {
+      "name": "genesis_nonempty_parents",
+      "rule": "genesis has empty parents",
+      "prior": [],
+      "op": "gParents",
+      "expected": "invalid"
+    },
+    {
+      "name": "device_add_possession_and_cosigner",
+      "rule": "device_add needs subject possession and an active device of the genesis",
+      "prior": [
+        "genesis"
+      ],
+      "op": "addB",
+      "expected": "authorized"
+    },
+    {
+      "name": "device_add_before_parent_held",
+      "rule": "missing parents hold the op",
+      "prior": [],
+      "op": "addB",
+      "expected": "held-parents"
+    },
+    {
+      "name": "device_add_possession_only",
+      "rule": "device_add needs a co-signer",
+      "prior": [
+        "genesis"
+      ],
+      "op": "addBpossOnly",
+      "expected": "invalid"
+    },
+    {
+      "name": "device_add_cosigner_only",
+      "rule": "device_add needs subject possession",
+      "prior": [
+        "genesis"
+      ],
+      "op": "addBauthOnly",
+      "expected": "invalid"
+    },
+    {
+      "name": "device_add_foreign_possession",
+      "rule": "the possession signature verifies under the body's subject pub",
+      "prior": [
+        "genesis"
+      ],
+      "op": "addBforeignPoss",
+      "expected": "invalid"
+    },
+    {
+      "name": "device_add_forged_possession_label",
+      "rule": "a key_id label does not make a foreign signature verify",
+      "prior": [
+        "genesis"
+      ],
+      "op": "addBforgedPoss",
+      "expected": "invalid"
+    },
+    {
+      "name": "device_add_possession_under_bundle_context",
+      "rule": "possession is signed over the record context",
+      "prior": [
+        "genesis"
+      ],
+      "op": "addBbundleCtx",
+      "expected": "invalid"
+    },
+    {
+      "name": "device_add_author_machine_mismatch",
+      "rule": "the author's machine must match its enrolled machine",
+      "prior": [
+        "genesis"
+      ],
+      "op": "addBwrongMachine",
+      "expected": "invalid"
+    },
+    {
+      "name": "device_add_cosigner_outside_history",
+      "rule": "the co-signer must be active in the state of the op's own history",
+      "prior": [
+        "genesis",
+        "addB"
+      ],
+      "op": "addCbyBoutsideHistory",
+      "expected": "unauthorized"
+    },
+    {
+      "name": "device_add_cosigned_by_tenant_key",
+      "rule": "a tenant key cannot enroll a device",
+      "prior": [
+        "genesis",
+        "tskT"
+      ],
+      "op": "addCbyTenantKey",
+      "expected": "unauthorized"
+    },
+    {
+      "name": "tenant_key_login_possession",
+      "rule": "tenant_key: one subject signature, empty parents, matching pinned TLS login",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskT",
+      "expected": "authorized"
+    },
+    {
+      "name": "tenant_policy_key_login_possession",
+      "rule": "tenant_key for the policy role",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tpkP",
+      "expected": "authorized"
+    },
+    {
+      "name": "tenant_key_signature_without_login",
+      "rule": "a valid signature from sync does not pin a tenant key",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskT2sync",
+      "expected": "ignored"
+    },
+    {
+      "name": "tenant_key_from_bundle_without_issuer",
+      "rule": "a bundle carries no trusted issuer context",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskBundleNoIssuer",
+      "expected": "unauthorized"
+    },
+    {
+      "name": "tenant_key_login_without_signature",
+      "rule": "the TLS login alone does not pin a tenant key",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskNoSig",
+      "expected": "invalid"
+    },
+    {
+      "name": "tenant_key_two_signatures",
+      "rule": "tenant_key has exactly one signature",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskTwoSigs",
+      "expected": "invalid"
+    },
+    {
+      "name": "tenant_key_foreign_signature",
+      "rule": "the signature verifies under the body's subject pub",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskForeign",
+      "expected": "invalid"
+    },
+    {
+      "name": "tenant_key_forged_label",
+      "rule": "a key_id label does not make a foreign signature verify",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskForged",
+      "expected": "invalid"
+    },
+    {
+      "name": "tenant_key_signed_under_bundle_context",
+      "rule": "possession is signed over the record context",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskBundleCtx",
+      "expected": "invalid"
+    },
+    {
+      "name": "tenant_key_nonempty_parents",
+      "rule": "tenant_key has empty parents",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskParents",
+      "expected": "invalid"
+    },
+    {
+      "name": "tenant_key_author_machine",
+      "rule": "tenant keys carry no author machine",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskAuthorMachine",
+      "expected": "invalid"
+    },
+    {
+      "name": "tenant_key_device_role",
+      "rule": "tenant keys are service or policy keys",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskDeviceRole",
+      "expected": "invalid"
+    },
+    {
+      "name": "tenant_key_pin_other_tenant",
+      "rule": "the login pin must name the body's tenant",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskPinOtherTenant",
+      "expected": "unauthorized"
+    },
+    {
+      "name": "tenant_key_pin_other_role",
+      "rule": "the login pin must name the subject's role",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskPinOtherRole",
+      "expected": "unauthorized"
+    },
+    {
+      "name": "tenant_key_login_flag_with_admission_provenance",
+      "rule": "only a pinned TLS login activates a tenant root",
+      "prior": [
+        "genesis"
+      ],
+      "op": "tskLoginFlagAdmission",
+      "expected": "ignored"
+    }
+  ]
+}

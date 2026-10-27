@@ -210,6 +210,10 @@ func TestV3WorkedAndHistoricalFixtures(t *testing.T) {
 	if err != nil || r.Header.V != 3 || r.Header.Body.Digest != f.Digest || len(r.BodyJCS) != f.Size || f.Size != 86 {
 		t.Fatal("accepted worked fixture", err)
 	}
+	salt, saltErr := base64.RawURLEncoding.DecodeString(r.Body.(*record.ConclusionBody).Salt)
+	if saltErr != nil || len(salt) != 16 {
+		t.Fatal("fixed TEST-ONLY entropy", saltErr)
+	}
 	var historical []struct{ HeaderJCS, BodyJCS, ID, Digest string }
 	fixture(t, "historical-mnc2/v03-records.json", &historical)
 	for _, old := range historical {

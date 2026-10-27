@@ -1,0 +1,38 @@
+[
+  {
+    "name": "numbers",
+    "raw": "[1e+30,4.50,0.002,1e-27]",
+    "canonical": "[1e+30,4.5,0.002,1e-27]"
+  },
+  {
+    "name": "utf16-sort",
+    "raw": "{\"z\":0,\"😀\":1,\"a\":2}",
+    "canonical": "{\"a\":2,\"z\":0,\"😀\":1}"
+  },
+  {
+    "name": "duplicate",
+    "raw": "{\"a\":1,\"\\u0061\":2}",
+    "error": "duplicate_key"
+  },
+  {
+    "name": "trailing",
+    "raw": "{}x",
+    "error": "trailing_data"
+  },
+  {
+    "name": "lone",
+    "raw": "\"\\ud800\"",
+    "error": "lone_surrogate"
+  },
+  {
+    "name": "invalid-utf8",
+    "raw_base64": "Iv8i",
+    "error": "invalid_utf8"
+  },
+  {
+    "name": "not-canonical",
+    "raw": "{ \"a\":1 }",
+    "canonical": "{\"a\":1}",
+    "noncanonical": true
+  }
+]

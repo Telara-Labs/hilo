@@ -1,6 +1,7 @@
 package sig
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -27,13 +28,14 @@ func (s SigStatus) Quarantined() bool { return s == StatusUnknownSigner || s == 
 // Context carries receiver-side facts VerifyRecord needs. None of it is part
 // of the record.
 type Context struct {
-	SignerRole    record.Role   // default device; service/policy require trusted issuer
-	Issuer        TrustedIssuer // authenticated transport/pinned login, not record metadata
-	ReceiptIssuer TrustedIssuer // independent authenticated issuer of receipt
-	Route         record.Route
-	AdmittedSeq   int64           // this node's admission order of the record
-	Receipt       *record.Receipt // hosted acceptance, if carried
-	RecordID      string          // filled by VerifyRecord, never caller authority
+	RequestContext context.Context // cancellation/work budget from the receiver
+	SignerRole     record.Role     // default device; service/policy require trusted issuer
+	Issuer         TrustedIssuer   // authenticated transport/pinned login, not record metadata
+	ReceiptIssuer  TrustedIssuer   // independent authenticated issuer of receipt
+	Route          record.Route
+	AdmittedSeq    int64           // this node's admission order of the record
+	Receipt        *record.Receipt // hosted acceptance, if carried
+	RecordID       string          // filled by VerifyRecord, never caller authority
 }
 
 // Result is the outcome of VerifyRecord.
@@ -55,7 +57,7 @@ func fail(s SigStatus, format string, a ...any) Result {
 // LID, and validity across rotation and revocation. Retired keys
 // verify. A record that fails is quarantined, never indexed.
 func VerifyRecord(r *record.Record, sigs []record.Signature, st *State, c Context) Result {
-	if r == nil || st == nil {
+	if r == nil || st == nil || st.Err() != nil {
 		return fail(StatusInvalid, "record and keyring required")
 	}
 	parsed, err := record.Parse(r.HeaderJCS, r.BodyJCS, r.ID)
@@ -145,10 +147,13 @@ func VerifyRecord(r *record.Record, sigs []record.Signature, st *State, c Contex
 // verified if it carries a valid TSK receipt accepted before the revocation,
 // or if this node admitted it before it admitted the revocation.
 func PreRevocation(k *Key, c Context, st *State) bool {
+	if st == nil || st.Err() != nil {
+		return false
+	}
 	if c.AdmittedSeq > 0 && k.RevokedSeq > 0 && c.AdmittedSeq < k.RevokedSeq {
 		return true
 	}
-	if c.Receipt != nil && VerifyReceipt(*c.Receipt, st, c.ReceiptIssuer) == nil && c.Receipt.ID == c.RecordID && (k.Role != record.RoleDevice || c.Receipt.DeviceID == k.MachineID) && beforeCutoff(k, *c.Receipt, st) {
+	if c.Receipt != nil && VerifyReceipt(*c.Receipt, st, c.ReceiptIssuer) == nil && c.Receipt.ID == c.RecordID && (k.Role != record.RoleDevice || c.Receipt.DeviceID == k.MachineID) && beforeCutoff(k, *c.Receipt, st, c.RequestContext) {
 		return true
 	}
 	return false
@@ -157,6 +162,9 @@ func PreRevocation(k *Key, c Context, st *State) bool {
 // VerifyReceipt checks a receipt's signature by an active or retired service
 // key of the receipt's tenant.
 func VerifyReceipt(r record.Receipt, st *State, issuer TrustedIssuer) error {
+	if st == nil || st.Err() != nil {
+		return fmt.Errorf("key state unavailable")
+	}
 	if !issuer.ValidFor(record.RoleService) || r.Tenant != issuer.Tenant {
 		return fmt.Errorf("receipt: authenticated issuer required")
 	}
@@ -189,31 +197,69 @@ type KeyOpResult struct {
 // second genesis awaits confirmation, unauthorized when its authorizer is
 // not active in the state of its own history, authorized otherwise.
 func VerifyKeyOp(kr *Keyring, op *KeyOp) KeyOpResult {
-	if err := kr.Add(op); err != nil {
-		return KeyOpResult{Status: OpInvalid, Err: err}
-	}
-	return KeyOpResult{Status: kr.State().Status[op.Rec.ID]}
+	return VerifyKeyOpContext(context.Background(), kr, op)
 }
 
-// beforeCutoff uses only authenticated times in the receipt issuer's domain.
-// Missing receipts for ANY independent revocation cause fail closed.
-func beforeCutoff(k *Key, r record.Receipt, st *State) bool {
-	if len(k.RevocationCauses) == 0 {
+func VerifyKeyOpContext(ctx context.Context, kr *Keyring, op *KeyOp) KeyOpResult {
+	if err := kr.AddContext(ctx, op); err != nil {
+		return KeyOpResult{Status: OpInvalid, Err: err}
+	}
+	st, err := kr.StateContext(ctx)
+	if err != nil {
+		return KeyOpResult{Status: OpInvalid, Err: err}
+	}
+	return KeyOpResult{Status: st.Status[op.Rec.ID]}
+}
+
+type cutoffResult struct {
+	at    int64
+	valid bool
+}
+
+// beforeCutoff authenticates each independent revocation receipt once per
+// immutable folded state and issuer domain, instead of once per retained entry.
+func beforeCutoff(k *Key, r record.Receipt, st *State, ctx context.Context) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
 		return false
 	}
-	var cutoff int64
+	domain := k.Tenant
+	if k.Role == record.RoleDevice {
+		domain = k.Genesis
+	}
+	cacheKey := record.H("revocation-cutoff", bindingKey(k.Role, domain, k.KeyID), r.Tenant)
+	st.cutoffMu.Lock()
+	defer st.cutoffMu.Unlock()
+	if cached, ok := st.cutoffs[cacheKey]; ok {
+		return cached.valid && r.AcceptedAt < cached.at
+	}
+	result := cutoffResult{valid: len(k.RevocationCauses) > 0}
 	for _, id := range k.RevocationCauses {
+		if ctx.Err() != nil {
+			return false
+		}
 		op := st.Ops[id]
 		if op == nil || op.Receipt == nil {
-			return false
+			result.valid = false
+			break
 		}
 		rc := *op.Receipt
 		if rc.ID != id || rc.Tenant != r.Tenant || op.ReceiptIssuer.Tenant != r.Tenant || VerifyReceipt(rc, st, op.ReceiptIssuer) != nil {
-			return false
+			result.valid = false
+			break
 		}
-		if cutoff == 0 || rc.AcceptedAt < cutoff {
-			cutoff = rc.AcceptedAt
+		if result.at == 0 || rc.AcceptedAt < result.at {
+			result.at = rc.AcceptedAt
 		}
 	}
-	return r.AcceptedAt < cutoff
+	if ctx.Err() != nil {
+		return false
+	}
+	if st.cutoffs == nil {
+		st.cutoffs = map[string]cutoffResult{}
+	}
+	st.cutoffs[cacheKey] = result
+	return result.valid && r.AcceptedAt < result.at
 }

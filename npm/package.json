@@ -1,0 +1,25 @@
+{
+  "name": "@telaralabs/hilo",
+  "private": true,
+  "description": "Private staging template for the Hilo local memory node",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "hilo": "bin/hilo.cjs",
+    "telara-memory": "bin/hilo.cjs"
+  },
+  "files": [
+    "bin/hilo.cjs",
+    "README.md",
+    "LICENSE",
+    "lib/release-auth.cjs",
+    "lib/runner.cjs",
+    "release/BUILD.json",
+    "release/SHA256SUMS",
+    "release/RELEASE.sig",
+    "release/release-key.pub",
+    "release-spec.json"
+  ]
+}

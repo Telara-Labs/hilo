@@ -3,6 +3,8 @@ package capture
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
+	"strings"
 )
 
 func supportedClient(client string) bool {
@@ -107,6 +109,31 @@ func decodeCursor(b []byte, line int) ([]preparedObservation, error) {
 // Pi 1.1.0 stores raw tree entries, not a linear active context. Capture each
 // physical message with its parent metadata without inferring branch selection,
 // execution success, or compaction provenance completeness.
+// OpenAI Responses exposes a composite invocation identity in Pi. This is
+// opaque native correlation, never a path, session ID, tool name or authority.
+var piCompositeCall = regexp.MustCompile(`^call_[A-Za-z0-9_-]+\|[A-Za-z0-9_-]+$`)
+
+func piCallIdentifier(s string) bool {
+	if identifier(s) {
+		return true
+	}
+	if len(s) > 200 || !piCompositeCall.MatchString(s) {
+		return false
+	}
+	left, right, _ := strings.Cut(s, "|")
+	return identifier(left) && identifier(right)
+}
+func piCallToken(m object, key string) (string, error) {
+	s, err := str(m, key, true)
+	if err != nil {
+		return "", err
+	}
+	if !piCallIdentifier(s) {
+		return "", hold("unsafe_native_id")
+	}
+	return s, nil
+}
+
 func decodePi(b []byte, line int, session string) ([]preparedObservation, error) {
 	m, err := obj(b)
 	if err != nil {
@@ -180,7 +207,7 @@ func decodePi(b []byte, line int, session string) ([]preparedObservation, error)
 			base.kind = "native_meta_text"
 		case "toolResult":
 			base.kind = "tool_result"
-			base.callID, err = token(msg, "toolCallId", true)
+			base.callID, err = piCallToken(msg, "toolCallId")
 			if err != nil {
 				return nil, err
 			}
@@ -253,7 +280,7 @@ func decodePi(b []byte, line int, session string) ([]preparedObservation, error)
 					return nil, hold("native_shape")
 				}
 				o.kind = "tool_call"
-				o.callID, err = token(part, "id", true)
+				o.callID, err = piCallToken(part, "id")
 				if err != nil {
 					return nil, err
 				}

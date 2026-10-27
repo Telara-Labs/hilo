@@ -11,6 +11,7 @@ import (
 	"github.com/Telara-Labs/telara-memory/contract/policy"
 	"github.com/Telara-Labs/telara-memory/contract/record"
 	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/telara-memory/contract/transport"
 )
 
 const tenantSchema = `
@@ -22,7 +23,7 @@ CREATE TABLE IF NOT EXISTS policy_equivocation(tenant TEXT NOT NULL,seq INTEGER 
 CREATE TABLE IF NOT EXISTS policy_logout(id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS trusted_time(singleton INTEGER PRIMARY KEY CHECK(singleton=1),floor INTEGER NOT NULL,rollback INTEGER NOT NULL DEFAULT 0 CHECK(rollback IN(0,1)));
 INSERT OR IGNORE INTO trusted_time(singleton,floor) VALUES(1,0);
-`
+` + serviceAuthoritySchema
 
 // TenantPolicyContext is installed, authenticated local authority, never MCP,
 // native transcript, bundle metadata or a signed record's assertion of trust.
@@ -76,7 +77,7 @@ func (s *Store) InstallTenantPolicyContext(ctx context.Context, c TenantPolicyCo
 		}
 		kr := sig.NewKeyring(s.opts.PinnedGenesisID)
 		op := &sig.KeyOp{Rec: r, Body: b, Sigs: c.Root.Sigs, FromLogin: true, Issuer: sig.TrustedIssuer{Tenant: c.Tenant, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin}}
-		if sig.VerifyKeyOp(kr, op).Status != sig.OpAuthorized {
+		if sig.VerifyKeyOpContext(ctx, kr, op).Status != sig.OpAuthorized {
 			return failure("invalid_policy_context")
 		}
 		signatures, _ := json.Marshal(c.Root.Sigs)
@@ -181,7 +182,11 @@ func (s *Store) tenantWith(ctx context.Context, clockOf func(context.Context) (*
 			if err != nil {
 				return nil, err
 			}
-			verified, err := policy.Verify(r, decodeSignatures(sg), kr.State(), sig.TrustedIssuer{Tenant: t.tenant, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin})
+			authority, err := kr.StateContext(ctx)
+			if err != nil {
+				return nil, contractEvaluationError(err)
+			}
+			verified, err := policy.Verify(r, decodeSignatures(sg), authority, sig.TrustedIssuer{Tenant: t.tenant, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin})
 			if err == nil {
 				t.chain.Head = verified
 			}
@@ -235,7 +240,11 @@ func (s *Store) OfferTenantPolicy(ctx context.Context, in SignedRecord) (Admissi
 		if err != nil {
 			return err
 		}
-		p, err := policy.Verify(r, in.Sigs, kr.State(), sig.TrustedIssuer{Tenant: t.tenant, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin})
+		authority, err := kr.StateContext(ctx)
+		if err != nil {
+			return contractEvaluationError(err)
+		}
+		p, err := policy.Verify(r, in.Sigs, authority, sig.TrustedIssuer{Tenant: t.tenant, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin})
 		if err != nil {
 			return failure("invalid_policy")
 		}
@@ -494,7 +503,15 @@ func (s *Store) OfferTenantKeyOperation(ctx context.Context, in SignedRecord) er
 	if !ok {
 		return failure("invalid_policy_context")
 	}
-	if b.Op == record.OpTenantKey || b.Subject.Role != record.RolePolicy {
+	// Initial tenant roots only enter through authenticated TLS login. Keep
+	// the public refusal contract identical for both issuer roles.
+	if b.Op == record.OpTenantKey {
+		return failure("invalid_policy_context")
+	}
+	if b.Subject.Role == record.RoleService {
+		return s.offerServiceKeyOperation(ctx, in, r, b)
+	}
+	if b.Subject.Role != record.RolePolicy {
 		return failure("invalid_policy_context")
 	}
 	return s.write(ctx, func() error {
@@ -507,7 +524,7 @@ func (s *Store) OfferTenantKeyOperation(ctx context.Context, in SignedRecord) er
 			return err
 		}
 		op := &sig.KeyOp{Rec: r, Body: b, Sigs: in.Sigs, Issuer: sig.TrustedIssuer{Tenant: tenant, Role: record.RolePolicy, Provenance: sig.PinnedTLSLogin}}
-		if sig.VerifyKeyOp(kr, op).Status != sig.OpAuthorized {
+		if sig.VerifyKeyOpContext(ctx, kr, op).Status != sig.OpAuthorized {
 			return failure("invalid_policy_context")
 		}
 		signatures, _ := json.Marshal(in.Sigs)
@@ -542,6 +559,24 @@ func (s *Store) CapturePolicy(ctx context.Context) (string, *record.PolicyBody, 
 		return nil
 	})
 	return id, body, err
+}
+
+// validateAdmittedBody keeps capture sealed to the current policy head. Only
+// transferred metadata may retain its signed source policy provenance; current
+// authorization, capture restrictions and body overlays still apply separately.
+func (d *databaseState) validateAdmittedBody(r *record.Record) error {
+	h := r.Header
+	if d.tenant == nil || d.store == nil || !d.store.bundleImport || h.Red.Profile != record.ProfilePushMetadata || (h.Type != record.KindSession && h.Type != record.KindTask) {
+		return d.tenant.validateBody(r)
+	}
+	if h.Pol == "" || d.policyTenants[h.Pol] != d.tenant.tenant || d.policyLogout[h.Pol] {
+		return failure("policy_violation")
+	}
+	a := d.bundleAuthorization(r)
+	if !d.tenant.sealAllowed(a.Repo, h.Red.Epoch) || !transport.BundlePolicyAllowed(r, a) {
+		return failure("policy_violation")
+	}
+	return nil
 }
 
 func (t *tenantState) validateBody(r *record.Record) error {

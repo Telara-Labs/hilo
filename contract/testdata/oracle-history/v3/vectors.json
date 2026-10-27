@@ -1,0 +1,490 @@
+{
+  "contract": "mnc/3.0",
+  "vectors": [
+    {
+      "id": "V1",
+      "title": "Strict canonical JSON",
+      "tests": [
+        {
+          "package": ".",
+          "run": "^TestV1JSON$"
+        },
+        {
+          "package": "./jcs",
+          "run": "^Test(Canonicalize|RecordProfile|FormatNumberRFC8785AppendixB|MarshalRecordGoValues|StringArray)"
+        }
+      ],
+      "fixtures": [
+        "v01-jcs.json"
+      ],
+      "adapter_required": []
+    },
+    {
+      "id": "V2",
+      "title": "Stable identities",
+      "tests": [
+        {
+          "package": ".",
+          "run": "^TestV2JSON$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestHAndKeys$"
+        }
+      ],
+      "fixtures": [
+        "v02-identity.json"
+      ],
+      "adapter_required": []
+    },
+    {
+      "id": "V3",
+      "title": "Record union and body-independent ids",
+      "tests": [
+        {
+          "package": ".",
+          "run": "^TestV3JSON$"
+        },
+        {
+          "package": "./record",
+          "run": "^Test(BuildAndParseEveryKind|ParseRejections|UnknownBodyFieldKept)$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3(ClosedSchemas|CommitmentDependencies)"
+        },
+        {
+          "package": ".",
+          "run": "^TestV3PublishedContractExample$"
+        },
+        {
+          "package": ".",
+          "run": "^TestV3SignedCommitmentGraph$"
+        }
+      ],
+      "fixtures": [
+        "v03-records.json",
+        "commitment-graph.json"
+      ],
+      "adapter_required": []
+    },
+    {
+      "id": "V4",
+      "title": "Device salt and key outage",
+      "tests": [
+        {
+          "package": ".",
+          "run": "^TestV4JSON$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestSalt$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestProtectedEventSaltAndFailure$"
+        },
+        {
+          "package": ".",
+          "run": "^TestV4EventJSON$"
+        },
+        {
+          "package": "./record",
+          "run": "^Test(ProductionEventDerivationMatchesFrozenVector|BuildPreservesCorrectionFrontier)$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3(IndependentSecrets|BodyEntropyFailure)"
+        }
+      ],
+      "fixtures": [
+        "v04-salt.json",
+        "v04-events.json"
+      ],
+      "adapter_required": []
+    },
+    {
+      "id": "V5",
+      "title": "Signing contexts role machine and malleability",
+      "tests": [
+        {
+          "package": ".",
+          "run": "^TestV5JSON$"
+        },
+        {
+          "package": "./sig",
+          "run": "^Test(SignedBytes|VerifyRecord|KeyOpShapeRejects)$"
+        }
+      ],
+      "fixtures": [
+        "v05-signature.json"
+      ],
+      "adapter_required": []
+    },
+    {
+      "id": "V6",
+      "title": "Causal keyring compromise and rotation closure",
+      "tests": [
+        {
+          "package": "./sig",
+          "run": "^Test(Keyring|Tenant|CompromiseAndLosingRotationDescendants|StateOperationSnapshotsDetached|OpsAccessorDetached|ConflictRetirementNeverRevivesLosingRotator|DuplicateKeyOpCannotDowngradeIssuer)"
+        },
+        {
+          "package": "./sig",
+          "run": "^TestV3(TenantRoot|GenesisOptional)"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V7",
+      "title": "Issuer receipts and revocation cutoff",
+      "tests": [
+        {
+          "package": "./sig",
+          "run": "^TestValidityAcrossRevocation$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V8",
+      "title": "Order-independent heads and durable supersession",
+      "tests": [
+        {
+          "package": "./heads",
+          "run": "^Test"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V9",
+      "title": "Session causal corrections across machines",
+      "tests": [
+        {
+          "package": "./view",
+          "run": "^Test(CausalEventRepackingAndConflicts|SessionMultiMachineCorrectionSurvivesRepack|LaterMissingPageKeepsEarlierSettledPrefix|SaltedIndependentCapturesAndCausalOccurrences|EqualityWitnessDependencyInvalidationAndRestart|KnownErasedVersusUnknownPredecessorAndHeadLimit|AvailableInvalidBodyCannotReauthorizePresence|EqualCaptureTaintAndComplementaryCoverage|BodylessInvalidSourceOverridesRetainedHistory)$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V10",
+      "title": "Binding confidence ambiguity and corrections",
+      "tests": [
+        {
+          "package": "./view",
+          "run": "^TestBindingTopRankTieAndCorrection$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V11",
+      "title": "Erasure selectors closure and pending ancestry",
+      "tests": [
+        {
+          "package": "./invalidate",
+          "run": "^Test(Closure|ErasureChainEveryOrder|ErasureSelectorKinds|AncestryPendingAndRebuild|OrderIndependenceProperty)$"
+        },
+        {
+          "package": "./invalidate",
+          "run": "^TestV3SignedEvent"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V12",
+      "title": "Retraction does not ban a LID",
+      "tests": [
+        {
+          "package": "./invalidate",
+          "run": "^TestRetractionClosureAndReplacement$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V13",
+      "title": "Admission erasure race",
+      "tests": [
+        {
+          "package": "./invalidate",
+          "run": "^TestErasureChainEveryOrder$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": [
+        "Concurrent node SQLite and hosted Postgres admission/erase transactions must share the prescribed locks and demonstrate no live late record. Pure sequential arrival permutations are not concurrent storage proof."
+      ]
+    },
+    {
+      "id": "V14",
+      "title": "Metadata allowlist and profile refusal",
+      "tests": [
+        {
+          "package": "./record",
+          "run": "^Test(BuildAndParseEveryKind|ParseRejections)$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V15",
+      "title": "Signer provenance kind and body matrix",
+      "tests": [
+        {
+          "package": "./record",
+          "run": "^TestReducersAndClasses$"
+        },
+        {
+          "package": "./sig",
+          "run": "^TestVerifyRecord$"
+        },
+        {
+          "package": ".",
+          "run": "^TestV15MatrixJSON$"
+        }
+      ],
+      "fixtures": [
+        "v15-matrix.json"
+      ],
+      "adapter_required": []
+    },
+    {
+      "id": "V16",
+      "title": "Outbox rule and explicit disclosure revalidation",
+      "tests": [
+        {
+          "package": "./transport",
+          "run": "^TestOutboxRevalidatesExplicitAuthority$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": [
+        "Node outbox cancellation and eligibility revalidation must commit atomically with authority or lineage changes."
+      ]
+    },
+    {
+      "id": "V17",
+      "title": "Class cursors unknown controls and own-only tail",
+      "tests": [
+        {
+          "package": "./transport",
+          "run": "^Test(InterleavedCursorSnapshots|OwnControlCannotBeFiltered)$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": [
+        "Node crash/restart after each persisted page, ctl_pending replay and transaction rollback."
+      ]
+    },
+    {
+      "id": "V18",
+      "title": "Policy freshness rollback and authenticated recovery",
+      "tests": [
+        {
+          "package": "./policy",
+          "run": "^Test"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V19",
+      "title": "Identity-only hook spool",
+      "tests": [
+        {
+          "package": "./transport",
+          "run": "^TestHook"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": [
+        "Node filesystem tests must suspend writer between write/rename, abandon tmp, drain all new files, admit before ack, crash before unlink, and verify no unknown body field survives any bad archive."
+      ]
+    },
+    {
+      "id": "V20",
+      "title": "Same-genesis encrypted bundle selection",
+      "tests": [
+        {
+          "package": "./transport",
+          "run": "^TestBundleCuts$"
+        },
+        {
+          "package": "./sig",
+          "run": "^TestTenantKeys$"
+        },
+        {
+          "package": "./transport",
+          "run": "^Test(ContractMajorGates|VersionGatesCannotOverrideSignedHeader)$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": [
+        "Node age transfer must use verified device EKs; backup must use sole scrypt recipient. Restore after co-signed device_add and verify signed manifest before atomic exposure union and data admission."
+      ]
+    },
+    {
+      "id": "V21",
+      "title": "Observed taint and incomplete automatic coverage",
+      "tests": [
+        {
+          "package": "./view",
+          "run": "^Test(CoverageAndTaintBySequence|ReadBackAndOwnerTaskBoundary)$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V22",
+      "title": "Redact complete source before truncation",
+      "tests": [
+        {
+          "package": "./record",
+          "run": "^TestRedactBeforeBoundaryAndActualGolden$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": [
+        "Node sealing pipeline must prove no raw source hash or parser buffer reaches any durable store."
+      ]
+    },
+    {
+      "id": "V23",
+      "title": "Physical FTS scrub pinned SQLite",
+      "tests": [],
+      "fixtures": [],
+      "adapter_required": [
+        "Node modernc.org/sqlite v1.60.1 must verify FTS5 secure-delete config1 at open and planted token absence in DB WAL and shadow tables after FULL-synchronous erasure. Contract module has no database.",
+        "Contract2 event salts and nonce intermediates must be absent from every persisted equality workspace, cache, diagnostic and erased event copy; recapture tombs apply before sealing."
+      ]
+    },
+    {
+      "id": "V24",
+      "title": "Stable op id replay eligibility and delivery generation",
+      "tests": [
+        {
+          "package": "./replay",
+          "run": "^Test"
+        },
+        {
+          "package": "./invalidate",
+          "run": "^TestOpCacheRows$"
+        },
+        {
+          "package": "./record",
+          "run": "^TestV3IndependentSecrets"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": [
+        "Node must atomically persist mutation, original tool/args, exposure, render version, dedup generation and confirmation with actual store transactions."
+      ]
+    },
+    {
+      "id": "V25",
+      "title": "Generation withdrawal before any arrival",
+      "tests": [
+        {
+          "package": "./invalidate",
+          "run": "^Test(WithdrawalByGrant|WithdrawalBeforeFirstArrival|UnresolvedSemanticAncestryAndDuplicateGrants|LateAuthenticatedGrantResolvesPending)$"
+        },
+        {
+          "package": "./sig",
+          "run": "^TestDeliveryGrantBindings$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V26",
+      "title": "Missing earlier event defeats claimed coverage",
+      "tests": [
+        {
+          "package": "./view",
+          "run": "^TestCoverageAndTaintBySequence$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V27",
+      "title": "Owner task erasure graph and cache namespaces",
+      "tests": [
+        {
+          "package": "./view",
+          "run": "^TestReadBackAndOwnerTaskBoundary$"
+        },
+        {
+          "package": "./invalidate",
+          "run": "^TestLateExposureAndOwnerScopedAbsentTask$"
+        },
+        {
+          "package": "./heads",
+          "run": "^TestIgnoredSupersedes$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V28",
+      "title": "Late exposure holds and complete recalled roots",
+      "tests": [
+        {
+          "package": "./invalidate",
+          "run": "^Test(LineageHold|LateExposureAndOwnerScopedAbsentTask|UnresolvedSemanticAncestryAndDuplicateGrants|PendingToHoldTransitiveSemanticClosure|EventOccurrenceErasureAndRecaptureBan)$"
+        },
+        {
+          "package": "./transport",
+          "run": "^TestBundleCuts$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": [
+        "Node bundle transfer/restore must persist late binding and selector identities, exclude incomplete roots without auto-selecting private records, and retain exposure facts after compaction and body erasure."
+      ]
+    },
+    {
+      "id": "V29",
+      "title": "Actual redactor behavioral golden and epoch",
+      "tests": [
+        {
+          "package": "./record",
+          "run": "^Test(RulesetFingerprintAndGolden|RedactBeforeBoundaryAndActualGolden)$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    },
+    {
+      "id": "V30",
+      "title": "Sequence boundary takes precedence over wall timestamps",
+      "tests": [
+        {
+          "package": "./view",
+          "run": "^TestCoverageAndTaintBySequence$"
+        }
+      ],
+      "fixtures": [],
+      "adapter_required": []
+    }
+  ],
+  "status": "PROVISIONAL gateway adoption; historical selector coverage is not whole-node3.0 conformance"
+}

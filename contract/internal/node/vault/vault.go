@@ -91,6 +91,7 @@ func (v *Vault) Put(ctx context.Context, handle string, secret []byte) error {
 		if err := v.bindCustody(ctx, v.profile, true); err != nil {
 			return err
 		}
+		return v.putProfile(ctx, handle, secret)
 	}
 	return v.put(ctx, handle, secret)
 }
@@ -110,6 +111,7 @@ func (v *Vault) Get(ctx context.Context, handle string) ([]byte, error) {
 		if err := v.bindCustody(ctx, v.profile, false); err != nil {
 			return nil, err
 		}
+		return v.getProfile(ctx, handle)
 	}
 	return v.get(ctx, handle)
 }
@@ -129,6 +131,7 @@ func (v *Vault) Delete(ctx context.Context, handle string) error {
 		if err := v.bindCustody(ctx, v.profile, false); err != nil {
 			return err
 		}
+		return v.deleteProfile(ctx, handle)
 	}
 	return v.delete(ctx, handle)
 }

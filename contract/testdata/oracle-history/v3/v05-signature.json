@@ -1,0 +1,14 @@
+{
+  "body_jcs": "{\"milestone\":\"tests pass\",\"next_steps\":\"ship\",\"salt\":\"BQUFBQUFBQUFBQUFBQUFBQ\"}",
+  "header_jcs": "{\"at\":1761150000456,\"author\":{\"key_id\":\"dbc298251c51321b7266e78d1c151c2b\",\"machine_id\":\"6f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b\"},\"body\":{\"digest\":\"3997c01739ee83afa41a963a56bff43d77dcd26da80967e4acbbd746697b3ffc\",\"size\":78},\"lid\":\"206e55d8acb635693177abd851e2816ffb5420940576aeba3b098edd92e81cf3\",\"op\":\"71a0ef7195df486543f63f0cb1dff83ee245c10fb566219b128a7fa99a8bbbac\",\"prov\":\"mcp-explicit\",\"red\":{\"epoch\":7,\"findings\":0,\"fingerprint\":\"99c030754b69261444a37f5d6def839a9df98ec9df8a7666625ce8029c68f7cd\",\"profile\":\"local\"},\"subj\":{\"task_id\":\"3f2a91c0-1111-4222-8333-444455556666\"},\"trust\":{},\"type\":\"checkpoint\",\"v\":3}",
+  "message_hex": "6d6e632f76312f7265636f726400555e40945ddfb2d4bb07adbbbe8c88b3fb551ba1a815de02209c9a8aff81ce7a",
+  "pub_hex": "fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
+  "record_id": "555e40945ddfb2d4bb07adbbbe8c88b3fb551ba1a815de02209c9a8aff81ce7a",
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "dbc298251c51321b7266e78d1c151c2b",
+    "ctx": "mnc/v1/record",
+    "value": "--4yuaixPiKKg-wr5LqUOou-R1EUJEF5_HKi6_JMZtuGY99alh3IRq-XqBM93hCnA0V1nuWMLeX8EBK7mZJQAg"
+  },
+  "test_seed_hex": "0909090909090909090909090909090909090909090909090909090909090909"
+}

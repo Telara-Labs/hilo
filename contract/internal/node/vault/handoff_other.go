@@ -20,3 +20,9 @@ func (v *Vault) DeleteForInstall(ctx context.Context, r install.Record, handle s
 }
 
 func CheckUpgradeTarget(context.Context, install.Record, string) error { return nil }
+
+func CheckProfileUpgradeSource(context.Context, install.Record) error     { return nil }
+func VerifyPreparedProfile(context.Context, install.Record, string) error { return nil }
+func CheckPublicationCustody(context.Context, string) error               { return nil }
+
+func (*Vault) PrepareProfileUninstall(context.Context, install.Record) error { return nil }

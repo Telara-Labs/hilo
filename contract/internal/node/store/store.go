@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"github.com/Telara-Labs/telara-memory/contract/policy"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -137,7 +136,7 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 	if err = securePathFiles(path); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path}).String())
+	db, err := sql.Open("sqlite", SQLiteURI(path, ""))
 	if err != nil {
 		return nil, failure("storage_error")
 	}

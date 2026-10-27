@@ -37,3 +37,33 @@ func (v guardedVault) Get(ctx context.Context, h string) ([]byte, error) {
 	}
 	return secret, nil
 }
+
+// AbandonPlanned preserves the same connection binding around the narrower
+// pending-slot recovery operation. A vault without creator evidence refuses.
+func (v guardedVault) AbandonPlanned(ctx context.Context, h string) error {
+	if ctx == nil || v.secretVault == nil {
+		return ErrAuthority
+	}
+	pid := daemon.AuthenticatedPeerPID(ctx)
+	var b processBinding
+	if pid != 0 {
+		b, _ = ctx.Value(bindingKey{}).(processBinding)
+		if b == nil || b.check(pid) != nil {
+			return ErrAuthority
+		}
+	}
+	owner, ok := v.secretVault.(interface {
+		AbandonPlanned(context.Context, string) error
+	})
+	if !ok {
+		return ErrAuthority
+	}
+	err := owner.AbandonPlanned(ctx, h)
+	if err != nil {
+		return err
+	}
+	if ctx.Err() != nil || (b != nil && b.check(pid) != nil) {
+		return ErrAuthority
+	}
+	return nil
+}

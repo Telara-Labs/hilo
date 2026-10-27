@@ -21,31 +21,64 @@ policy. It never supplies an empty trusted-application list or an all-applicatio
 ACL. All queries fail authentication UI. Unsigned/static builds refuse custody.
 
 Before upgrade quiesces the old daemon, the installer stages the authenticated
-content-addressed target. A direct lifecycle control request asks the old daemon
-to persist a nonsecret owner-only transfer marker, read the secret, and send it
-on an anonymous pipe to that exact digest-verified target. The target creates its
-own item and reads it back. A mismatched existing item refuses replacement.
-Forwarded MCP requests cannot invoke this control. The marker is fsynced before
-transfer and after readback.
+content-addressed target and invokes the retained verified source helper without
+a database lock. The helper takes custody then profile admission and inventories
+fixed typed records for authority, DPoP, refresh, retired credentials, export key,
+pending join and repository contexts. It persists a nonsecret owner-only journal
+and writer freeze before sending any secret over a bounded anonymous pipe to the
+exact target. All target readbacks must succeed before publication. The live
+daemon refuses v2 preparation after authenticating the lifecycle peer, so it
+cannot acquire custody while retaining the database lock.
+
+Each created profile slot has an immutable creator identity and expected bytes
+commitment persisted before native creation. The creator names an exact retained
+helper hash, native namespace and Keychain. Reads never mutate receipt state.
+An installed profile creates through its verified retained image even when the
+invoking CLI is transient. A pre-install creator retains its actual verified
+image before publishing a handle. No Exists verdict authorizes adoption or
+deletion. Interrupted repository-context creation is reconciled by owner
+retirement using its typed native phase and creation evidence.
 
 Old custody remains available until the install receipt switches. The new managed
 daemon, under writer admission and before opening storage, verifies its item and
 asks the retained verified old executable to delete the exact source slot. A
 crash before receipt publication retains old custody; a retry resumes through the
-old daemon or retained old image. A crash after publication resumes retirement
+retained old image. A crash after publication resumes retirement
 from the new daemon. Cleanup is idempotent, including a crash after old deletion.
 Stable signed builds sharing one slot never delete that slot during handoff.
 Explicit settled uninstall removes pending staging custody and the current item.
-A different target is refused while a transfer is pending.
+A changed target first requires an authenticated abort which proves every source
+slot, removes only known staged slots, and retains a content-addressed rollback
+receipt. Collisions and ambiguous custody remain pending.
+
+A retry by the still-current source reopens an exactly matching ready inventory
+as preparing and durably publishes that phase before any target can be recreated.
+The same source receipt, target digest, metadata generation and handle inventory
+are required. Retirement progress refuses this retry. Interrupted preparation
+retains its existing creator commitments and keeps publication blocked until
+every target is read back again. A missing target never authorizes source deletion.
+Binding a native vault also pins the exact validated private profile directory
+used by per-handle cleanup locks and creator records. An already bound vault
+refuses another directory before any custody selection or metadata mutation.
 
 Readback-before-delete necessarily creates a temporary staging item alongside
 the old item. The marker selects the active installation and recovery removes
 the obsolete item. This is not an atomic physical move between Keychain items.
 Both items stay inside the same selected native Keychain; no plaintext recovery
-file is written. Round-one creator items can be read from their legacy slot by
-their owning image. An older daemon without the handoff entrypoint cannot be
-made upgrade-aware retroactively; keep its readable image until migration is
-explicitly performed.
+file is written. Noncooperating legacy binaries cannot be fenced retroactively.
+Automatic legacy upgrades refuse before lifecycle mutation and retain their
+readable images. The reviewed owned R15 to R19 key-only maintenance API is a
+separate operation with explicit legacy-writer quiescence, exact retained creator
+proof and the recorded same-handle JKT. It changes no install receipt and does not
+claim generic legacy migration. Native first and second v2 upgrades and this
+exact recovery still require behavior-level acceptance evidence.
+
+Historical runtime-only transfer markers also refuse uninstall before daemon
+quiescence, database admission or service mutation. Direct cleanup refuses an
+incompatible recorded target. It retains the marker and every native slot for
+explicit maintenance. There is no account-wide service enumeration fallback or
+native helper opcode for it. Compatible specific v1 recovery still uses its
+recorded source, target, Keychain and single handle.
 
 Put borrows caller bytes through no-copy CFData during the synchronous native
 operation. Get uses a caller-owned mutable Keychain allocation, wipes it with

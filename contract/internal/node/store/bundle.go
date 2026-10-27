@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS restore_fence(singleton INTEGER PRIMARY KEY CHECK(sin
 CREATE TABLE IF NOT EXISTS imported_exposure(id TEXT PRIMARY KEY, fact BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS bundle_export(id TEXT PRIMARY KEY, staging TEXT NOT NULL, digest TEXT NOT NULL, cancelled INTEGER NOT NULL DEFAULT 0 CHECK(cancelled IN(0,1)));
 CREATE TABLE IF NOT EXISTS bundle_export_item(export TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(export,id));
+CREATE TABLE IF NOT EXISTS bundle_export_variant(export TEXT NOT NULL, source TEXT NOT NULL, id TEXT NOT NULL, header BLOB NOT NULL, body BLOB NOT NULL, sigs BLOB NOT NULL, PRIMARY KEY(export,source));
 CREATE TABLE IF NOT EXISTS bundle_receipt(id TEXT PRIMARY KEY, receipt BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS bundle_receipt_issuer(tenant TEXT NOT NULL, key_id TEXT NOT NULL, pub BLOB NOT NULL, PRIMARY KEY(tenant,key_id));
 `
@@ -108,6 +109,9 @@ func (d *databaseState) bundleAuthorization(r *record.Record) transport.BundleAu
 	if meta, ok := r.Body.(*record.SessionMetaBody); ok && meta.Repo != nil {
 		a.Repo = meta.Repo.Remote
 	}
+	if r.Header.Type == record.KindTask {
+		a.Repo = d.verifiedRepositoryRemote(r.Header.Subj.RepoID)
+	}
 	if overlay, err := localpolicy.TenantOverlay(b); err == nil && r.Body != nil {
 		a.ShapesSatisfied = bodyPolicyAllowed(r.Body, overlay)
 	}
@@ -149,7 +153,7 @@ func factAffects(f transport.ExposureFact, r *record.Record) bool {
 		return false
 	}
 	for _, id := range f.AffectsIDs {
-		if id == r.ID {
+		if id == r.ID || id == r.Header.Links.Origin {
 			return true
 		}
 	}
@@ -164,13 +168,30 @@ func factAffects(f transport.ExposureFact, r *record.Record) bool {
 
 // importedTargets is every present record an imported fact may affect, plus
 // its affects_ids that have not arrived yet.
-func (d *databaseState) importedTargets(f transport.ExposureFact) []string {
+func (d *databaseState) importedTargets(f transport.ExposureFact) ([]string, error) {
+	budget, err := d.reductions()
+	if err != nil {
+		return nil, err
+	}
+	if err = budget.charge(len(f.AffectsIDs)); err != nil {
+		return nil, err
+	}
+	if err = budget.product(len(d.records), 1+len(f.AffectsIDs)); err != nil {
+		return nil, err
+	}
 	targets := map[string]bool{}
 	for _, id := range f.AffectsIDs {
 		targets[id] = true
 	}
 	for _, x := range d.records {
-		if x.owner == d.store.opts.PinnedGenesisID && factAffects(f, x.rec) {
+		if x.owner != d.store.opts.PinnedGenesisID {
+			continue
+		}
+		affected, err := d.importedFactAffects(f, x.rec, nil)
+		if err != nil {
+			return nil, err
+		}
+		if affected {
 			targets[x.rec.ID] = true
 		}
 	}
@@ -180,7 +201,90 @@ func (d *databaseState) importedTargets(f transport.ExposureFact) []string {
 		out = append(out, id)
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
+}
+
+// metadataFactRootCopy distinguishes a root's immutable metadata copy from
+// later output in the same session. This exception is per fact, not per session.
+// Explicit affected ids anywhere on the signed copy chain take precedence.
+// Pure transcript facts need no MCP association; unknown/pending facts and
+// cross-associated facts without independently verified bindings stay conservative.
+func (d *databaseState) metadataFactRootCopy(f transport.ExposureFact, r *record.Record, incoming map[string]transport.BundleRecord) (bool, error) {
+	if f.PendingAttribution || f.Boundary.Kind != "event" || f.SourceCallOrEvent.Kind != "event" || f.ScopeID != "" || f.SessionKey == "" || r.Header.Type != record.KindSession || r.Header.Subj.SessionKey != f.SessionKey || r.Header.Red.Profile != record.ProfilePushMetadata {
+		return false, nil
+	}
+	budget, err := d.reductions()
+	if err != nil {
+		return false, err
+	}
+	seen := map[string]bool{}
+	for {
+		if err = budget.charge(1 + 2*len(f.AffectsIDs)); err != nil {
+			return false, err
+		}
+		if seen[r.ID] || len(seen) >= 8192 || r.Header.Type != record.KindSession || r.Header.Subj.SessionKey != f.SessionKey {
+			return false, nil
+		}
+		seen[r.ID] = true
+		for _, id := range f.AffectsIDs {
+			if id == r.ID {
+				return false, nil
+			}
+		}
+		// During rebuild state has not yet been evaluated. Signature/owner/body
+		// authentication is already established; Origin tombs/holds are still
+		// enforced by the model independently of this root-copy classification.
+		if x := d.byID[r.ID]; x != nil {
+			if x.rec.ID != r.ID || x.owner != d.store.opts.PinnedGenesisID || x.sigStatus != sig.StatusVerified || x.rec.Body == nil {
+				return false, nil
+			}
+		} else if c, ok := incoming[r.ID]; !ok || !c.CompleteSigned || c.Record == nil || c.Record.ID != r.ID {
+			return false, nil
+		}
+		if r.ID == f.RecalledID {
+			return true, nil
+		}
+		if r.Header.Red.Profile != record.ProfilePushMetadata || r.Header.Prov != record.ProvDerived || r.Header.Links.Origin == "" {
+			return false, nil
+		}
+		id := r.Header.Links.Origin
+		for _, affected := range f.AffectsIDs {
+			if affected == id {
+				return false, nil
+			}
+		}
+		var parent *record.Record
+		if x := d.byID[id]; x != nil {
+			parent = x.rec
+		} else if c, ok := incoming[id]; ok && c.CompleteSigned {
+			parent = c.Record
+		}
+		if parent == nil {
+			// A signed metadata Origin may name its intentionally absent
+			// original. It does not authenticate an absent intermediate hop.
+			return id == f.RecalledID, nil
+		}
+		if parent.ID != id || parent.Header.LID != r.Header.LID || parent.Header.Author.MachineID != r.Header.Author.MachineID {
+			return false, nil
+		}
+		r = parent
+	}
+}
+
+func (d *databaseState) importedFactAffects(f transport.ExposureFact, r *record.Record, incoming map[string]transport.BundleRecord) (bool, error) {
+	affected := factAffects(f, r)
+	// Preserve the model's conservative unknown-order explicit-scope coverage
+	// when replacing its broad namespace rule with materialized target ids.
+	if r.ID != f.RecalledID && r.Header.Prov == record.ProvMCPExplicit && f.ScopeID != "" {
+		if a, ok := d.attrs[r.ID]; ok && a.scope == f.ScopeID && a.machine == f.OriginMachine {
+			affected = true
+		}
+	}
+	if !affected {
+		return false, nil
+	}
+	rootCopy, err := d.metadataFactRootCopy(f, r, incoming)
+	return !rootCopy, err
 }
 
 // importedSemanticFacts unions every imported exposure fact into the model
@@ -189,7 +293,10 @@ func (d *databaseState) importedTargets(f transport.ExposureFact) []string {
 // holds every target. Nothing here can release a restriction.
 func (d *databaseState) importedSemanticFacts() error {
 	for _, f := range d.importedFacts {
-		targets := d.importedTargets(f)
+		targets, err := d.importedTargets(f)
+		if err != nil {
+			return err
+		}
 		for _, id := range targets {
 			if d.byID[id] == nil {
 				continue
@@ -199,7 +306,10 @@ func (d *databaseState) importedSemanticFacts() error {
 			}
 			d.semantic[id][f.RecalledID] = true
 		}
-		d.model.Expose(invalidate.Exposure{OriginMachine: f.OriginMachine, Scope: f.ScopeID, SessionKey: f.SessionKey, ID: f.RecalledID, UnknownOrder: true, AffectsIDs: targets})
+		// Recompute session/scope coverage on every load, including future
+		// arrivals. A second broad model namespace rule would make an exempt
+		// immutable root copy its own dependent again after admission/restart.
+		d.model.Expose(invalidate.Exposure{ID: f.RecalledID, UnknownOrder: true, AffectsIDs: targets})
 	}
 	return nil
 }
@@ -292,10 +402,20 @@ const (
 
 // bundleSelection is the evaluated content of a selection: the signed
 // selection and, for the erasure lifecycle, the identity of every item and
-// every data or variant source id it carries.
+// every data or variant source id it carries. A variant's identity is its
+// source id together with its salt-free content identity, so a variant built
+// under different redaction, authority or key is a different selection.
 type bundleSelection struct {
-	items   []string
-	sources []string
+	items    []string
+	sources  []string
+	variants []bundleVariantItem
+}
+
+// bundleVariantItem is one governed metadata variant a selection carries,
+// with the source it was built from.
+type bundleVariantItem struct {
+	source string
+	rec    SignedRecord
 }
 
 func (b bundleSelection) digest() string {
@@ -309,6 +429,164 @@ func (b bundleSelection) digest() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// bundleOrigins follows authenticated same-owner copies. An absent original is
+// expected for metadata, but a present, unavailable or cyclic chain is never an
+// exception to lineage checks. Missing originals remain ids, not signed roots.
+func (d *databaseState) bundleOrigins(r *record.Record, incoming map[string]transport.BundleRecord) (map[string]*record.Record, bool, error) {
+	budget, err := d.reductions()
+	if err != nil {
+		return nil, false, err
+	}
+	path := map[string]*record.Record{}
+	for {
+		if err = budget.charge(1); err != nil {
+			return nil, false, err
+		}
+		if _, seen := path[r.ID]; seen || len(path) >= 8192 {
+			return nil, false, nil
+		}
+		path[r.ID] = r
+		id := r.Header.Links.Origin
+		if id == "" {
+			return path, true, nil
+		}
+		if _, seen := path[id]; seen {
+			return nil, false, nil
+		}
+		if d.eval != nil && d.eval.Tombs[id] != (invalidate.Tomb{}) {
+			return nil, false, nil
+		}
+		var parent *record.Record
+		if x := d.byID[id]; x != nil {
+			if !available(x) || x.owner != d.store.opts.PinnedGenesisID {
+				return nil, false, nil
+			}
+			parent = x.rec
+		} else if c, ok := incoming[id]; ok {
+			if !c.CompleteSigned || !c.Live || c.Pending || len(c.Grants) > 0 {
+				return nil, false, nil
+			}
+			parent = c.Record
+		}
+		metadata := r.Header.Red.Profile == record.ProfilePushMetadata && (r.Header.Type == record.KindSession || r.Header.Type == record.KindTask)
+		if parent == nil {
+			if !metadata {
+				return nil, false, nil
+			}
+			if err = budget.charge(1); err != nil {
+				return nil, false, err
+			}
+			path[id] = nil
+			return path, true, nil
+		}
+		if parent.ID != id {
+			return nil, false, nil
+		}
+		if metadata && (parent.Header.Type != r.Header.Type || parent.Header.LID != r.Header.LID || parent.Header.Author.MachineID != r.Header.Author.MachineID) {
+			return nil, false, nil
+		}
+		r = parent
+	}
+}
+
+// bundleMetadataRestricted keeps every affected or unresolved source local.
+// Being only the recalled root is different: its fact must travel unchanged,
+// without treating a metadata copy as the original signed root envelope.
+func (d *databaseState) bundleMetadataRestricted(path map[string]*record.Record, incoming map[string]transport.BundleRecord) (bool, error) {
+	budget, err := d.reductions()
+	if err != nil {
+		return false, err
+	}
+	if err = budget.charge(len(path)); err != nil {
+		return false, err
+	}
+	for id := range path {
+		if x := d.byID[id]; x != nil && (len(x.recalls) > 0 || len(d.semantic[id]) > 0) {
+			return true, nil
+		}
+	}
+	if err = budget.product(len(path), len(d.exposures)+len(d.importedFacts)); err != nil {
+		return false, err
+	}
+	for _, f := range d.exposures {
+		_, root := path[f.root]
+		for id := range path {
+			if f.affects[id] {
+				return true, nil
+			}
+		}
+		if root {
+			if err = budget.charge(len(f.affects)); err != nil {
+				return false, err
+			}
+			if _, ok := localFact(f, nil); !ok {
+				return true, nil
+			}
+		}
+	}
+	for _, f := range d.importedFacts {
+		if err = budget.product(len(path)+1, len(f.AffectsIDs)); err != nil {
+			return false, err
+		}
+		for _, id := range f.AffectsIDs {
+			if _, affected := path[id]; affected {
+				return true, nil
+			}
+		}
+		for _, r := range path {
+			if r != nil {
+				affected, err := d.importedFactAffects(f, r, incoming)
+				if err != nil {
+					return false, err
+				}
+				if affected {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
+// Frozen copies keep their own restriction identity during publication checks.
+// Rebuilding a variant draws a fresh salt/id, so checking only that new id could
+// miss an exposure fact that arrived for the already registered signed copy.
+func (s *Store) bundleFrozenRestricted(ctx context.Context, d *databaseState, source string, origins map[string]*record.Record) (bool, error) {
+	budget, err := d.reductions()
+	if err != nil {
+		return false, err
+	}
+	if err = budget.charge(len(origins)); err != nil {
+		return false, err
+	}
+	path := map[string]*record.Record{}
+	for id, r := range origins {
+		path[id] = r
+	}
+	rows, err := s.conn.QueryContext(ctx, "SELECT id FROM bundle_export_variant WHERE source=? LIMIT 8193", source)
+	if err != nil {
+		return false, failure("storage_error")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err = budget.charge(1); err != nil {
+			return false, err
+		}
+		var id string
+		if rows.Scan(&id) != nil || !record.IsHex64(id) {
+			return false, failure("corrupt_database")
+		}
+		path[id] = nil
+		if len(path) > 8192 {
+			return false, &projectionLimit{}
+		}
+	}
+	if rows.Err() != nil {
+		return false, failure("storage_error")
+	}
+	return d.bundleMetadataRestricted(path, nil)
+}
+
 // selectLocked evaluates selected ids under the caller's writer transaction.
 func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[string]bool, variants int, signer ControlSigner) (BundleSelection, bundleSelection, error) {
 	var meta bundleSelection
@@ -320,12 +598,7 @@ func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[stri
 	// Data affected by a ledger entry that cannot travel exactly is not
 	// exported without the restriction that must accompany it.
 	unserializable := map[string]bool{}
-	ledger := map[string]bool{}
 	for _, f := range d.exposures {
-		ledger[f.root] = true
-		for id := range f.affects {
-			ledger[id] = true
-		}
 		if _, ok := localFact(f, nil); !ok {
 			unserializable[f.root] = true
 			for id := range f.affects {
@@ -338,7 +611,7 @@ func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[stri
 		h := x.rec.Header
 		switch {
 		case h.Type == record.KindKeyOp:
-			if b, ok := x.rec.Body.(*record.KeyOpBody); ok && b.Subject.Role == record.RoleDevice && b.Genesis == s.opts.PinnedGenesisID {
+			if b, ok := x.rec.Body.(*record.KeyOpBody); ok && b.Subject.Role == record.RoleDevice && keyOpGenesis(b) == s.opts.PinnedGenesisID {
 				out.Keyring = append(out.Keyring, signedOf(x))
 				meta.items = append(meta.items, "k:"+x.rec.ID)
 			}
@@ -368,7 +641,34 @@ func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[stri
 		}
 		candidates[x.rec.ID] = c
 	}
-	exported := map[string]bool{}
+	// Evaluate all carried metadata before recursive eligibility, so a parent
+	// appearing later in admission order cannot hide a restriction from a child.
+	metadataOrigins := map[string]map[string]*record.Record{}
+	for id, c := range candidates {
+		if !c.Selected || c.Record.Header.Red.Profile != record.ProfilePushMetadata {
+			continue
+		}
+		origins, complete, err := d.bundleOrigins(c.Record, nil)
+		if err != nil {
+			return BundleSelection{}, meta, err
+		}
+		restricted := false
+		if complete {
+			restricted, err = d.bundleMetadataRestricted(origins, nil)
+			if err != nil {
+				return BundleSelection{}, meta, err
+			}
+		}
+		if !complete || restricted {
+			c.Pending = true
+			candidates[id] = c
+		}
+		metadataOrigins[id] = origins
+	}
+	// Only unchanged complete envelopes are original roots. Source ids used
+	// to retain facts for fresh metadata are deliberately a separate set.
+	originalRootIDs := map[string]bool{}
+	factIDs := map[string]bool{}
 	for _, x := range d.records {
 		id := x.rec.ID
 		if !selected[id] {
@@ -377,6 +677,7 @@ func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[stri
 		delete(selected, id)
 		c, ok := candidates[id]
 		reason := ""
+		origins := metadataOrigins[id]
 		switch {
 		case !bundleDataKind(x.rec.Header.Type):
 			reason = ExcludedNotData
@@ -386,7 +687,30 @@ func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[stri
 			reason = ExcludedUnavailable
 		case !transport.BundlePolicyAllowed(x.rec, c.Authorization):
 			reason = ExcludedPolicy
-			if variants == variantNone || unserializable[id] || ledger[id] || len(c.RecalledRoots) > 0 {
+			if variants == variantNone || unserializable[id] || len(c.RecalledRoots) > 0 {
+				break
+			}
+			var complete bool
+			var err error
+			origins, complete, err = d.bundleOrigins(x.rec, nil)
+			if err != nil {
+				return BundleSelection{}, meta, err
+			}
+			if !complete {
+				break
+			}
+			restricted, err := d.bundleMetadataRestricted(origins, nil)
+			if err != nil {
+				return BundleSelection{}, meta, err
+			}
+			if restricted {
+				break
+			}
+			restricted, err = s.bundleFrozenRestricted(ctx, d, id, origins)
+			if err != nil {
+				return BundleSelection{}, meta, err
+			}
+			if restricted {
 				break
 			}
 			// A governed full body never travels. Its fresh push-metadata
@@ -398,8 +722,38 @@ func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[stri
 			if v == nil {
 				break
 			}
-			meta.items = append(meta.items, "v:"+id)
+			built, _, err := parseBundleItem(*v)
+			if variants == variantCheck {
+				built, err = record.Parse(v.HeaderJCS, v.BodyJCS, v.AdvisoryID)
+			}
+			if err != nil {
+				return BundleSelection{}, meta, err
+			}
+			builtCandidates := map[string]transport.BundleRecord{built.ID: {Record: built, ID: built.ID, CompleteSigned: true, Live: true}}
+			builtOrigins, complete, err := d.bundleOrigins(built, builtCandidates)
+			if err != nil {
+				return BundleSelection{}, meta, err
+			}
+			if !complete {
+				break
+			}
+			restricted, err = d.bundleMetadataRestricted(builtOrigins, builtCandidates)
+			if err != nil {
+				return BundleSelection{}, meta, err
+			}
+			if restricted {
+				break
+			}
+			identity, ok := variantIdentity(*v)
+			if !ok {
+				return BundleSelection{}, meta, failure("invalid_record")
+			}
+			meta.items = append(meta.items, "v:"+id+":"+identity)
 			meta.sources = append(meta.sources, id)
+			meta.variants = append(meta.variants, bundleVariantItem{source: id, rec: *v})
+			for source := range origins {
+				factIDs[source] = true
+			}
 			if variants == variantSign {
 				out.Data = append(out.Data, *v)
 			}
@@ -414,7 +768,11 @@ func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[stri
 			meta.items = append(meta.items, "x:"+id+":"+reason)
 			continue
 		}
-		exported[id] = true
+		originalRootIDs[id] = true
+		factIDs[id] = true
+		for source := range origins {
+			factIDs[source] = true
+		}
 		out.Data = append(out.Data, signedOf(x))
 		meta.items = append(meta.items, "d:"+id)
 		meta.sources = append(meta.sources, id)
@@ -428,7 +786,7 @@ func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[stri
 		out.Excluded = append(out.Excluded, BundleExclusion{ID: id, Reason: ExcludedNotPresent})
 		meta.items = append(meta.items, "x:"+id+":"+ExcludedNotPresent)
 	}
-	if err := s.bundleFacts(ctx, d, exported, &out); err != nil {
+	if err := s.bundleFacts(ctx, d, originalRootIDs, factIDs, &out); err != nil {
 		return BundleSelection{}, meta, err
 	}
 	for _, f := range out.Facts {
@@ -448,17 +806,17 @@ func (s *Store) selectLocked(ctx context.Context, d *databaseState, ids map[stri
 // bundleFacts carries every local ledger entry whose root or affected record
 // is exported and forwards every imported fact relevant to exported data
 // unchanged, preserving its origin namespace.
-func (s *Store) bundleFacts(ctx context.Context, d *databaseState, exported map[string]bool, out *BundleSelection) error {
+func (s *Store) bundleFacts(ctx context.Context, d *databaseState, originalRootIDs, factIDs map[string]bool, out *BundleSelection) error {
 	lines := map[string][]byte{}
 	for _, f := range d.exposures {
-		relevant := exported[f.root]
+		relevant := factIDs[f.root]
 		for id := range f.affects {
-			relevant = relevant || exported[id]
+			relevant = relevant || factIDs[id]
 		}
 		if !relevant {
 			continue
 		}
-		line, ok := localFact(f, exported)
+		line, ok := localFact(f, originalRootIDs)
 		if !ok {
 			return failure("invalid_exposure")
 		}
@@ -478,9 +836,13 @@ func (s *Store) bundleFacts(ctx context.Context, d *databaseState, exported map[
 		if err != nil {
 			return failure("corrupt_database")
 		}
-		relevant := exported[f.RecalledID]
-		for _, id := range d.importedTargets(f) {
-			relevant = relevant || exported[id]
+		relevant := factIDs[f.RecalledID]
+		targets, err := d.importedTargets(f)
+		if err != nil {
+			return err
+		}
+		for _, id := range targets {
+			relevant = relevant || factIDs[id]
 		}
 		if relevant {
 			lines[string(raw)] = raw
@@ -547,8 +909,24 @@ func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (BundleImport
 		return report, failure("storage_error")
 	}
 	hosted := statErr == nil
-	verified := in.ReceiptIssuer.verify(in.Receipts)
 	err := s.write(ctx, func() error {
+		// Verify carried receipts under current receiver authority inside the
+		// writer. A concurrent service rotation cannot race this decision.
+		issuer := in.ReceiptIssuer
+		if issuer != nil && issuer.valid() {
+			current := *issuer
+			if kr, err := s.serviceKeyring(ctx, issuer.Tenant); err == nil {
+				var evaluationErr error
+				current.state, evaluationErr = kr.StateContext(ctx)
+				if evaluationErr != nil {
+					return contractEvaluationError(evaluationErr)
+				}
+			} else if Code(err) != "service_pins_required" {
+				return err
+			}
+			issuer = &current
+		}
+		verified := issuer.verify(in.Receipts)
 		s.bundleImport = true
 		s.controlConfirm = map[string]bool{}
 		for _, id := range in.ConfirmedControls {
@@ -590,13 +968,17 @@ func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (BundleImport
 		if err != nil {
 			return err
 		}
-		k := d.kr.State().KeyFor(in.LocalKeyID, record.RoleDevice, "")
+		authority, err := d.kr.StateContext(ctx)
+		if err != nil {
+			return contractEvaluationError(err)
+		}
+		k := authority.KeyFor(in.LocalKeyID, record.RoleDevice, "")
 		if k == nil || k.Status != sig.KeyActive || k.Genesis != s.opts.PinnedGenesisID || k.MachineID != s.opts.LocalMachineID {
 			return failure("device_not_enrolled")
 		}
 		// Union exposure restrictions before any control or data, durably.
 		machines := map[string]bool{}
-		for _, key := range d.kr.State().Keys {
+		for _, key := range authority.Keys {
 			if key.Role == record.RoleDevice && key.Genesis == s.opts.PinnedGenesisID {
 				machines[key.MachineID] = true
 			}
@@ -617,21 +999,41 @@ func (s *Store) ImportBundle(ctx context.Context, in BundleImport) (BundleImport
 			}
 			report.Controls++
 		}
-		eligible, excluded, err := s.importEligibility(ctx, in, verified)
-		if err != nil {
-			return err
-		}
-		report.Excluded = excluded
-		for _, item := range eligible {
-			if rc, ok := verified[item.AdvisoryID]; ok {
-				if err := s.persistReceipt(ctx, rc); err != nil {
-					return err
-				}
-			}
-			if err := admit(item, bundleDataKind); err != nil {
+		// Admit signed session repository evidence before task metadata, even
+		// when a bundle lists the task first. Both passes evaluate the complete
+		// carried lineage set; roots never disappear because of line order.
+		tasks := map[string]bool{}
+		for _, item := range in.Data {
+			r, _, err := parseBundleItem(item)
+			if err != nil {
 				return err
 			}
-			report.Data++
+			tasks[item.AdvisoryID] = r.Header.Type == record.KindTask
+		}
+		for phase := 0; phase < 2; phase++ {
+			eligible, excluded, err := s.importEligibility(ctx, in, verified)
+			if err != nil {
+				return err
+			}
+			for _, ex := range excluded {
+				if tasks[ex.ID] == (phase == 1) {
+					report.Excluded = append(report.Excluded, ex)
+				}
+			}
+			for _, item := range eligible {
+				if tasks[item.AdvisoryID] != (phase == 1) {
+					continue
+				}
+				if rc, ok := verified[item.AdvisoryID]; ok {
+					if err := s.persistReceipt(ctx, rc); err != nil {
+						return err
+					}
+				}
+				if err := admit(item, bundleDataKind); err != nil {
+					return err
+				}
+				report.Data++
+			}
 		}
 		if hosted && report.Data > 0 {
 			// A hosted-enrolled node must complete PULL(control)+ENFORCE before
@@ -661,7 +1063,10 @@ func (s *Store) importEligibility(ctx context.Context, in BundleImport, verified
 	if err != nil {
 		return nil, nil, err
 	}
-	st := d.kr.State()
+	st, evaluationErr := d.kr.StateContext(ctx)
+	if evaluationErr != nil {
+		return nil, nil, contractEvaluationError(evaluationErr)
+	}
 	candidates := map[string]transport.BundleRecord{}
 	parsed := map[string]*record.Record{}
 	pending := map[string]bool{}
@@ -673,10 +1078,14 @@ func (s *Store) importEligibility(ctx context.Context, in BundleImport, verified
 		if !bundleDataKind(r.Header.Type) || candidates[r.ID].Record != nil {
 			return nil, nil, failure("invalid_bundle")
 		}
-		res := sig.VerifyRecord(r, signatures, st, sig.Context{Route: record.RouteBundleImport})
+		res := sig.VerifyRecord(r, signatures, st, sig.Context{RequestContext: ctx, Route: record.RouteBundleImport})
 		if res.Status == sig.StatusSignerRevoked {
 			if rc, ok := verified[r.ID]; ok {
-				res = d.verifyWithReceipt(r, signatures, st, 0, &rc)
+				var receiptErr error
+				res, receiptErr = d.verifyWithReceipt(r, signatures, st, 0, &rc)
+				if receiptErr != nil {
+					return nil, nil, receiptErr
+				}
 			} else if rc, carried := in.Receipts[r.ID]; carried && (in.ReceiptIssuer == nil || in.ReceiptIssuer.Tenant != rc.Tenant) {
 				pending[r.ID] = true
 			}
@@ -688,13 +1097,47 @@ func (s *Store) importEligibility(ctx context.Context, in BundleImport, verified
 		for _, rc := range x.recalls {
 			c.RecalledRoots = append(c.RecalledRoots, rc.ID)
 		}
+		candidates[r.ID] = c
+		parsed[r.ID] = r
+	}
+	for id, c := range candidates {
 		for _, f := range d.importedFacts {
-			if factAffects(f, r) {
+			budget, err := d.reductions()
+			if err != nil {
+				return nil, nil, err
+			}
+			if err = budget.charge(1 + len(f.AffectsIDs)); err != nil {
+				return nil, nil, err
+			}
+			affected, err := d.importedFactAffects(f, c.Record, candidates)
+			if err != nil {
+				return nil, nil, err
+			}
+			if affected {
 				c.RecalledRoots = append(c.RecalledRoots, f.RecalledID)
 			}
 		}
-		candidates[r.ID] = c
-		parsed[r.ID] = r
+		candidates[id] = c
+	}
+	for id, c := range candidates {
+		if c.Record.Header.Red.Profile != record.ProfilePushMetadata {
+			continue
+		}
+		origins, complete, err := d.bundleOrigins(c.Record, candidates)
+		if err != nil {
+			return nil, nil, err
+		}
+		restricted := false
+		if complete {
+			restricted, err = d.bundleMetadataRestricted(origins, candidates)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		if !complete || restricted {
+			c.Pending = true
+			candidates[id] = c
+		}
 	}
 	var out []SignedRecord
 	for _, item := range in.Data {
@@ -709,10 +1152,10 @@ func (s *Store) importEligibility(ctx context.Context, in BundleImport, verified
 			reason = ExcludedReceiptPending
 		case !c.CompleteSigned:
 			reason = ExcludedUnavailable
-		case !transport.BundlePolicyAllowed(r, c.Authorization) || d.tenant.validateBody(r) != nil:
-			// Admission seals governed data to the current head; a record
-			// that admission would refuse is a policy exclusion, not a
-			// refusal of the whole bundle.
+		case !transport.BundlePolicyAllowed(r, c.Authorization) || d.validateAdmittedBody(r) != nil:
+			// The same current authority and provenance checks apply during
+			// admission. A denied item is a policy exclusion, not a refusal
+			// of the whole bundle.
 			reason = ExcludedPolicy
 		case !transport.BundleEligible(r.ID, candidates):
 			reason = ExcludedLineageIncomplete
@@ -791,7 +1234,7 @@ func (s *Store) Keyring(ctx context.Context) ([]SignedRecord, error) {
 				return failure("corrupt_database")
 			}
 			b, ok := r.Body.(*record.KeyOpBody)
-			if !ok || b.Subject.Role != record.RoleDevice || b.Genesis != s.opts.PinnedGenesisID {
+			if !ok || b.Subject.Role != record.RoleDevice || keyOpGenesis(b) != s.opts.PinnedGenesisID {
 				continue
 			}
 			var signatures []record.Signature

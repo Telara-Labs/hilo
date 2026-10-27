@@ -19,6 +19,7 @@ const maxBundleReceipts = 16384
 type ReceiptIssuer struct {
 	Tenant string
 	Keys   map[string]ed25519.PublicKey // key id to public key
+	state  *sig.State                   // current locally retained service authority, never wire data
 }
 
 func receiptIssuerContext(tenant string) sig.TrustedIssuer {
@@ -53,6 +54,9 @@ func (i *ReceiptIssuer) verify(carried map[string]record.Receipt) map[string]rec
 	st := &sig.State{Keys: map[string]*sig.Key{}}
 	for id, pub := range i.Keys {
 		st.Keys[serviceBinding(i.Tenant, id)] = &sig.Key{KeyID: id, Pub: pub, Role: record.RoleService, Tenant: i.Tenant, Status: sig.KeyActive}
+	}
+	if i.state != nil {
+		st = i.state
 	}
 	for id, rc := range carried {
 		if rc.ID == id && rc.Tenant == i.Tenant && sig.VerifyReceipt(rc, st, receiptIssuerContext(i.Tenant)) == nil {
@@ -138,17 +142,32 @@ func (s *Store) loadReceipts(ctx context.Context, d *databaseState) error {
 // receiptState extends a keyring state with one tenant's pinned service keys
 // and the retained receipts of its key operations, so revocation cutoffs are
 // checked in that issuer's receipt-time domain. Nil when nothing is pinned.
-func (d *databaseState) receiptState(st *sig.State, tenant string) *sig.State {
+func (d *databaseState) receiptState(st *sig.State, tenant string) (*sig.State, error) {
+	if st != nil && st.Err() != nil {
+		return nil, contractEvaluationError(st.Err())
+	}
 	keys := d.receiptIssuers[tenant]
 	if len(keys) == 0 || st == nil {
-		return nil
+		return nil, nil
 	}
 	out := &sig.State{Genesis: st.Genesis, Keys: map[string]*sig.Key{}, Status: st.Status, Ops: map[string]*sig.KeyOp{}}
 	for k, v := range st.Keys {
 		out.Keys[k] = v
 	}
-	for id, pub := range keys {
-		out.Keys[serviceBinding(tenant, id)] = &sig.Key{KeyID: id, Pub: pub, Role: record.RoleService, Tenant: tenant, Status: sig.KeyActive}
+	if kr, err := d.store.serviceKeyring(d.ctx, tenant); err == nil {
+		authority, evaluationErr := kr.StateContext(d.evaluationContext())
+		if evaluationErr != nil {
+			return nil, contractEvaluationError(evaluationErr)
+		}
+		for binding, key := range authority.Keys {
+			out.Keys[binding] = key
+		}
+	} else if Code(err) == "service_pins_required" {
+		for id, pub := range keys {
+			out.Keys[serviceBinding(tenant, id)] = &sig.Key{KeyID: id, Pub: pub, Role: record.RoleService, Tenant: tenant, Status: sig.KeyActive}
+		}
+	} else {
+		return nil, err
 	}
 	for id, op := range st.Ops {
 		rc, ok := d.receipts[id]
@@ -161,17 +180,26 @@ func (d *databaseState) receiptState(st *sig.State, tenant string) *sig.State {
 		c.ReceiptIssuer = receiptIssuerContext(tenant)
 		out.Ops[id] = &c
 	}
-	return out
+	return out, nil
 }
 
 // verifyWithReceipt is VerifyRecord on the local route, then, only for a
 // record whose signer is revoked, the same verification with its retained
 // (or, during import, its just-verified) receipt under the pinned issuer.
-func (d *databaseState) verifyWithReceipt(r *record.Record, sigs []record.Signature, st *sig.State, seq int64, carried *record.Receipt) sig.Result {
-	c := sig.Context{Route: record.RouteLocal, AdmittedSeq: seq}
+func (d *databaseState) verifyWithReceipt(r *record.Record, sigs []record.Signature, st *sig.State, seq int64, carried *record.Receipt) (sig.Result, error) {
+	if err := st.Err(); err != nil {
+		return sig.Result{}, contractEvaluationError(err)
+	}
+	if err := d.evaluationContext().Err(); err != nil {
+		return sig.Result{}, err
+	}
+	c := sig.Context{RequestContext: d.evaluationContext(), Route: record.RouteLocal, AdmittedSeq: seq}
 	res := sig.VerifyRecord(r, sigs, st, c)
+	if err := d.evaluationContext().Err(); err != nil {
+		return sig.Result{}, err
+	}
 	if res.Status != sig.StatusSignerRevoked {
-		return res
+		return res, nil
 	}
 	var rc record.Receipt
 	if carried != nil {
@@ -179,21 +207,29 @@ func (d *databaseState) verifyWithReceipt(r *record.Record, sigs []record.Signat
 	} else if retained, ok := d.receipts[r.ID]; ok {
 		rc = retained
 	} else {
-		return res
+		return res, nil
 	}
-	rst := d.receiptState(st, rc.Tenant)
+	rst, err := d.receiptState(st, rc.Tenant)
+	if err != nil {
+		return sig.Result{}, err
+	}
 	if rst == nil {
-		return res
+		return res, nil
 	}
 	c.Receipt = &rc
 	c.ReceiptIssuer = receiptIssuerContext(rc.Tenant)
-	if again := sig.VerifyRecord(r, sigs, rst, c); again.Status == sig.StatusVerified {
-		return again
+	again := sig.VerifyRecord(r, sigs, rst, c)
+	if err := d.evaluationContext().Err(); err != nil {
+		return sig.Result{}, err
 	}
-	return res
+	if again.Status == sig.StatusVerified {
+		return again, nil
+	}
+	return res, nil
 }
 
-// recordSigStatus is the rebuild status of one stored non-key record.
-func (d *databaseState) recordSigStatus(x *stored, st *sig.State) sig.SigStatus {
-	return d.verifyWithReceipt(x.rec, x.sigs, st, x.seq, nil).Status
+// recordSigStatus preserves evaluator refusal separately from signature status.
+func (d *databaseState) recordSigStatus(x *stored, st *sig.State) (sig.SigStatus, error) {
+	res, err := d.verifyWithReceipt(x.rec, x.sigs, st, x.seq, nil)
+	return res.Status, err
 }

@@ -251,3 +251,11 @@ func (c *Connection) IssueOperationTokens(ctx context.Context) ([]string, error)
 	}
 	return c.service.engine.IssueOperationTokens(ctx, c.handle)
 }
+
+// RegisterRepository is restricted to the trusted owner administration facade.
+func (a *Administration) RegisterRepository(ctx context.Context, q RegisterClient, binding string, generation int64) (RegisteredClient, error) {
+	if a == nil || a.handle == nil {
+		return RegisteredClient{}, facadeError{}
+	}
+	return a.handle.RegisterRepository(ctx, q, binding, generation)
+}

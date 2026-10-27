@@ -14,8 +14,16 @@ import (
 
 func (e *DisclosureEngine) buildRecord(d *databaseState, sc scopeState, o *operationOutcome, k record.Kind, lid string, body any, links record.Links, at int64) (*stored, error) {
 	h := record.Header{Type: k, LID: lid, At: at, Author: record.Author{MachineID: e.config.MachineID, KeyID: e.authority.keyID}, Prov: record.ProvMCPExplicit, Subj: record.Subject{TaskID: o.task}, Red: record.Redact{Profile: record.ProfileLocal, Epoch: e.ruleset.Epoch, Fingerprint: e.ruleset.Fingerprint()}, Trust: record.Trust{Coverage: "incomplete", Taint: []string{"taint-unknown"}}, Op: o.op, Links: links}
+	remote := ""
+	if sc.repoState == "known" {
+		h.Subj.RepoID = sc.repo
+		remote = d.verifiedRepositoryRemote(sc.repo)
+		if remote == "" {
+			return nil, failure("repository_proof_required")
+		}
+	}
 	if d.tenant != nil {
-		if !d.tenant.sealAllowed("", h.Red.Epoch) {
+		if !d.tenant.sealAllowed(remote, h.Red.Epoch) {
 			return nil, failure("policy_violation")
 		}
 		h.Pol = d.tenant.chain.HighestID
@@ -170,7 +178,23 @@ func (e *DisclosureEngine) prepareMutation(ctx context.Context, d *databaseState
 	return []*stored{x}, nil
 }
 func (e *DisclosureEngine) persistBuilderFacts(ctx context.Context, d *databaseState, added []*stored, o *operationOutcome, sc scopeState) error {
+	binding, err := e.store.credentialRepository(ctx, o.credential)
+	if err != nil {
+		return err
+	}
 	for _, x := range added {
+		if binding != nil {
+			var count int
+			if e.store.conn.QueryRowContext(ctx, "SELECT count(*) FROM repository_record WHERE binding=?", binding.ID).Scan(&count) != nil {
+				return failure("storage_error")
+			}
+			if count >= 4096 {
+				return failure("repository_binding_limit")
+			}
+			if _, err := e.store.conn.ExecContext(ctx, "INSERT INTO repository_record VALUES(?,?,?)", x.rec.ID, binding.ID, binding.Generation); err != nil {
+				return failure("storage_error")
+			}
+		}
 		a := d.attrs[x.rec.ID]
 		if _, err := e.store.conn.ExecContext(ctx, "INSERT INTO record_attribution VALUES(?,?,?,?,?,?,?)", x.rec.ID, a.owner, a.machine, a.scope, a.kind, a.repoState, a.repo); err != nil {
 			return failure("storage_error")
@@ -221,7 +245,19 @@ func (e *DisclosureEngine) buildCall(d *databaseState, sc scopeState, o *operati
 		return nil, failure("render_limit")
 	}
 	h := record.Header{Type: record.KindCall, LID: record.CallLID(body.CallRef), At: at, Author: record.Author{MachineID: e.config.MachineID, KeyID: e.authority.keyID}, Prov: record.ProvMCPExplicit, Subj: record.Subject{TaskID: o.task}, Red: record.Redact{Profile: record.ProfileLocal, Epoch: e.ruleset.Epoch, Fingerprint: e.ruleset.Fingerprint()}, Trust: record.Trust{Coverage: "incomplete", Taint: []string{"taint-unknown"}}, Op: o.op, Links: record.Links{DerivedFrom: body.CommitmentDeps}}
+	remote := ""
+	if sc.repoState == "known" {
+		h.Subj.RepoID = sc.repo
+		remote = d.verifiedRepositoryRemote(sc.repo)
+		if remote == "" {
+			return nil, failure("repository_proof_required")
+		}
+	}
+
 	if d.tenant != nil {
+		if !d.tenant.sealAllowed(remote, h.Red.Epoch) {
+			return nil, failure("policy_violation")
+		}
 		h.Pol = d.tenant.chain.HighestID
 	}
 	r, err := record.BuildCall(h, body, args, result)

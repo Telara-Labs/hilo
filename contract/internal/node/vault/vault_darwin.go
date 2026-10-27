@@ -185,36 +185,6 @@ static int serviceName(char *out, size_t n) {
     int ok = CFStringGetCString(name, out, n, kCFStringEncodingUTF8);
     CFRelease(name); return ok;
 }
-// Enumerate attributes only. A failure or an unexplained account slot is never
-// treated as proof that an incompatible image left no staging credential.
-static OSStatus foreignSlots(const char *h, uintptr_t kc, const char *allowed, int *foreign) {
-    *foreign = 1;
-    CFMutableDictionaryRef q = query(h, (SecKeychainRef)kc, 0, 0);
-    if (!q || !kc) { if (q) CFRelease(q); return errSecParam; }
-    CFDictionaryRemoveValue(q, kSecAttrService);
-    CFDictionarySetValue(q, kSecReturnAttributes, kCFBooleanTrue);
-    CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitAll);
-    CFTypeRef result = NULL;
-    OSStatus s = SecItemCopyMatching(q, &result);
-    CFRelease(q);
-    CFStringRef own = CFStringCreateWithCString(NULL, allowed, kCFStringEncodingUTF8);
-    if (!own) { if (result) CFRelease(result); return errSecAuthFailed; }
-    if (s == errSecItemNotFound) { *foreign = 0; s = errSecSuccess; }
-    else if (!s) {
-        if (!result || CFGetTypeID(result) != CFArrayGetTypeID()) s = errSecParam;
-        else {
-            *foreign = 0;
-            for (CFIndex i=0; i<CFArrayGetCount((CFArrayRef)result); i++) {
-                CFTypeRef row = CFArrayGetValueAtIndex((CFArrayRef)result, i);
-                if (CFGetTypeID(row) != CFDictionaryGetTypeID()) { s=errSecParam; break; }
-                CFTypeRef name = CFDictionaryGetValue((CFDictionaryRef)row, kSecAttrService);
-                if (!name || CFGetTypeID(name) != CFStringGetTypeID()) { s=errSecParam; break; }
-                if (!CFEqual(name, own)) *foreign = 1;
-            }
-        }
-    }
-    CFRelease(own); if (result) CFRelease(result); return s;
-}
 static OSStatus defaultKeychainPath(char *out, UInt32 *n) {
     SecKeychainSetUserInteractionAllowed(false);
     SecKeychainRef kc = NULL;
@@ -240,7 +210,6 @@ import "C"
 import (
 	"context"
 	"fmt"
-	"strings"
 	"unsafe"
 )
 
@@ -372,19 +341,4 @@ func nativeDefaultKeychain() ([]byte, error) {
 		}
 	}
 	return b, nil
-}
-
-func (v *Vault) nativeForeignSlots(h, allowed string) ([]byte, error) {
-	if allowed != service && (!strings.HasPrefix(allowed, service+".") || len(allowed) > 256) {
-		return nil, ErrInvalid
-	}
-	p := C.CString(h)
-	defer C.free(unsafe.Pointer(p))
-	name := C.CString(allowed)
-	defer C.free(unsafe.Pointer(name))
-	var foreign C.int
-	if e := status(C.foreignSlots(p, C.uintptr_t(v.keychain), name, &foreign)); e != nil {
-		return nil, e
-	}
-	return []byte{byte(foreign)}, nil
 }

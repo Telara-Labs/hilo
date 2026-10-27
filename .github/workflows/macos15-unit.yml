@@ -1,0 +1,45 @@
+name: macos15-unit
+on:
+  push:
+    branches: [ci-macos15-unit]
+permissions:
+  contents: read
+jobs:
+  macos-full:
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install Python conformance requirements
+        working-directory: contract
+        run: python -m pip install --disable-pip-version-check -r conformance/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: pure contract native macOS full vet and unit suite
+        working-directory: contract
+        run: |
+          test "$(go env CGO_ENABLED)" = 1
+          go vet -mod=readonly ./...
+          go test -mod=readonly -p 2 -count=1 -timeout 60m ./...
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: runtime native macOS full vet and unit suite
+        working-directory: contract/internal/node
+        run: |
+          test "$(go env CGO_ENABLED)" = 1
+          go vet -mod=readonly ./...
+          go test -mod=readonly -p 2 -count=1 -timeout 60m ./...

@@ -14,6 +14,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/custodyguard"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
 	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
@@ -162,6 +163,19 @@ func Join(ctx context.Context, dir string, v Vault, inv Invite, newMachine func(
 	if err := freshJoinDir(dir); err != nil {
 		return JoinRequest{}, err
 	}
+	var out JoinRequest
+	err := custodyguard.With(ctx, dir, func(locked context.Context) error {
+		var err error
+		out, err = joinLocked(locked, dir, v, inv, newMachine)
+		return err
+	})
+	return out, err
+}
+
+func joinLocked(ctx context.Context, dir string, v Vault, inv Invite, newMachine func() (string, error)) (JoinRequest, error) {
+	if err := freshJoinDir(dir); err != nil {
+		return JoinRequest{}, err
+	}
 	authorPub, err := sig.DecodePub(inv.AuthorizerPub)
 	if err != nil {
 		return JoinRequest{}, ErrEnrollment
@@ -301,6 +315,19 @@ type Bootstrapper func(ctx context.Context, key ed25519.PrivateKey, machine, gen
 // pending device_add with both the possession signature and a co-signature by
 // another active device of the same genesis, then provisions the profile.
 func Enroll(ctx context.Context, dir string, v Vault, e Enrollment, bootstrap Bootstrapper) (Identity, error) {
+	if v == nil || bootstrap == nil {
+		return Identity{}, ErrProfile
+	}
+	var out Identity
+	err := custodyguard.With(ctx, dir, func(locked context.Context) error {
+		var err error
+		out, err = enrollLocked(locked, dir, v, e, bootstrap)
+		return err
+	})
+	return out, err
+}
+
+func enrollLocked(ctx context.Context, dir string, v Vault, e Enrollment, bootstrap Bootstrapper) (Identity, error) {
 	if v == nil || bootstrap == nil {
 		return Identity{}, ErrProfile
 	}

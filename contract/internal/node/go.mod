@@ -1,0 +1,30 @@
+module github.com/Telara-Labs/telara-memory/contract/internal/node
+
+// C1 is a pure-source candidate only. The independently published pure contract
+// requirement is intentionally absent until its exact version and real sums are
+// available from the approved resolver receipt. No runtime build is claimed.
+go 1.26.0
+
+require (
+	filippo.io/age v1.3.2
+	github.com/Telara-Labs/TAP-Runtime/contract v0.0.0-20261023010347-cd7b481855de
+	github.com/Telara-Labs/TAP-Runtime/discover v0.0.0-20261027042624-a711ce77ba63
+	github.com/godbus/dbus/v5 v5.2.4
+	golang.org/x/sys v0.48.0
+	golang.org/x/text v0.43.0
+	modernc.org/sqlite v1.60.1
+)
+
+require (
+	filippo.io/hpke v0.4.0 // indirect
+	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
+	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	golang.org/x/crypto v0.55.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
+	modernc.org/libc v1.77.1 // indirect
+	modernc.org/mathutil v1.7.1 // indirect
+	modernc.org/memory v1.12.1 // indirect
+)

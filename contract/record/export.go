@@ -92,10 +92,24 @@ func Export(source *Record, author Author, exportHeads []*Record, rs Ruleset, re
 			} else {
 				remote = ""
 			}
-			meta.Repo = &MetaRepo{ID: b.Repo.ID, Remote: remote, CommitStart: sanitize(b.Repo.CommitStart, 128), CommitEnd: sanitize(b.Repo.CommitEnd, 128)}
+			// Identity comes only from the parsed source, never export text.
+			// Parse already rejects explicit body/header identity disagreement.
+			repoID := b.Repo.ID
+			if repoID == "" {
+				repoID = h.Subj.RepoID
+			}
+			if remote != "" {
+				computed, err := RepoID(remote)
+				if err != nil || repoID == "" || computed != repoID {
+					remote = ""
+				}
+			}
+			meta.Repo = &MetaRepo{ID: repoID, Remote: remote, CommitStart: sanitize(b.Repo.CommitStart, 128), CommitEnd: sanitize(b.Repo.CommitEnd, 128)}
 			if *meta.Repo == (MetaRepo{}) {
 				meta.Repo = nil
 			}
+		} else if h.Subj.RepoID != "" {
+			meta.Repo = &MetaRepo{ID: h.Subj.RepoID}
 		}
 		if b.Counts != nil && (b.Counts.Requests != 0 || b.Counts.ToolCalls != 0 || b.Counts.ToolFailures != 0) {
 			meta.Counts = &MetaCounts{Requests: b.Counts.Requests, ToolCalls: b.Counts.ToolCalls, ToolFailures: b.Counts.ToolFailures}

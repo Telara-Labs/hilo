@@ -1,0 +1,13 @@
+{
+  "event": {
+    "salt": "AwMDAwMDAwMDAwMDAwMDAw",
+    "id": "ev1:10a609497cd38807b6ebf41c38d582b9be67c1de023c44e39ce27fe4c453efe0",
+    "revision": "282ab3571b75c860cf65fa05809bcb8ca5de81cee3815e3c0da03dc442d992b7",
+    "kind": "assistant_final",
+    "prov": "transcript",
+    "text": {
+      "body": "private redacted prose"
+    }
+  },
+  "test_nonce_hex": "03030303030303030303030303030303"
+}

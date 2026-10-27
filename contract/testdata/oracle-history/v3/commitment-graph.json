@@ -1,0 +1,59 @@
+{
+  "note": "PROVISIONAL3.0 no-event signed dependency graph. All fixed secrets TEST-ONLY. No bundle/runtime/physical scrub proof.",
+  "args": {
+    "milestone": "private redacted result"
+  },
+  "result": {
+    "record_id": "5cb8b01cce82ef81d90c0f80d83e5b8c4f0244f5bf9cb60c8f285805ce5dad86"
+  },
+  "records": [
+    {
+      "name": "genesis",
+      "header_jcs": "{\"at\":1761150000456,\"author\":{\"key_id\":\"dbc298251c51321b7266e78d1c151c2b\",\"machine_id\":\"6f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b\"},\"body\":{\"digest\":\"354be2375e2d603e226a0ee88940a56373819ee63a02b2174f17641526e9015d\",\"size\":208},\"lid\":\"b100a4f71aaaf4204ca4314ef853492952a8525aa7396b126acf5d975fda09a9\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"key_op\",\"v\":3}",
+      "body_jcs": "{\"op\":\"genesis\",\"subject\":{\"alg\":\"ed25519\",\"key_id\":\"dbc298251c51321b7266e78d1c151c2b\",\"machine_id\":\"6f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b\",\"pub\":\"_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg\",\"role\":\"device\"}}",
+      "id": "d7818daf47a88fe59a256bfc121d0152722d80bc9429264596f48120e9470e8e",
+      "signature": {
+        "alg": "ed25519",
+        "ctx": "mnc/v1/record",
+        "key_id": "dbc298251c51321b7266e78d1c151c2b",
+        "value": "yly-IZy9JXF9m7BxDpIWkqJCMqsIwEUz1JcQRtD6-z8ENpGqhuRUBHn4UbMDVvLhSlBDNQBww8Doyel_ZY-pDQ"
+      }
+    },
+    {
+      "name": "checkpoint",
+      "header_jcs": "{\"at\":1761150000456,\"author\":{\"key_id\":\"dbc298251c51321b7266e78d1c151c2b\",\"machine_id\":\"6f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b\"},\"body\":{\"digest\":\"7ebf9b4be9da3482c588183fb6a9a2e5ac4bdb3966b18a07b96780f1622206c5\",\"size\":71},\"lid\":\"df590a5ba24e15541d386cd2a7743555db74d2e63ccc19694d0a720cb6889b0b\",\"op\":\"c8c413fa04b4c3291d72ea0985a2f0e1ea25bbc4967a12e1a39aa58a4482770e\",\"prov\":\"mcp-explicit\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{\"task_id\":\"3f2a91c0-1111-4222-8333-444455556666\"},\"trust\":{},\"type\":\"checkpoint\",\"v\":3}",
+      "body_jcs": "{\"milestone\":\"private redacted result\",\"salt\":\"CwsLCwsLCwsLCwsLCwsLCw\"}",
+      "id": "5cb8b01cce82ef81d90c0f80d83e5b8c4f0244f5bf9cb60c8f285805ce5dad86",
+      "signature": {
+        "alg": "ed25519",
+        "ctx": "mnc/v1/record",
+        "key_id": "dbc298251c51321b7266e78d1c151c2b",
+        "value": "5y-0bnWa2QqDwTTlp-6CbXkPWMlZfmNVQGQQcKLIIDMkC5LjCp-H3MuGA1hF0sZPuI0B_LtNeghYu266_6WTDQ"
+      }
+    },
+    {
+      "name": "call",
+      "header_jcs": "{\"at\":1761150000456,\"author\":{\"key_id\":\"dbc298251c51321b7266e78d1c151c2b\",\"machine_id\":\"6f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b\"},\"body\":{\"digest\":\"a5c0e93b8f125147eaf73c808ff8976f64c0dafe7fa9980ddcccf55beb20bc27\",\"size\":441},\"lid\":\"5a965cabdff7e847180ec919b765d91ee2eeb1835ad9ade6b4477c7f14c2b91c\",\"links\":{\"derived_from\":[\"5cb8b01cce82ef81d90c0f80d83e5b8c4f0244f5bf9cb60c8f285805ce5dad86\"]},\"op\":\"c8c413fa04b4c3291d72ea0985a2f0e1ea25bbc4967a12e1a39aa58a4482770e\",\"prov\":\"mcp-explicit\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"call\",\"v\":3}",
+      "body_jcs": "{\"args_hash\":\"6fc311247463d23d19152d7ebd8e6ec988ddce70a06e953cff44be66e777fdcf\",\"call_ref\":\"m1.k7qz3c7xw2\",\"commitment_deps\":[\"5cb8b01cce82ef81d90c0f80d83e5b8c4f0244f5bf9cb60c8f285805ce5dad86\"],\"outcome\":\"ok\",\"result_hash\":\"b577d1f42ba40a032df5f791f779e7b07a60b57de52f8e2c2d5fd64085f65720\",\"salt\":\"DAwMDAwMDAwMDAwMDAwMDA\",\"scope_id\":\"sc1:6f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b:00112233445566778899aabbccddeeff\",\"tool\":\"telara_task_checkpoint\"}",
+      "id": "300a4361946bbbc2b7a45a0a7e56adcf9fd5881347044a0055968df302d8bd54",
+      "signature": {
+        "alg": "ed25519",
+        "ctx": "mnc/v1/record",
+        "key_id": "dbc298251c51321b7266e78d1c151c2b",
+        "value": "qyE0weyOBlOxDlPwty0YkDYqJcaaB1nHcDMLxz2QsLzA_rwRD71WuWgeNIaaudsOloLeTHXmFM4RWbTc_YiTBQ"
+      }
+    },
+    {
+      "name": "erasure",
+      "header_jcs": "{\"at\":1761150000456,\"author\":{\"key_id\":\"dbc298251c51321b7266e78d1c151c2b\",\"machine_id\":\"6f1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b\"},\"body\":{\"digest\":\"50abe20695740b5f398c564511e2e4947013dba0142ec409e19c7984757923ce\",\"size\":142},\"lid\":\"a1272ac3691cb3cbb8e6928deca79f2e750e2adf00db3aa7e9d47a91495d5932\",\"prov\":\"user\",\"red\":{\"epoch\":0,\"findings\":0,\"profile\":\"local\"},\"subj\":{},\"trust\":{},\"type\":\"erasure\",\"v\":3}",
+      "body_jcs": "{\"event_coverage\":\"complete\",\"reason\":\"user_request\",\"selectors\":{\"ids\":[\"5cb8b01cce82ef81d90c0f80d83e5b8c4f0244f5bf9cb60c8f285805ce5dad86\"]}}",
+      "id": "c3eaeb80f435c66d3a5f958774f5cbc70c87cf4c6ee36b49d1e7bc2f0deffc86",
+      "signature": {
+        "alg": "ed25519",
+        "ctx": "mnc/v1/record",
+        "key_id": "dbc298251c51321b7266e78d1c151c2b",
+        "value": "hVM8vcN8oZ7lav728CHPOCpm5a8wf1HecttrXoq7H4sNE5teDtc0frIFOl3XlNUYDmMKIjfHR-VetcnYQv-EAg"
+      }
+    }
+  ]
+}

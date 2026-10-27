@@ -27,10 +27,12 @@ type Sealer struct {
 }
 type actualRedactor struct{}
 
-func (actualRedactor) Redact(s string) string                  { return tapredact.Redact(s) }
-func (actualRedactor) Argument(k, s string) string             { return tapredact.Argument(k, s) }
-func (actualRedactor) Profiles() []string                      { return nil }
-func (actualRedactor) RedactProfile(_ string, s string) string { return tapredact.Redact(s) }
+func (actualRedactor) Redact(s string) string      { return tapredact.Redact(s) }
+func (actualRedactor) Argument(k, s string) string { return tapredact.Argument(k, s) }
+func (actualRedactor) Profiles() []string          { return tapredact.CurrentRuleset().Profiles() }
+func (actualRedactor) RedactProfile(profile string, s string) string {
+	return tapredact.CurrentRuleset().RedactProfile(profile, s)
+}
 func NewSealer(owner, machine string, salt []byte, key ed25519.PrivateKey) (*Sealer, error) {
 	if !record.IsKeyID(owner) || !record.IsUUIDv4(machine) || len(salt) != 32 || len(key) != 64 {
 		return nil, errors.New("key_material_unavailable")
@@ -49,7 +51,7 @@ func NewSealer(owner, machine string, salt []byte, key ed25519.PrivateKey) (*Sea
 		return nil, errors.New("ruleset_unavailable")
 	}
 	upstream := tapredact.CurrentRuleset()
-	s := &Sealer{owner: owner, machine: machine, keyID: sig.KeyID(key.Public().(ed25519.PublicKey)), valid: true, rules: record.Ruleset{Epoch: upstream.Epoch, Digest: upstream.Digest, Behavior: behavior, Engine: "tap-discover/cd7b481855de"}}
+	s := &Sealer{owner: owner, machine: machine, keyID: sig.KeyID(key.Public().(ed25519.PublicKey)), valid: true, rules: record.Ruleset{Epoch: upstream.Epoch, Digest: upstream.Digest, Behavior: behavior, Engine: "tap-discover/a711ce77ba63"}}
 	var golden record.Ruleset
 	if json.Unmarshal(contract.RedactionGoldenV1(), &golden) != nil || golden != s.rules {
 		return nil, errors.New("ruleset_unavailable")

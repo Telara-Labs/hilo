@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -151,6 +152,9 @@ func (e *DisclosureEngine) client(ctx context.Context, h ClientHandle) (*credent
 	}
 	c, err := e.store.credential(ctx, h.credential)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := e.store.credentialRepository(ctx, h.credential); err != nil {
 		return nil, err
 	}
 	if c.revoked || c.epoch != h.epoch {
@@ -316,6 +320,18 @@ func grantsFrom(c *credentialState) (Grant, TaskWriteGrant) {
 	return g, w
 }
 func (a *DisclosureAdministration) Register(ctx context.Context, q RegisterClient) (RegisteredClient, error) {
+	return a.register(ctx, q, "", 0)
+}
+
+// RegisterRepository atomically records the credential's exact owner binding.
+// A crash after issuance cannot leave an unassociated live verifier.
+func (a *DisclosureAdministration) RegisterRepository(ctx context.Context, q RegisterClient, binding string, generation int64) (RegisteredClient, error) {
+	if !record.IsHex64(binding) || generation <= 0 {
+		return RegisteredClient{}, failure("invalid_repository")
+	}
+	return a.register(ctx, q, binding, generation)
+}
+func (a *DisclosureAdministration) register(ctx context.Context, q RegisterClient, binding string, generation int64) (RegisteredClient, error) {
 	var out RegisteredClient
 	if !a.valid() {
 		return out, failure("unauthorized")
@@ -327,6 +343,9 @@ func (a *DisclosureAdministration) Register(ctx context.Context, q RegisterClien
 		return out, err
 	}
 	hash, err := adminHash("register", q.ClientName, 0, q.ReadGrant, q.TaskWrites)
+	if binding != "" {
+		hash = record.H("repository-registration", hash, binding, fmt.Sprint(generation))
+	}
 	if err != nil {
 		return out, err
 	}
@@ -370,6 +389,11 @@ func (a *DisclosureAdministration) Register(ctx context.Context, q RegisterClien
 		}
 		if err = s.putGrants(ctx, id, q.ReadGrant, q.TaskWrites); err != nil {
 			return err
+		}
+		if binding != "" {
+			if err = s.bindRepositoryCredentialLocked(ctx, binding, generation, id); err != nil {
+				return err
+			}
 		}
 		if err = a.save(ctx, q.AdminOpID, "register", hash, GrantReceipt{CredentialID: id, GrantEpoch: 1}); err != nil {
 			return err
@@ -551,6 +575,10 @@ func (e *DisclosureEngine) Resolve(ctx context.Context, h ClientHandle, input Id
 		if _, err := e.client(ctx, h); err != nil {
 			return err
 		}
+		binding, err := e.store.credentialRepository(ctx, h.credential)
+		if err != nil {
+			return err
+		}
 		kind, key := "conversation", input.ConversationHandle
 		if key == "" {
 			kind = "connection"
@@ -559,7 +587,7 @@ func (e *DisclosureEngine) Resolve(ctx context.Context, h ClientHandle, input Id
 		}
 		var id string
 		var g, ev int64
-		err := e.store.conn.QueryRowContext(ctx, "SELECT id,generation,evidence FROM local_scope WHERE credential=? AND identity_kind=? AND handle_key=?", h.credential, kind, key).Scan(&id, &g, &ev)
+		err = e.store.conn.QueryRowContext(ctx, "SELECT id,generation,evidence FROM local_scope WHERE credential=? AND identity_kind=? AND handle_key=?", h.credential, kind, key).Scan(&id, &g, &ev)
 		if err == nil {
 			out = ScopeHandle{e, h.credential, id, g, ev}
 			return nil
@@ -579,7 +607,11 @@ func (e *DisclosureEngine) Resolve(ctx context.Context, h ClientHandle, input Id
 			return err
 		}
 		id = "sc1:" + e.config.MachineID + ":" + strings.ReplaceAll(id, "-", "")
-		if _, err = e.store.conn.ExecContext(ctx, "INSERT INTO local_scope VALUES(?,?,?,?,?,?,1,0,'unknown','','')", id, e.config.OwnerGenesis, e.config.MachineID, h.credential, kind, key); err != nil {
+		repoState, repo := "unknown", ""
+		if binding != nil {
+			repoState, repo = "known", binding.Repo
+		}
+		if _, err = e.store.conn.ExecContext(ctx, "INSERT INTO local_scope VALUES(?,?,?,?,?,?,1,0,?,?,'')", id, e.config.OwnerGenesis, e.config.MachineID, h.credential, kind, key, repoState, repo); err != nil {
 			return failure("storage_error")
 		}
 		if err = e.store.bump(ctx); err != nil {

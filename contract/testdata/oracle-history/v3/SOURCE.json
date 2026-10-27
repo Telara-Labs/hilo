@@ -1,0 +1,32 @@
+{
+  "contract": "mnc/3.0",
+  "status": "PROVISIONAL",
+  "source": "accepted07 mnc/3.0; node module remains2.0",
+  "design_sha256": "126292164d1c76cd6912a353656859be00bdf95ff9e1f096dfb10a79d6584156",
+  "historical_vector_set_sha256": "638d59ed3c90a303a09572a45a5688ae9f183829f4b9616a6801d65dc2ebd893",
+  "files": {
+    "applicability.json": "72c3242f7b23e076197a1ed6b85957ccd5a506596901604581f7f47cbd715773",
+    "commitment-graph.json": "1d070379ef2ac5a01bb56d238e68999b09f7033b58f90730b7cde6ceb78a9968",
+    "v01-jcs.json": "b43d78e9d08e17696a558844485ba75345cb6bf84180ae5b192626b12ef80396",
+    "v02-identity.json": "94357d935b326c6b0fce9dabb490af76afc5e201ebfe5acebfcff1f69e5a678f",
+    "v03-records.json": "3333d6c459b1b82e6055d19c92a50a2f10761cb7328e3970c5b33d86b33c543a",
+    "v04-events.json": "8853a03120a20a76dd586ca92e38075a5f024fac936bb418a706b69939b3fe85",
+    "v04-salt.json": "859b678b7c94bb4a4af0710ab7a3883be56a7f444e83f3fbfa5da00e955559b3",
+    "v05-signature.json": "efeaa704e5a45668e9bb83f8c31a5db830978a99c9f3ca82ec3ee9a7104847be",
+    "v15-matrix.json": "3621921eac204db397e9b44664ba94fb1e772808b4c54d2065a9db7665897bd2",
+    "vectors.json": "6073d580057d0cbbc07b082f761356d9bd2eb7e2791d2c6f85f537924f5df8a1"
+  },
+  "vector_set_sha256": "e8c9ca931125a2080f64d28d4671e5fb7639c4152ea3f1400562fa2b64b3d111",
+  "test_adaptations": {
+    "jcs/jcs_test.go": "184f33bf121290efd6c4e3c51a8b1546f5f32ab09edebb956ddbd6eb4aa59d9e",
+    "record/event_test.go": "5ecc03c845bd48ed32d875a938ea1cdfa8d01d3ab0198e2117b9246775e3e9da",
+    "record/real_redactor_test.go": "19bb33539e01bc7796e49c21af16b17b7c69d32b225e6fc919565593162d718c",
+    "record/record_test.go": "ffea034fade63235638bc77255ee83f01d6900d28d04e7d12dd1a3240242e0b6",
+    "record/ruleset_test.go": "3c0f3a01643d900b39dbd0ae705f3d36b4ff1a032e298265105e65a8adb8791e",
+    "sig/sig_test.go": "c64f39698ea157ac767d52e564f2947d8aa8b6c8a41482cf4d02013ea7fcfe50",
+    "sig/verify_test.go": "2e9dca016fe8f03a971d0c1064f589bcfeb7d081604ee730a19d63a358634f48",
+    "policy/policy_test.go": "d1e8cff0158d52b74d48acfc32a960ea93796dbefe7800f22264b538f33342ff",
+    "invalidate/invalidate_test.go": "f09e7ad772bfc0048bb222fbbe18a46df10acf70feadbdcf6a1bb1ab6c40adee",
+    "conformance_test.go": "5cacc061238f5ecc7da188203eafb2366899b5b1a3a971c3b43f8eca46dd4458"
+  }
+}

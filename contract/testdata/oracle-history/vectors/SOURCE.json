@@ -1,0 +1,33 @@
+{
+  "source": "telara-memory/contract",
+  "source_commit": "d67952a3239d88a58f61006eddc4887797ec3185",
+  "contract": "mnc/2.0",
+  "digest_algorithm": "SHA-256 of sorted relative path + NUL + lowercase file SHA-256 + LF, for every node testdata file",
+  "vector_set_sha256": "638d59ed3c90a303a09572a45a5688ae9f183829f4b9616a6801d65dc2ebd893",
+  "files": {
+    "redact-corpus-v1/README.md": "fbdfad3c7a125b27626e5821260277f7358754a48f9d24dfaf06eac6f3336341",
+    "redact-corpus-v1/actual-engine-golden.json": "bf0f28e8fa230ef9e362507009348abc97aa76d35ac7036052a31cda0225eef7",
+    "redact-corpus-v1/corpus.json": "544ffaf7e93f8f28305096dae79794568479845dc7e542d74a8b54e014fbb8fc",
+    "v01-jcs.json": "b43d78e9d08e17696a558844485ba75345cb6bf84180ae5b192626b12ef80396",
+    "v02-identity.json": "94357d935b326c6b0fce9dabb490af76afc5e201ebfe5acebfcff1f69e5a678f",
+    "v03-records.json": "f7e86a953cc488700da6077930a82c9b579fcb34aff0478c8de2decded5de81e",
+    "v04-events.json": "e07efebd344eaa2afe4746ffc2469b0d7e2084ac1b50c7d0123fff160dac6610",
+    "v04-salt.json": "8972b16911cc9817f4d901f060eeae99d9061663753264a4e963328fb362334a",
+    "v05-signature.json": "dcf999a4fbe7b3648abefb40017a6ec81d5116fa9e33d0c28effc89accb55457",
+    "v15-matrix.json": "3621921eac204db397e9b44664ba94fb1e772808b4c54d2065a9db7665897bd2",
+    "vectors.json": "14ed14686d4a90b6e6fa2bef6616225803b8c9bbf8f99bdd6cb4d17e0b9bffb3"
+  },
+  "test_sources": {
+    "jcs/jcs_test.go": "184f33bf121290efd6c4e3c51a8b1546f5f32ab09edebb956ddbd6eb4aa59d9e",
+    "record/event_test.go": "429026fe7002856ad304c3301eac0c7507600c961b6cd813fd10cccbdf93a5ea",
+    "record/real_redactor_test.go": "e49d3a320e02d47f0a3b9b182cab1e9c3eb6d8fc956bc1757ac8eeda876459ec",
+    "record/record_test.go": "77930e6eb042d680de1d4a41b412702ddab23be634fc62f7fc2a0ee08cf278b0",
+    "record/ruleset_test.go": "59806957a376c2d406c70ad281d7ac696fbbabf776f79dd78d2e425ca497de6f",
+    "sig/sig_test.go": "c64f39698ea157ac767d52e564f2947d8aa8b6c8a41482cf4d02013ea7fcfe50",
+    "sig/verify_test.go": "c880e60838334e9fa922f8d661acd84ce4ec983b29c3e423a06950b297d33dfa",
+    "policy/policy_test.go": "0b026cfe182ca1235f267744811bd10b88e1f6c945192c22ab2075ad2fd5b698",
+    "invalidate/invalidate_test.go": "9883b026c2cc8507836fb6f3357202720ab5616574b7ac572b827f9642e8d0f2"
+  },
+  "root_test_sha256": "a5a0f594a2d14d1246361a82f359f1fb17bdf32b45c6f1f28fb916df32daeffa",
+  "runner_sha256": "6bdc718a4e713bcf0026770d7a24cef498f6e080d295733bb0cfb65d42f143a5"
+}

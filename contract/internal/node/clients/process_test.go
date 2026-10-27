@@ -62,14 +62,43 @@ func TestInstalledMacClientsInTemporaryHomes(t *testing.T) {
 	for _, c := range []Client{Claude, Codex, Cursor, Pi} {
 		t.Run(string(c), func(t *testing.T) {
 			o := options(t, c)
-			d, e := Detect(o)
+			// Discover installed code using the actual installation home. The
+			// vendor process still receives only o.Home's disposable configuration.
+			// Looking under that empty profile cannot find native user installs.
+			discovery := o
+			var e error
+			discovery.Home, e = os.UserHomeDir()
 			if e != nil {
 				t.Fatal(e)
 			}
+			d := detect(discovery)
 			if len(d.Executables) == 0 {
 				t.Skip("not installed, native runtime UNVERIFIED")
 			}
 			exe := d.Executables[0]
+			if c == Claude {
+				// Prefer the native installation to an older npm launcher that
+				// may coexist on PATH and lack the init-only command under test.
+				for _, candidate := range d.Executables {
+					if candidate == filepath.Join(discovery.Home, ".local", "bin", "claude") {
+						exe = candidate
+						break
+					}
+				}
+			}
+			if c == Cursor {
+				exe = ""
+				for _, candidate := range d.Executables {
+					resolved, err := filepath.EvalSymlinks(candidate)
+					if err == nil && strings.Contains(filepath.ToSlash(resolved), "/cursor-agent/") {
+						exe = candidate
+						break
+					}
+				}
+				if exe == "" {
+					t.Skip("Cursor GUI found but native agent CLI not installed, runtime UNVERIFIED")
+				}
+			}
 			version := runIsolated(t, o.Home, exe, []string{"--version"}, nil)
 			t.Logf("executable %s version %q exit %v elapsed %s", exe, strings.TrimSpace(string(version.output)), version.err, version.elapsed)
 			if version.err != nil {

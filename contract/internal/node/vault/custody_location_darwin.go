@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
 )
 
 const custodyLocationFile = "custody-location.json"
@@ -18,9 +20,15 @@ type custodyLocation struct {
 	Keychain string `json:"keychain"`
 }
 
-// Caller holds db.lock. A missing recorded store is never replaced by whichever
-// Keychain happens to be the default in this process.
+// Caller holds db.lock or lifecycle custody/profile admission. A missing
+// recorded store is never replaced by this process's default Keychain.
 func (v *Vault) bindCustody(ctx context.Context, data string, create bool) error {
+	// Refuse redirection before selection or metadata publication. Keep the
+	// caller's exact directory spelling subject to the existing private path
+	// gate; filepath.Join below must not clean an unsafe input into acceptance.
+	if (v.profile != "" && v.profile != data) || ipc.ValidateDir(data, false) != nil {
+		return ErrUnavailable
+	}
 	raw, e := privateRead(filepath.Join(data, custodyLocationFile))
 	if os.IsNotExist(e) && create {
 		if e = v.selectKeychain(ctx); e != nil {
@@ -71,5 +79,6 @@ func (v *Vault) bindCustody(ctx context.Context, data string, create bool) error
 		return ErrUnavailable
 	}
 	v.keychainPath = m.Keychain
+	v.profile = data
 	return nil
 }

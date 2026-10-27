@@ -4,6 +4,7 @@ package ipc
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -25,18 +26,25 @@ type Proc struct {
 	StartMS int64 `json:"start_ms"`
 }
 type Hello struct {
-	T           string `json:"t"`
-	V           int    `json:"v"`
-	Kind        string `json:"kind"`
-	Shim        string `json:"shim"`
-	PID         int    `json:"pid"`
-	Ancestry    []Proc `json:"ancestry"`
-	Cwd         string `json:"cwd"`
-	Client      string `json:"client"`
-	NodeVersion string `json:"node_version"`
+	RepositoryContext string `json:"repository_context,omitempty"`
+	T                 string `json:"t"`
+	V                 int    `json:"v"`
+	Kind              string `json:"kind"`
+	Shim              string `json:"shim"`
+	PID               int    `json:"pid"`
+	Ancestry          []Proc `json:"ancestry"`
+	Cwd               string `json:"cwd"`
+	Client            string `json:"client"`
+	NodeVersion       string `json:"node_version"`
 }
 
 func (h Hello) Valid() bool {
+	if h.RepositoryContext != "" {
+		b, err := hex.DecodeString(h.RepositoryContext)
+		if err != nil || len(b) != 16 || hex.EncodeToString(b) != h.RepositoryContext || h.Kind != "mcp" {
+			return false
+		}
+	}
 	if h.T != "hello" || h.V != WireVersion || (h.Kind != "mcp" && h.Kind != "control") || h.PID <= 0 || len(h.Ancestry) > 6 || h.Client == "" {
 		return false
 	}

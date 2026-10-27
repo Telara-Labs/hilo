@@ -1,0 +1,674 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  security-regressions:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: pure contract security invariants and release authentication
+        working-directory: contract
+        run: go test -mod=readonly -p 2 -v -count=1 -timeout 15m -run 'Test(RedactBeforeBoundaryAndActualGolden|AuthenticatedTarget|Release)' ./record ./releaseauth
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: runtime security invariants
+        working-directory: contract/internal/node
+        run: go test -mod=readonly -p 2 -v -count=1 -timeout 15m -run 'Test(PiCompositeCallIdentity|LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|QuarantineRecallClosureAllArrivalOrders|LocalUnseenErasureFencesHostedQuarantine|LocalErasureScrubsSidecarWithoutHostedRound|LocalScrubDoesNotDeadlockSidecarWriter|LocalScrubFencesStalePreparedExport|HostedServiceKeyRotationVerifiesNewReceipts|TransferredMetadataKeepsPolicyProvenance|RepositoryProofRequiresCurrentVerifiedIdentity|GovernedTaskBundleUsesSignedRepositoryProof|NodeLocalAdapterUsesSharedCorpus|NodeExportAdapterUsesEverySharedCorpusCase|HostedEnrollment|ReleaseDirectory)' ./capture ./store ./syncnode ./localpolicy ./cmd/telara-memory
+
+  linux-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: trusted source and temporary directories
+        run: |
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /ci-tmp /ci-source
+          cp -R contract /ci-source/contract
+          echo "TMPDIR=/ci-tmp" >> "$GITHUB_ENV"
+      - name: Linux native custody and current security invariants
+        run: |
+          cd /ci-source/contract/internal/node
+          go test -mod=readonly -p 2 -v -count=1 -timeout 15m -run 'Test(PiCompositeCallIdentity|LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|HostedEnrollment|HostedServiceKeyRotation|TransferredMetadataKeepsPolicyProvenance|RepositoryProof|TenantKeyOutsideLoginRefused|GovernedTaskBundle|LocalErasureScrubs|LocalScrub|SecretServiceProfileHoldsIndependentSecrets|SecretServiceInstalledAuthorityReassignmentBeforeAndAfterLoad|InstalledStuckClientHintDoesNotBlockOtherClient)' ./capture ./store ./syncnode ./vault ./cmd/telara-memory
+
+  windows-security:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: native owner ACL and read-only diagnostics
+        working-directory: contract/internal/node
+        shell: bash
+        run: go test -mod=readonly -p 2 -v -count=1 -timeout 15m -run 'Test(Windows|SQLiteURIUsesNativeAbsolutePath|DoctorMainStoreInspectionSidecars|DoctorSyncInspectionWritesNothing|ReleaseDirectory)' ./store ./ipc ./doctor ./cmd/telara-memory
+
+  native-client-driver:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: isolated client authentication and environment checks
+        working-directory: contract/internal/node
+        run: go test -mod=readonly -p 2 -tags e2e -v -count=1 -run '^TestHarness(AuthIsolation|EnvironmentAndArguments|PrecompiledNativeHelper)$' ./e2e/clients
+      - name: build native acceptance driver
+        working-directory: contract/internal/node
+        run: go test -mod=readonly -p 2 -tags e2e -c -o "$GITHUB_WORKSPACE/clients.test" ./e2e/clients
+      - name: build actual node CLI for native acceptance
+        working-directory: contract/internal/node
+        run: go build -mod=readonly -p 2 -trimpath -o "$GITHUB_WORKSPACE/telara-memory-darwin-arm64" ./cmd/telara-memory
+      - name: compile native acceptance utility
+        run: |
+          ./clients.test export-native-helper-source "$PWD/native-helper.c"
+          /usr/bin/clang -Wno-deprecated-declarations native-helper.c -framework Security -framework CoreFoundation -o keychain-helper
+          shasum -a 256 keychain-helper > keychain-helper.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-client-driver
+          path: |
+            clients.test
+            telara-memory-darwin-arm64
+            keychain-helper
+            keychain-helper.sha256
+          retention-days: 3
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: contract
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install Python conformance requirements
+        run: python -m pip install --disable-pip-version-check -r conformance/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: private temp root
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          # The installer refuses directories below the sticky, world-writable /tmp.
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /ci-tmp
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /ci-source
+          cp -R contract /ci-source/contract
+          echo "TMPDIR=/ci-tmp" >> "$GITHUB_ENV"
+      - name: pure contract vet
+        shell: bash
+        run: |
+          if [ "$(uname)" = Linux ]; then cd /ci-source/contract; fi
+          go vet -mod=readonly ./...
+      - name: pure contract full unit suite
+        shell: bash
+        run: |
+          if [ "$(uname)" = Linux ]; then cd /ci-source/contract; fi
+          go test -mod=readonly -p 2 -count=1 -timeout 60m ./...
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: runtime vet
+        shell: bash
+        run: |
+          if [ "$(uname)" = Linux ]; then cd /ci-source/contract/internal/node; else cd internal/node; fi
+          go vet -mod=readonly ./...
+      - name: runtime full unit suite
+        shell: bash
+        run: |
+          if [ "$(uname)" = Linux ]; then cd /ci-source/contract/internal/node; else cd internal/node; fi
+          go test -mod=readonly -p 2 -count=1 -timeout 60m ./...
+
+  race:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install Python conformance requirements
+        run: python -m pip install --disable-pip-version-check -r contract/conformance/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: trusted source and temporary roots
+        run: |
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /ci-tmp /ci-source
+          mkdir -p race-evidence
+          git rev-parse HEAD > race-evidence/source-commit.txt
+          git rev-parse HEAD:contract > race-evidence/contract-tree.txt
+          git status --porcelain --untracked-files=all -- contract > race-evidence/source-status-before.txt
+          test ! -s race-evidence/source-status-before.txt
+          (cd contract && sha256sum go.mod go.sum internal/node/go.mod internal/node/go.sum) > race-evidence/source-module-files.sha256
+          python3 - race-evidence/source-contract-files.json <<'PY'
+          import hashlib,json,os,stat,subprocess,sys
+          from pathlib import Path
+          files={}
+          tracked=subprocess.check_output(["git","ls-files","-z","--","contract"]).split(b"\0")
+          for raw in tracked:
+              if not raw: continue
+              path=raw.decode("utf-8")
+              if not path.startswith("contract/"): raise SystemExit(f"unexpected tracked path {path}")
+              relative=path[len("contract/"):]
+              info=os.lstat(path)
+              if not stat.S_ISREG(info.st_mode): raise SystemExit(f"non-regular source file {path}")
+              payload=Path(path).read_bytes()
+              files[relative]={"sha256":hashlib.sha256(payload).hexdigest(),"mode":stat.S_IMODE(info.st_mode)}
+          value={"schema":"telara-memory.contract-source.v1","source_commit":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),"contract_tree":subprocess.check_output(["git","rev-parse","HEAD:contract"],text=True).strip(),"files":files}
+          Path(sys.argv[1]).write_text(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n",encoding="utf-8")
+          PY
+          cat > race-evidence/verify-source-export.py <<'PY'
+          import hashlib,json,os,stat,sys
+          from pathlib import Path
+          manifest_path,source_root=map(Path,sys.argv[1:])
+          manifest=json.loads(manifest_path.read_text(encoding="utf-8"))
+          if manifest.get("schema")!="telara-memory.contract-source.v1": raise SystemExit("unknown source manifest schema")
+          expected=manifest.get("files")
+          if not isinstance(expected,dict) or not expected: raise SystemExit("empty or invalid source manifest")
+          actual={}
+          for directory,dirs,names in os.walk(source_root,followlinks=False):
+              for name in dirs:
+                  if (Path(directory)/name).is_symlink(): raise SystemExit(f"symlink directory in source export: {Path(directory)/name}")
+              for name in names:
+                  path=Path(directory)/name
+                  info=os.lstat(path)
+                  if not stat.S_ISREG(info.st_mode): raise SystemExit(f"non-regular file in source export: {path}")
+                  relative=path.relative_to(source_root).as_posix()
+                  actual[relative]={"sha256":hashlib.sha256(path.read_bytes()).hexdigest(),"mode":stat.S_IMODE(info.st_mode)}
+          if set(actual)!=set(expected): raise SystemExit(f"source export path set mismatch missing={sorted(set(expected)-set(actual))[:5]} extra={sorted(set(actual)-set(expected))[:5]}")
+          if actual!=expected: raise SystemExit("source export bytes or modes differ from bound manifest")
+          PY
+          cp -R contract /ci-source/contract
+          python3 race-evidence/verify-source-export.py race-evidence/source-contract-files.json /ci-source/contract
+          (cd /ci-source/contract && sha256sum -c "$GITHUB_WORKSPACE/race-evidence/source-module-files.sha256")
+          git rev-parse HEAD > race-evidence/source-commit-after-copy.txt
+          git rev-parse HEAD:contract > race-evidence/contract-tree-after-copy.txt
+          git status --porcelain --untracked-files=all -- contract > race-evidence/source-status-after-copy.txt
+          cmp race-evidence/source-commit.txt race-evidence/source-commit-after-copy.txt
+          cmp race-evidence/contract-tree.txt race-evidence/contract-tree-after-copy.txt
+          cmp race-evidence/source-status-before.txt race-evidence/source-status-after-copy.txt
+          python3 race-evidence/verify-source-export.py race-evidence/source-contract-files.json /ci-source/contract
+          echo "TMPDIR=/ci-tmp" >> "$GITHUB_ENV"
+      - name: bind producer temporary root receipt
+        run: |
+          producer_test_tmp_root="${GOTMPDIR:-${TMPDIR:-}}"
+          test "$producer_test_tmp_root" = /ci-tmp
+          test -d "$producer_test_tmp_root"
+          printf '%s\n' "$producer_test_tmp_root" > race-evidence/producer-temp-root.txt
+      - name: inventory pure contract packages
+        run: |
+          cd /ci-source/contract
+          go list -mod=readonly ./... > "$GITHUB_WORKSPACE/race-evidence/pure-packages.list"
+          go list -mod=readonly -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... | sed '/^$/d' > "$GITHUB_WORKSPACE/race-evidence/pure-test-packages.list"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: inventory runtime packages and audit the exact module union
+        run: |
+          cd /ci-source/contract/internal/node
+          go list -mod=readonly ./... > "$GITHUB_WORKSPACE/race-evidence/runtime-packages.list"
+          go list -mod=readonly -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... | sed '/^$/d' > "$GITHUB_WORKSPACE/race-evidence/runtime-test-packages.list"
+          go test -mod=readonly -list '^(Test|Fuzz|Example)' ./store | awk '/^(Test|Fuzz|Example)[[:alnum:]_]*$/' > "$GITHUB_WORKSPACE/race-evidence/all-store-functions.list"
+          test -s "$GITHUB_WORKSPACE/race-evidence/all-store-functions.list"
+          git -C "$GITHUB_WORKSPACE" rev-parse HEAD > "$GITHUB_WORKSPACE/race-evidence/source-commit-after-inventory.txt"
+          git -C "$GITHUB_WORKSPACE" rev-parse HEAD:contract > "$GITHUB_WORKSPACE/race-evidence/contract-tree-after-inventory.txt"
+          git -C "$GITHUB_WORKSPACE" status --porcelain --untracked-files=all -- contract > "$GITHUB_WORKSPACE/race-evidence/source-status-after-inventory.txt"
+          cmp "$GITHUB_WORKSPACE/race-evidence/source-commit.txt" "$GITHUB_WORKSPACE/race-evidence/source-commit-after-inventory.txt"
+          cmp "$GITHUB_WORKSPACE/race-evidence/contract-tree.txt" "$GITHUB_WORKSPACE/race-evidence/contract-tree-after-inventory.txt"
+          cmp "$GITHUB_WORKSPACE/race-evidence/source-status-before.txt" "$GITHUB_WORKSPACE/race-evidence/source-status-after-inventory.txt"
+          python3 "$GITHUB_WORKSPACE/race-evidence/verify-source-export.py" "$GITHUB_WORKSPACE/race-evidence/source-contract-files.json" /ci-source/contract
+          (cd /ci-source/contract && sha256sum -c "$GITHUB_WORKSPACE/race-evidence/source-module-files.sha256")
+          python3 - "$GITHUB_WORKSPACE/race-evidence" "${{ matrix.shard }}" <<'PY'
+          import hashlib,json,sys
+          from pathlib import Path
+          root=Path(sys.argv[1]); shard=int(sys.argv[2])
+          puremod="github.com/Telara-Labs/telara-memory/contract"
+          nodemod="github.com/Telara-Labs/telara-memory/contract/internal/node"
+          def lines(name):
+              values=(root/name).read_text(encoding="utf-8").splitlines()
+              if not values or len(values)!=len(set(values)): raise SystemExit(f"empty or duplicate inventory: {name}")
+              return values
+          pure=lines("pure-packages.list"); node=lines("runtime-packages.list")
+          pure_tests=lines("pure-test-packages.list"); node_tests=lines("runtime-test-packages.list")
+          if len(pure)!=len(set(pure)) or len(node)!=len(set(node)): raise SystemExit("duplicate module package inventory")
+          if any(x!=puremod and not x.startswith(puremod+"/") for x in pure): raise SystemExit("pure inventory contains a package outside the contract module")
+          if any(x==nodemod or x.startswith(nodemod+"/") for x in pure): raise SystemExit("pure inventory includes a package owned by the nested runtime module")
+          if any(x!=nodemod and not x.startswith(nodemod+"/") for x in node): raise SystemExit("runtime inventory contains a package outside the nested runtime module")
+          if any(x not in set(pure) for x in pure_tests) or any(x not in set(node) for x in node_tests): raise SystemExit("test-package inventory is not a subset of its module inventory")
+          if len(pure_tests)!=len(set(pure_tests)) or len(node_tests)!=len(set(node_tests)): raise SystemExit("duplicate test-package inventory")
+          if set(pure)&set(node): raise SystemExit("pure/runtime package inventories overlap")
+          store=nodemod+"/store"
+          if store not in node: raise SystemExit("runtime store package absent from module inventory")
+          union=sorted(pure+node)
+          (root/"all-packages.list").write_text("".join(x+"\n" for x in union),encoding="utf-8")
+          functions=lines("all-store-functions.list")
+          if len(functions)!=len(set(functions)): raise SystemExit("duplicate store-function inventory")
+          ordinary=[x for x in union if x!=store]
+          selected=[x for i,x in enumerate(ordinary) if i%4==shard-1]
+          selected_store=[x for i,x in enumerate(functions) if i%4==shard-1]
+          if not selected or not selected_store: raise SystemExit("empty race shard or store selector partition")
+          (root/"selected-packages.list").write_text("".join(x+"\n" for x in selected),encoding="utf-8")
+          (root/"selected-store-functions.list").write_text("".join(x+"\n" for x in selected_store),encoding="utf-8")
+          def relative(values,prefix):
+              result=[]
+              for value in values:
+                  if value==prefix: result.append(".")
+                  elif value.startswith(prefix+"/"): result.append("./"+value[len(prefix)+1:])
+                  else: raise SystemExit("package cannot be mapped to its module root")
+              return result
+          contract_selected=[x for x in selected if x in set(pure)]
+          node_selected=[x for x in selected if x in set(node)]
+          if len(contract_selected)+len(node_selected)!=len(selected): raise SystemExit("race package cannot be assigned to exactly one module inventory")
+          (root/"selected-contract-packages.list").write_text("".join(x+"\n" for x in relative(contract_selected,puremod)),encoding="utf-8")
+          (root/"selected-node-packages.list").write_text("".join(x+"\n" for x in relative(node_selected,nodemod)),encoding="utf-8")
+          receipt={"schema":"telara-memory.race-module-union.v1","source_commit":(root/"source-commit.txt").read_text().strip(),"contract_tree":(root/"contract-tree.txt").read_text().strip(),"source_manifest_sha256":hashlib.sha256((root/"source-contract-files.json").read_bytes()).hexdigest(),"pure_count":len(pure),"runtime_count":len(node),"union_count":len(union),"pure_test_packages":len(pure_tests),"runtime_test_packages":len(node_tests),"store_package":store,"store_functions":len(functions),"shard":shard,"selected_non_store":len(selected),"selected_store_functions":len(selected_store),"union_sha256":hashlib.sha256(("\n".join(union)+"\n").encode()).hexdigest()}
+          (root/"module-package-union.json").write_text(json.dumps(receipt,sort_keys=True,indent=2)+"\n",encoding="utf-8")
+          PY
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: pure contract packages under race detection
+        run: |
+          cd /ci-source/contract
+          xargs -r go test -mod=readonly -race -p 1 -json -v -count=1 -timeout 25m < "$GITHUB_WORKSPACE/race-evidence/selected-contract-packages.list" > "$GITHUB_WORKSPACE/race-evidence/pure-packages.jsonl" 2>&1 || { cat "$GITHUB_WORKSPACE/race-evidence/pure-packages.jsonl"; exit 1; }
+          git -C "$GITHUB_WORKSPACE" rev-parse HEAD > "$GITHUB_WORKSPACE/race-evidence/source-commit-after-tests-pure.txt"
+          git -C "$GITHUB_WORKSPACE" rev-parse HEAD:contract > "$GITHUB_WORKSPACE/race-evidence/contract-tree-after-tests-pure.txt"
+          git -C "$GITHUB_WORKSPACE" status --porcelain --untracked-files=all -- contract > "$GITHUB_WORKSPACE/race-evidence/source-status-after-tests-pure.txt"
+          cmp "$GITHUB_WORKSPACE/race-evidence/source-commit.txt" "$GITHUB_WORKSPACE/race-evidence/source-commit-after-tests-pure.txt"
+          cmp "$GITHUB_WORKSPACE/race-evidence/contract-tree.txt" "$GITHUB_WORKSPACE/race-evidence/contract-tree-after-tests-pure.txt"
+          cmp "$GITHUB_WORKSPACE/race-evidence/source-status-before.txt" "$GITHUB_WORKSPACE/race-evidence/source-status-after-tests-pure.txt"
+          python3 "$GITHUB_WORKSPACE/race-evidence/verify-source-export.py" "$GITHUB_WORKSPACE/race-evidence/source-contract-files.json" /ci-source/contract
+          (cd /ci-source/contract && sha256sum -c "$GITHUB_WORKSPACE/race-evidence/source-module-files.sha256")
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache-dependency-path: |
+            contract/go.sum
+            contract/internal/node/go.sum
+      - name: runtime packages and store functions under race detection
+        run: |
+          cd /ci-source/contract/internal/node
+          go test -mod=readonly -race -p 1 -json -v -count=1 -timeout 25m -run "^($(paste -sd '|' "$GITHUB_WORKSPACE/race-evidence/selected-store-functions.list"))$" ./store > "$GITHUB_WORKSPACE/race-evidence/store.jsonl" 2>&1 || { cat "$GITHUB_WORKSPACE/race-evidence/store.jsonl"; exit 1; }
+          xargs -r go test -mod=readonly -race -p 1 -json -v -count=1 -timeout 25m < "$GITHUB_WORKSPACE/race-evidence/selected-node-packages.list" > "$GITHUB_WORKSPACE/race-evidence/runtime-packages.jsonl" 2>&1 || { cat "$GITHUB_WORKSPACE/race-evidence/runtime-packages.jsonl"; exit 1; }
+          git -C "$GITHUB_WORKSPACE" rev-parse HEAD > "$GITHUB_WORKSPACE/race-evidence/source-commit-after-tests-runtime.txt"
+          git -C "$GITHUB_WORKSPACE" rev-parse HEAD:contract > "$GITHUB_WORKSPACE/race-evidence/contract-tree-after-tests-runtime.txt"
+          git -C "$GITHUB_WORKSPACE" status --porcelain --untracked-files=all -- contract > "$GITHUB_WORKSPACE/race-evidence/source-status-after-tests-runtime.txt"
+          cmp "$GITHUB_WORKSPACE/race-evidence/source-commit.txt" "$GITHUB_WORKSPACE/race-evidence/source-commit-after-tests-runtime.txt"
+          cmp "$GITHUB_WORKSPACE/race-evidence/contract-tree.txt" "$GITHUB_WORKSPACE/race-evidence/contract-tree-after-tests-runtime.txt"
+          cmp "$GITHUB_WORKSPACE/race-evidence/source-status-before.txt" "$GITHUB_WORKSPACE/race-evidence/source-status-after-tests-runtime.txt"
+          python3 "$GITHUB_WORKSPACE/race-evidence/verify-source-export.py" "$GITHUB_WORKSPACE/race-evidence/source-contract-files.json" /ci-source/contract
+          (cd /ci-source/contract && sha256sum -c "$GITHUB_WORKSPACE/race-evidence/source-module-files.sha256")
+          cat "$GITHUB_WORKSPACE/race-evidence/pure-packages.jsonl" "$GITHUB_WORKSPACE/race-evidence/runtime-packages.jsonl" > "$GITHUB_WORKSPACE/race-evidence/packages.jsonl"
+          cat "$GITHUB_WORKSPACE/race-evidence/packages.jsonl"
+      - name: record exact producer artifact inventory
+        run: |
+          python3 - race-evidence <<'PY'
+          import stat,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          if root.is_symlink() or not root.is_dir(): raise SystemExit("producer artifact root is not a real directory")
+          names=[]
+          for item in root.iterdir():
+              mode=item.lstat().st_mode
+              if not stat.S_ISREG(mode): raise SystemExit(f"non-regular producer artifact: {item.name}")
+              names.append(item.name)
+          if len(names)!=len(set(names)) or "producer-artifacts.list" in names: raise SystemExit("duplicate or recursive producer artifact inventory")
+          names.append("producer-artifacts.list")
+          (root/"producer-artifacts.list").write_text("".join(name+"\n" for name in sorted(names)),encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: node-race-${{ matrix.shard }}
+          path: race-evidence
+          retention-days: 3
+
+  race-audit:
+    needs: [race]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: node-race-1
+          path: race-artifacts/1
+      - uses: actions/download-artifact@v4
+        with:
+          name: node-race-2
+          path: race-artifacts/2
+      - uses: actions/download-artifact@v4
+        with:
+          name: node-race-3
+          path: race-artifacts/3
+      - uses: actions/download-artifact@v4
+        with:
+          name: node-race-4
+          path: race-artifacts/4
+      - name: audit exact source-bound race union and shard evidence
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,re,subprocess
+          from pathlib import Path
+          from collections import Counter
+
+          root=Path("race-artifacts")
+          shards={i:root/str(i) for i in range(1,5)}
+          required=("source-commit.txt","contract-tree.txt","source-status-before.txt","source-status-after-copy.txt","source-status-after-inventory.txt","source-status-after-tests-pure.txt","source-status-after-tests-runtime.txt","source-commit-after-copy.txt","source-commit-after-inventory.txt","source-commit-after-tests-pure.txt","source-commit-after-tests-runtime.txt","contract-tree-after-copy.txt","contract-tree-after-inventory.txt","contract-tree-after-tests-pure.txt","contract-tree-after-tests-runtime.txt","source-module-files.sha256","source-contract-files.json","verify-source-export.py","pure-packages.list","runtime-packages.list","pure-test-packages.list","runtime-test-packages.list","all-packages.list","all-store-functions.list","selected-packages.list","selected-contract-packages.list","selected-node-packages.list","selected-store-functions.list","module-package-union.json","pure-packages.jsonl","runtime-packages.jsonl","packages.jsonl","store.jsonl","producer-temp-root.txt","producer-artifacts.list")
+          def fail(message): raise SystemExit(message)
+          def read_lines(path):
+              text=path.read_text(encoding="utf-8")
+              if text and not text.endswith("\n"): fail(f"missing final newline: {path}")
+              return text.splitlines()
+          def unique_lines(path):
+              values=read_lines(path)
+              if not values or len(values)!=len(set(values)): fail(f"empty or duplicate lines: {path}")
+              return values
+          def relative(values,prefix):
+              out=[]
+              for value in values:
+                  if value==prefix: out.append(".")
+                  elif value.startswith(prefix+"/"): out.append("./"+value[len(prefix)+1:])
+                  else: fail(f"path outside module prefix: {value}")
+              return out
+          puremod="github.com/Telara-Labs/telara-memory/contract"
+          nodemod="github.com/Telara-Labs/telara-memory/contract/internal/node"
+          baselines={}
+          logs={}
+          producer_temp_roots={}
+          for number,folder in shards.items():
+              if not folder.is_dir(): fail(f"missing shard artifact {number}")
+              entries=list(folder.iterdir())
+              if any(path.is_symlink() or not path.is_file() for path in entries): fail(f"non-regular or linked shard artifact in shard {number}")
+              names=[path.name for path in entries]
+              if len(names)!=len(set(names)): fail(f"duplicate shard artifact name in shard {number}")
+              missing=set(required)-set(names)
+              if missing: fail(f"shard {number} missing {sorted(missing)}")
+              extra=set(names)-set(required)
+              if extra: fail(f"duplicate or unexpected shard artifact in shard {number}: {sorted(extra)}")
+              produced=unique_lines(folder/"producer-artifacts.list")
+              if set(produced)!=set(names): fail(f"producer-declared artifact set differs from actual uploaded files in shard {number}")
+              if set(produced)!=set(required): fail(f"producer artifact contract differs from consumer required set in shard {number}")
+              temp_root_raw=(folder/"producer-temp-root.txt").read_bytes()
+              if temp_root_raw!=b"/ci-tmp\n": fail(f"producer temp root receipt is not the declared /ci-tmp in shard {number}")
+              producer_temp_roots[number]="/ci-tmp"
+              for name in required:
+                  if not (folder/name).is_file(): fail(f"shard {number} missing {name}")
+              for stem in ("source-commit","contract-tree"):
+                  values=[(folder/f"{stem}{suffix}.txt").read_text(encoding="utf-8").strip() for suffix in ("", "-after-copy", "-after-inventory", "-after-tests-pure", "-after-tests-runtime")]
+                  if len(set(values))!=1 or not values[0]: fail(f"shard {number} {stem} drifted")
+              statuses=[(folder/name).read_bytes() for name in ("source-status-before.txt","source-status-after-copy.txt","source-status-after-inventory.txt","source-status-after-tests-pure.txt","source-status-after-tests-runtime.txt")]
+              if any(statuses) or len(set(statuses))!=1: fail(f"shard {number} source checkout changed")
+              for name in ("pure-packages.list","runtime-packages.list","pure-test-packages.list","runtime-test-packages.list","all-packages.list","all-store-functions.list","source-module-files.sha256","source-contract-files.json","verify-source-export.py"):
+                  value=(folder/name).read_bytes()
+                  if name in baselines and value!=baselines[name]: fail(f"shard denominators differ for {name}")
+                  baselines[name]=value
+              raw=(folder/"source-module-files.sha256").read_text(encoding="utf-8")
+              expected_names={"go.mod","go.sum","internal/node/go.mod","internal/node/go.sum"}
+              parsed={}
+              for line in raw.splitlines():
+                  match=re.fullmatch(r"([0-9a-f]{64})  (.+)",line)
+                  if not match or match.group(2) in parsed: fail(f"invalid module-file hash manifest in shard {number}")
+                  parsed[match.group(2)]=match.group(1)
+              if set(parsed)!=expected_names: fail(f"module-file hash manifest has wrong file set in shard {number}")
+              for name in ("source-commit.txt","contract-tree.txt","source-module-files.sha256"):
+                  value=(folder/name).read_bytes()
+                  if name in baselines and value!=baselines[name]: fail(f"source identity differs for {name}")
+                  baselines[name]=value
+              source_manifest=json.loads((folder/"source-contract-files.json").read_text(encoding="utf-8"))
+              if source_manifest.get("schema")!="telara-memory.contract-source.v1" or source_manifest.get("source_commit")!=(folder/"source-commit.txt").read_text().strip() or source_manifest.get("contract_tree")!=(folder/"contract-tree.txt").read_text().strip(): fail(f"full source manifest identity mismatch in shard {number}")
+              if not isinstance(source_manifest.get("files"),dict) or not source_manifest["files"]: fail(f"empty full source manifest in shard {number}")
+              receipt=json.loads((folder/"module-package-union.json").read_text(encoding="utf-8"))
+              if receipt.get("schema")!="telara-memory.race-module-union.v1" or receipt.get("shard")!=number: fail(f"invalid union receipt for shard {number}")
+              if receipt.get("source_commit")!=(folder/"source-commit.txt").read_text().strip() or receipt.get("contract_tree")!=(folder/"contract-tree.txt").read_text().strip(): fail(f"receipt source binding mismatch in shard {number}")
+              logs[number]={name:(folder/name).read_bytes() for name in ("pure-packages.jsonl","runtime-packages.jsonl","store.jsonl")}
+              combined=(folder/"packages.jsonl").read_bytes()
+              if combined!=logs[number]["pure-packages.jsonl"]+logs[number]["runtime-packages.jsonl"]: fail(f"combined package stream differs from exact pure+runtime concatenation in shard {number}")
+
+          source_commit=baselines["source-commit.txt"].decode().strip()
+          contract_tree=baselines["contract-tree.txt"].decode().strip()
+          if subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip()!=source_commit: fail("audit checkout commit differs from shard source")
+          if subprocess.check_output(["git","rev-parse","HEAD:contract"],text=True).strip()!=contract_tree: fail("audit checkout contract tree differs from shard source")
+          verify=subprocess.run(["python3",str((shards[1]/"verify-source-export.py").resolve()),str((shards[1]/"source-contract-files.json").resolve()),"contract"],capture_output=True,text=True)
+          if verify.returncode: fail(f"full source checkout differs from shard manifest: {verify.stdout}{verify.stderr}")
+          check=subprocess.run(["sha256sum","-c",str((shards[1]/"source-module-files.sha256").resolve())],cwd="contract",capture_output=True,text=True)
+          if check.returncode: fail(f"audit checkout module files differ from shard source: {check.stdout}{check.stderr}")
+
+          pure=unique_lines(shards[1]/"pure-packages.list")
+          node=unique_lines(shards[1]/"runtime-packages.list")
+          pure_tests=unique_lines(shards[1]/"pure-test-packages.list")
+          node_tests=unique_lines(shards[1]/"runtime-test-packages.list")
+          if puremod+"/cmd/telara-memory" in pure or puremod+"/release" in pure: fail("runtime CLI/release packages were assigned to the pure module")
+          if nodemod+"/cmd/telara-memory" not in node or nodemod+"/release" not in node: fail("runtime CLI/release packages are missing from the runtime inventory")
+          functions=unique_lines(shards[1]/"all-store-functions.list")
+          if any(value!=puremod and not value.startswith(puremod+"/") for value in pure): fail("pure package inventory outside pure module")
+          if any(value==nodemod or value.startswith(nodemod+"/") for value in pure): fail("nested runtime package leaked into pure module inventory")
+          if any(value!=nodemod and not value.startswith(nodemod+"/") for value in node): fail("runtime package inventory outside nested module")
+          if set(pure)&set(node): fail("module package inventories overlap")
+          if not set(pure_tests)<=set(pure) or not set(node_tests)<=set(node): fail("test package inventory exceeds module package inventory")
+          store=nodemod+"/store"
+          if store not in node: fail("store package absent from runtime inventory")
+          union=sorted(pure+node)
+          if unique_lines(shards[1]/"all-packages.list")!=union: fail("all-packages inventory is not the sorted exact module union")
+          union_hash=hashlib.sha256(("\n".join(union)+"\n").encode()).hexdigest()
+          seen_packages=[]; seen_functions=[]
+          for number,folder in shards.items():
+              receipt=json.loads((folder/"module-package-union.json").read_text(encoding="utf-8"))
+              expected={"pure_count":len(pure),"runtime_count":len(node),"union_count":len(union),"pure_test_packages":len(pure_tests),"runtime_test_packages":len(node_tests),"store_package":store,"store_functions":len(functions),"union_sha256":union_hash,"source_manifest_sha256":hashlib.sha256((folder/"source-contract-files.json").read_bytes()).hexdigest()}
+              if any(receipt.get(key)!=value for key,value in expected.items()): fail(f"denominator mismatch in shard {number}")
+              ordinary=[value for value in union if value!=store]
+              selected=[value for index,value in enumerate(ordinary) if index%4==number-1]
+              selected_functions=[value for index,value in enumerate(functions) if index%4==number-1]
+              if unique_lines(folder/"selected-packages.list")!=selected: fail(f"wrong package partition in shard {number}")
+              if unique_lines(folder/"selected-store-functions.list")!=selected_functions: fail(f"wrong store-function partition in shard {number}")
+              selected_pure=[value for value in selected if value in set(pure)]
+              selected_node=[value for value in selected if value in set(node)]
+              if len(selected_pure)+len(selected_node)!=len(selected): fail(f"package assignment has a gap or overlap in shard {number}")
+              if read_lines(folder/"selected-contract-packages.list")!=relative(selected_pure,puremod): fail(f"wrong pure execution paths in shard {number}")
+              if read_lines(folder/"selected-node-packages.list")!=relative(selected_node,nodemod): fail(f"wrong runtime execution paths in shard {number}")
+              seen_packages.extend(selected); seen_functions.extend(selected_functions)
+          if sorted(seen_packages)!=sorted([value for value in union if value!=store]) or len(seen_packages)!=len(set(seen_packages)): fail("race package shards are not disjoint and complete")
+          if sorted(seen_functions)!=sorted(functions) or len(seen_functions)!=len(set(seen_functions)): fail("store function shards are not disjoint and complete")
+
+          skip_rules={
+            (nodemod+"/cmd/telara-memory","TestProcessDaemonDarwinAncestorACL"): {"source":"cmd/telara-memory/process_unix_test.go","line":557,"reason":"macOS ACL regression","coverage":"covered_by_macos_full_unit","coverage_status":"PENDING"},
+            (nodemod+"/release","TestReproducibleRelease"): {"source":"release/main_test.go","line":27,"reason":"explicit -release-source module snapshot required","coverage":"release_snapshot_gate","coverage_status":"PENDING"},
+            (nodemod+"/release","TestAdversarialCleanTagRelease"): {"source":"release/main_test.go","line":576,"reason":"explicit -release-repository required","coverage":"release_repository_gate","coverage_status":"PENDING"},
+            (nodemod+"/release","TestPublishDualFamilyRefusesConcurrentDestinationWithoutClobber/symlink"): {"source":"release/main_test.go","line":453,"reason_prefix":"symlink fixture unavailable: ","operation":"symlink","old_basename":"link-target","new_basename":"release","go_temp_pattern":"TestPublishDualFamilyRefusesConcurrentDestinationWithoutClobber","allowed_errnos":["operation not permitted","permission denied","function not implemented","operation not supported","not supported"],"coverage":"release_symlink_fixture","coverage_status":"UNRESOLVED"},
+            (nodemod+"/capture","TestCursorPiRealStoreFixtures/cursor-agent"): {"source":"capture/native_clients_test.go","line":27,"reason":"UNVERIFIED: store signal-receipt API and Cursor/Pi reader allowlist await store owner","coverage":"capture_native_client_acceptance","coverage_status":"UNRESOLVED"},
+            (nodemod+"/capture","TestCursorPiRealStoreFixtures/pi"): {"source":"capture/native_clients_test.go","line":27,"reason":"UNVERIFIED: store signal-receipt API and Cursor/Pi reader allowlist await store owner","coverage":"capture_native_client_acceptance","coverage_status":"UNRESOLVED"},
+            (nodemod+"/capture","TestCollectorRetainsValidSignalWhenAtomicStoreSeamMissing"): {"source":"capture/signals_test.go","line":94,"reason":"store seam implemented; positive integration supersedes this negative gate","coverage":"TestPiCompositeCallIdentity separate positive gate","coverage_status":"SUPERSEDED_NOT_RUN"},
+            (nodemod+"/clients","TestInstalledMacClientsInTemporaryHomes"): {"source":"clients/process_test.go","line":60,"reason":"actual installed-client check is Mac only","coverage":"installed_client_native_acceptance","coverage_status":"UNRESOLVED"},
+            (nodemod+"/disclosuretext","TestBoundedPinnedNormalizationAndPostRemovalRedaction"): {"source":"disclosuretext/view_test.go","line":53,"reason":"compiler selected unsupported tables; capability correctly refuses","coverage":"pinned_compiler_capability","coverage_status":"UNRESOLVED"},
+            (nodemod+"/install","TestLiveLaunchAgent"): {"source":"install/install_test.go","line":346,"reason":"explicit -live-launchagent required","coverage":"explicit_live_launchagent","coverage_status":"UNRESOLVED"},
+            (nodemod+"/install","TestUninstallAfterStopAndFailedBootstrap"): {"source":"install/registration_test.go","line":116,"reason":"LaunchAgent lifecycle regression","coverage":"covered_by_macos_full_unit","coverage_status":"PENDING"},
+            (nodemod+"/install","TestStopBootoutRaceRequiresConfirmedAbsence"): {"source":"install/registration_test.go","line":199,"reason":"LaunchAgent command","coverage":"covered_by_macos_full_unit","coverage_status":"PENDING"},
+            (nodemod+"/ipc","TestDarwinACLGrantsRejected"): {"source":"ipc/fs_unix_test.go","line":303,"reason":"macOS ACL regression","coverage":"covered_by_macos_full_unit","coverage_status":"PENDING"},
+            (nodemod+"/ipc","TestDarwinAncestorACLSearchAndAddSubdirectory"): {"source":"ipc/fs_unix_test.go","line":349,"reason":"macOS ACL regression","coverage":"covered_by_macos_full_unit","coverage_status":"PENDING"},
+            (nodemod+"/mcp","TestCurrentGatewaySourceSchemas"): {"source":"mcp/schema_source_test.go","line":26,"reason":"UNVERIFIED current gateway compatibility; sibling checkout absent","coverage":"gateway_source_checkout_gate","coverage_status":"UNRESOLVED"},
+            (nodemod+"/peer","TestOtherUIDSocketAttack"): {"source":"peer/otheruid_linux_test.go","line":55,"reason":"requires -other-uid-attack in a disposable two-account Linux runner","coverage":"two_account_peer_attack","coverage_status":"UNRESOLVED"},
+            (nodemod+"/vault","TestSecretServiceNativeProfileHoldsIndependentSecrets"): {"source":"vault/custody_handles_linux_test.go","line":421,"reason":"no session bus; native multi-secret custody UNVERIFIED","coverage":"linux_secret_service_session","coverage_status":"UNRESOLVED"},
+            (nodemod+"/vault","TestSecretServiceNativeLifecycle"): {"source":"vault/vault_linux_test.go","line":19,"reason":"no session bus; native Secret Service lifecycle UNVERIFIED","coverage":"linux_secret_service_session","coverage_status":"UNRESOLVED"},
+            (nodemod+"/vault","TestSecretServiceNativeForeignItemRefused"): {"source":"vault/vault_linux_test.go","line":59,"reason":"no session bus; native Secret Service foreign item refusal UNVERIFIED","coverage":"linux_secret_service_session","coverage_status":"UNRESOLVED"},
+            (nodemod+"/cmd/telara-memory","TestProcessUnsafeDirectories/wrong-owner"): {"source":"cmd/telara-memory/process_unix_test.go","line":239,"reason":"requires unprivileged test process","coverage":"unprivileged_process_fixture","coverage_status":"UNRESOLVED"},
+            (nodemod+"/cmd/telara-memory","TestLiveWiredLaunchAgent"): {"source":"cmd/telara-memory/wiring_process_unix_test.go","line":400,"reason":"lead must run with -live-wired-launchagent outside sandbox","coverage":"explicit_live_wired_launchagent","coverage_status":"UNRESOLVED"},
+          }
+          if puremod+"/cmd/telara-memory" in pure or puremod+"/release" in pure: fail("runtime CLI/release packages were assigned to the pure module")
+          if nodemod+"/cmd/telara-memory" not in node or nodemod+"/release" not in node: fail("runtime CLI/release packages are missing from the runtime inventory")
+          if any(pkg.startswith(puremod+"/cmd/") or pkg==puremod+"/release" for pkg,_ in skip_rules): fail("runtime skip rule uses an obsolete pure-module package identity")
+          policy_hash=hashlib.sha256(json.dumps(sorted((pkg,test,rule) for (pkg,test),rule in skip_rules.items()),separators=(",",":" )).encode()).hexdigest()
+          allowed_actions={"start","run","pause","cont","output","bench","pass","skip","fail","build-output","build-fail"}
+          def read_json_events(raw, shard, filename):
+              events=[]
+              for index,line in enumerate(raw.decode("utf-8").splitlines(),1):
+                  if not line: fail(f"empty JSON event line in shard {shard} {filename}:{index}")
+                  try: event=json.loads(line)
+                  except Exception as exc: fail(f"invalid Go JSON event in shard {shard} {filename}:{index}: {exc}")
+                  if not isinstance(event,dict) or event.get("Action") not in allowed_actions or not isinstance(event.get("Package"),str): fail(f"invalid/unknown Go JSON event in shard {shard} {filename}:{index}")
+                  if event.get("Action")=="build-fail": fail(f"Go build failure event in shard {shard} {filename}")
+                  events.append(event)
+              return events
+          not_run=[]
+          def audit_stream(events, expected_packages, test_packages, shard, filename, expected_store=None):
+              package_actions=Counter(); test_runs=Counter(); terminals=Counter(); terminal_positions={}; outputs={}; seen_packages=set()
+              for event_index,event in enumerate(events):
+                  pkg=event["Package"]; action=event["Action"]; test=event.get("Test","")
+                  if pkg not in expected_packages: fail(f"unexpected package event {pkg} in shard {shard} {filename}")
+                  seen_packages.add(pkg)
+                  if not test:
+                      if action in ("start","pass","skip","fail"): package_actions[(pkg,action)]+=1
+                  elif action=="run": test_runs[(pkg,test)]+=1
+                  elif action in ("pass","skip","fail","bench"):
+                      terminals[(pkg,test,action)]+=1; terminal_positions[(pkg,test,action)]=event_index
+                  elif action=="output": outputs.setdefault((pkg,test),[]).append((event_index,event.get("Output","")))
+                  if action=="output" and re.search(r"\(cached\)|WARNING: DATA RACE|DATA RACE|race detected|panic:|fatal error:|test timed out|timed out",event.get("Output",""),re.I): fail(f"race/failure/timeout/cache marker in shard {shard} {filename}")
+              if seen_packages!=set(expected_packages): fail(f"missing package events in shard {shard} {filename}: {sorted(set(expected_packages)-seen_packages)}")
+              for pkg in expected_packages:
+                  expected_package_action="pass" if pkg in test_packages else "skip"
+                  if package_actions[(pkg,"start")]!=1 or package_actions[(pkg,expected_package_action)]!=1: fail(f"missing, duplicate, or unexpected package terminal for {pkg} in shard {shard} {filename}")
+                  if package_actions[(pkg,"fail")]+package_actions[(pkg,"skip") if expected_package_action!="skip" else (pkg,"pass")]: fail(f"unexpected package failure/skip/pass in shard {shard} {filename}: {pkg}")
+              for key,count in test_runs.items():
+                  if count!=1: fail(f"duplicate test run event {key} in shard {shard} {filename}")
+                  terminal_total=sum(terminals[(key[0],key[1],kind)] for kind in ("pass","skip","fail","bench"))
+                  if terminal_total!=1: fail(f"test lacks exactly one terminal event {key} in shard {shard} {filename}")
+                  if terminals[(key[0],key[1],"fail")]: fail(f"test failed {key} in shard {shard} {filename}")
+                  if terminals[(key[0],key[1],"bench")]: fail(f"unexpected benchmark event {key} in shard {shard} {filename}")
+              if set((pkg,test) for pkg,test,_ in terminals)!=set(test_runs): fail(f"test terminal/run event set differs in shard {shard} {filename}")
+              skips=[]
+              for pkg,test,action in terminals:
+                  if action!="skip": continue
+                  rule=skip_rules.get((pkg,test))
+                  if rule is None: fail(f"unlisted skip in shard {shard} {filename}: {pkg} {test}")
+                  skip_position=terminal_positions[(pkg,test,"skip")]
+                  test_outputs=outputs.get((pkg,test),[])
+                  if any(index>skip_position for index,_ in test_outputs): fail(f"test output followed skip terminal in shard {shard} {filename}: {pkg} {test}")
+                  source_lines=[]
+                  for _,output in test_outputs:
+                      for line in output.splitlines():
+                          match=re.match(r"^\s*(?P<source>[^:\n]+\.go):(?P<line>[0-9]+):\s*(?P<reason>.*)$",line)
+                          if match: source_lines.append((match.group("source"),int(match.group("line")),match.group("reason")))
+                  if not source_lines: fail(f"skip has no source-attributed reason in shard {shard} {filename}: {pkg} {test}")
+                  source,source_line,observed_reason=source_lines[-1]
+                  if source.rsplit("/",1)[-1]!=rule["source"].rsplit("/",1)[-1] or source_line!=rule["line"]:
+                      fail(f"skip source location changed in shard {shard} {filename}: {pkg} {test}: {source}:{source_line}")
+                  module_source=("internal/node/" if pkg.startswith(nodemod+"/") else "")+rule["source"]
+                  if module_source not in source_manifest["files"]: fail(f"skip source missing from source manifest: {module_source}")
+                  source_path=Path("contract")/module_source
+                  try: source_text=source_path.read_text(encoding="utf-8").splitlines()
+                  except Exception as exc: fail(f"skip source file unreadable: {module_source}: {exc}")
+                  if len(source_text)<rule["line"]: fail(f"skip source line missing: {module_source}:{rule['line']}")
+                  source_statement=source_text[rule["line"]-1].strip()
+                  if "reason" in rule:
+                      if observed_reason!=rule["reason"]: fail(f"skip reason changed in shard {shard} {filename}: {pkg} {test}; observed {observed_reason!r}")
+                      if not source_statement.startswith("t.Skip(") or json.dumps(rule["reason"],ensure_ascii=False) not in source_statement: fail(f"skip source statement differs from exact policy: {module_source}:{rule['line']}")
+                  else:
+                      prefix=rule["reason_prefix"]
+                      if not observed_reason.startswith(prefix): fail(f"dynamic skip reason changed in shard {shard} {filename}: {pkg} {test}; observed {observed_reason!r}")
+                      link_error=observed_reason[len(prefix):]
+                      match=re.fullmatch(r"(?P<operation>symlink) (?P<old>/[A-Za-z0-9._/+~-]{1,2048}/link-target) (?P<new>/[A-Za-z0-9._/+~-]{1,2048}/release): (?P<errno>operation not permitted|permission denied|function not implemented|operation not supported|not supported)",link_error)
+                      if not match or match.group("operation")!=rule["operation"] or match.group("errno") not in rule["allowed_errnos"]:
+                          fail(f"dynamic skip LinkError structure/operation/errno changed in shard {shard} {filename}: {pkg} {test}; observed {observed_reason!r}")
+                      old_path=Path(match.group("old")); new_path=Path(match.group("new")); temp_root=Path(producer_temp_roots[shard])
+                      if len(link_error)>8192 or not old_path.is_absolute() or not new_path.is_absolute() or str(old_path)!=match.group("old") or str(new_path)!=match.group("new"):
+                          fail(f"dynamic skip LinkError path is noncanonical or unbounded in shard {shard} {filename}: {pkg} {test}")
+                      parent=old_path.parent
+                      test_temp=re.fullmatch(re.escape(rule["go_temp_pattern"])+r"(?P<random>[0-9]{1,10})",parent.parent.name)
+                      random_suffix=test_temp.group("random") if test_temp else ""
+                      random_is_canonical=bool(random_suffix) and random_suffix==str(int(random_suffix)) and int(random_suffix)<=4294967295
+                      if old_path.name!=rule["old_basename"] or new_path.name!=rule["new_basename"] or old_path.parent!=new_path.parent or parent.name!="001" or not random_is_canonical or parent.parent.parent!=temp_root:
+                          fail(f"dynamic skip LinkError paths are outside the exact source-owned Go TempDir fixture in shard {shard} {filename}: {pkg} {test}")
+                      if not source_statement.startswith("t.Skipf(") or json.dumps(prefix+"%v",ensure_ascii=False) not in source_statement: fail(f"dynamic skip source statement differs from policy: {module_source}:{rule['line']}")
+                  coverage=rule["coverage"]; coverage_status=rule["coverage_status"]
+                  record={"package":pkg,"test":test,"reason":observed_reason,"source":source,"source_line":source_line,"status":"NOT_RUN","coverage":coverage,"coverage_status":coverage_status,"shard":shard,"log":filename}
+                  skips.append(record); not_run.append(record)
+              if expected_store is not None:
+                  top_runs={test.split("/",1)[0] for pkg,test in test_runs if pkg==expected_store}
+                  if top_runs!=set(expected_store_names): fail(f"store selected top-level run set differs in shard {shard}")
+              return skips
+          for number,folder in shards.items():
+              selected=unique_lines(folder/"selected-packages.list")
+              selected_pure=read_lines(folder/"selected-contract-packages.list")
+              selected_node=read_lines(folder/"selected-node-packages.list")
+              if len(selected_pure)!=len(set(selected_pure)) or len(selected_node)!=len(set(selected_node)): fail(f"duplicate module execution path in shard {number}")
+              expected_pure={puremod if item=="." else puremod+"/"+item[2:] for item in selected_pure}
+              expected_node={nodemod if item=="." else nodemod+"/"+item[2:] for item in selected_node}
+              for filename,expected,testpkgs in (("pure-packages.jsonl",expected_pure,set(pure_tests)),("runtime-packages.jsonl",expected_node,set(node_tests))):
+                  events=read_json_events(logs[number][filename],number,filename)
+                  if {e["Package"] for e in events}!={*expected}: fail(f"actual package event set differs from shard {number} {filename} selection")
+                  audit_stream(events,expected,testpkgs,number,filename)
+              if store not in set(node_tests): fail("store package is not recorded as test-bearing")
+              store_events=read_json_events(logs[number]["store.jsonl"],number,"store.jsonl")
+              selected_store=set(unique_lines(folder/"selected-store-functions.list"))
+              expected_store_names=selected_store
+              audit_stream(store_events,{store},{store},number,"store.jsonl",store)
+              top_runs={test.split("/",1)[0] for pkg,test in Counter((e["Package"],e.get("Test","")) for e in store_events if e.get("Action")=="run") if pkg==store}
+              if top_runs!=selected_store: fail(f"store selected top-level run set differs in shard {number}")
+          report={"status":"PASS_WITH_EXPLICIT_NOT_RUN","source_commit":source_commit,"contract_tree":contract_tree,"source_manifest_sha256":hashlib.sha256(baselines["source-contract-files.json"]).hexdigest(),"skip_policy_sha256":policy_hash,"pure_packages":len(pure),"runtime_packages":len(node),"union_packages":len(union),"pure_test_packages":len(pure_tests),"runtime_test_packages":len(node_tests),"store_functions":len(functions),"package_shards":4,"store_function_shards":4,"not_run":sorted(not_run,key=lambda x:(x["package"],x["test"],x["shard"]))}
+          Path("race-audit").mkdir()
+          (Path("race-audit")/"aggregate-audit.json").write_text(json.dumps(report,sort_keys=True,indent=2)+"\n",encoding="utf-8")
+          print(json.dumps(report,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: node-race-union-audit
+          path: race-audit/aggregate-audit.json
+          retention-days: 3

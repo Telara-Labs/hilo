@@ -1,0 +1,31 @@
+{
+  "contract": "mnc/3.0",
+  "source": "node working tree snapshot",
+  "status": "COPIED_CANONICAL_NODE_FIXTURES",
+  "files": {
+    "historical-mnc2/v03-records.json": "f7e86a953cc488700da6077930a82c9b579fcb34aff0478c8de2decded5de81e",
+    "historical-mnc2/v04-events.json": "e07efebd344eaa2afe4746ffc2469b0d7e2084ac1b50c7d0123fff160dac6610",
+    "historical-mnc2/v04-salt.json": "8972b16911cc9817f4d901f060eeae99d9061663753264a4e963328fb362334a",
+    "historical-mnc2/v05-signature.json": "dcf999a4fbe7b3648abefb40017a6ec81d5116fa9e33d0c28effc89accb55457",
+    "historical-mnc2/vectors.json": "14ed14686d4a90b6e6fa2bef6616225803b8c9bbf8f99bdd6cb4d17e0b9bffb3",
+    "redact-corpus-v1/README.md": "fbdfad3c7a125b27626e5821260277f7358754a48f9d24dfaf06eac6f3336341",
+    "redact-corpus-v1/actual-engine-golden.json": "818dc5632865d663a68ec3d47f1dc30e68e0022df9d136cb1574647208d1e777",
+    "redact-corpus-v1/corpus.json": "544ffaf7e93f8f28305096dae79794568479845dc7e542d74a8b54e014fbb8fc",
+    "v01-jcs.json": "b43d78e9d08e17696a558844485ba75345cb6bf84180ae5b192626b12ef80396",
+    "v02-identity.json": "94357d935b326c6b0fce9dabb490af76afc5e201ebfe5acebfcff1f69e5a678f",
+    "v03-records.json": "fc6b893241546c9ed84831ac5d9960d708cebc0809ea4e994d9b3e674ad5f83e",
+    "v03-task-status.json": "b484d1a2be6f209370a025b06945833e2b7b83cb6af28380ffa173f3aa0a7041",
+    "v03-worked-example.json": "b6cf13c6e243b33c580bede3fb5d3aafec36af857af2bb9e9f3e71c3ea1199ca",
+    "v04-events.json": "4e95e8cf97ca5ef57053e327e4202c8fe0914fd60451e22edb81f9ee17bf51a3",
+    "v04-keyed-text.json": "e0730bcfc0ece7d08d60d5bda663d44b484ec71218f86b75070b65ac88219c59",
+    "v04-salt.json": "c821458a5992c73a2e178278471d07d595f5cfe5c7fbf37d7e7c8bc9eec975aa",
+    "v05-signature.json": "2e9bc49d27855db4440dc52884358189738ef230dea81c77f088db52c10abb39",
+    "v06-possession-bootstrap.json": "a3e228b31be5c44d8c30fb039df7ed451e01b9b91cfa8d96d4813e51a4aa60ff",
+    "v15-matrix.json": "3621921eac204db397e9b44664ba94fb1e772808b4c54d2065a9db7665897bd2",
+    "v20-exposures.json": "456ce14ffa4cf721fffff7487af0a85107fa3cec7830f6909d52ce28a9554655",
+    "vectors.json": "7c540ff8f07d94f98f55ee72530656c85e22ecacd52c7fa7d54dcdd6e11d7c6d",
+    "vectors.sha256": "4723b01505f4af4d6cd78d49cd638f9c79a9c241e293007aae57351bc33cbece"
+  },
+  "vector_set_sha256": "c357f5ff31a4340f91eaf3b2355008a6217e26728cd802b5667462deb47ab7bb",
+  "source_snapshot_sha256": "ef3bb9462ea774d2a621fa9f9669818a154d7e31da9df3eeadfdb4935a32022f"
+}

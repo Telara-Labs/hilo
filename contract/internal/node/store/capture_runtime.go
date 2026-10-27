@@ -232,7 +232,15 @@ func (s *Store) capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 		if err != nil {
 			return failure("policy_unavailable")
 		}
-		if d.tenant != nil && (!d.tenant.sealAllowed("", rs.Epoch) || q.PolicyID != d.tenant.chain.HighestID) || d.tenant == nil && q.PolicyID != "" {
+		repo, err := s.captureRepositoryLocked(ctx, d, q)
+		if err != nil {
+			return err
+		}
+		remote := ""
+		if repo != nil {
+			remote = repo.Remote
+		}
+		if d.tenant != nil && (!d.tenant.sealAllowed(remote, rs.Epoch) || q.PolicyID != d.tenant.chain.HighestID) || d.tenant == nil && q.PolicyID != "" {
 			return failure("policy_violation")
 		}
 		t, e := s.makeCaptureTxn(ctx, d, q, p)
@@ -260,6 +268,9 @@ func (s *Store) capture(ctx context.Context, q CaptureRequest, producer func(*Ca
 		}
 		refs, changed, e := s.admitCapturePlan(ctx, d, q, p, t, plan)
 		if e != nil {
+			return e
+		}
+		if e = s.associateCaptureRepository(ctx, d, q, refs); e != nil {
 			return e
 		}
 		if !changed {
@@ -432,13 +443,20 @@ func (s *Store) admitCapturePlan(ctx context.Context, d *databaseState, q Captur
 }
 func captureBound(r *record.Record, q CaptureRequest, o Options, newRecord bool) bool {
 	h := r.Header
-	if h.Type != record.KindChunk && h.Type != record.KindSession || h.Prov != record.ProvTranscript || h.Subj.SessionKey != q.Occurrence.SessionKey || h.Subj.Source != q.Occurrence.Source || h.Author.MachineID != o.LocalMachineID || h.Subj.TaskID != "" || h.Subj.RepoID != "" || h.Subj.Client == nil || h.Subj.Client.ID != q.Reader.Reader || h.Subj.Client.Surface != "cli" {
+	expectedRepo := ""
+	if q.Repository != nil {
+		expectedRepo = q.Repository.ID
+	}
+	if h.Type != record.KindChunk && h.Type != record.KindSession || h.Prov != record.ProvTranscript || h.Subj.SessionKey != q.Occurrence.SessionKey || h.Subj.Source != q.Occurrence.Source || h.Author.MachineID != o.LocalMachineID || h.Subj.TaskID != "" || h.Subj.RepoID != expectedRepo || h.Subj.Client == nil || h.Subj.Client.ID != q.Reader.Reader || h.Subj.Client.Surface != "cli" {
 		return false
 	}
 	if newRecord && (h.Author.KeyID != q.AuthorKeyID || h.Red.Fingerprint != q.RulesetFingerprint) {
 		return false
 	}
 	if b, ok := r.Body.(*record.SessionBody); ok {
+		if q.Repository == nil && b.Repo != nil || q.Repository != nil && (b.Repo == nil || *b.Repo != *q.Repository) {
+			return false
+		}
 		if b.Reader == nil || *b.Reader != q.Reader {
 			return false
 		}

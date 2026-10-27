@@ -17,6 +17,7 @@ import (
 // Store is the subset of the node store the sync adapter reads and the
 // control enforcement writes. *store.Store implements it.
 type Store interface {
+	RegisterRepositoryVariant(context.Context, string, store.SignedRecord) error
 	Snapshot(context.Context, store.ReadRequest) (store.Snapshot, error)
 	SyncPushPolicy(context.Context) (store.SyncPolicy, error)
 	Append(context.Context, store.SignedRecord) (store.AdmissionResult, error)
@@ -219,6 +220,18 @@ func (o *outbox) storeEligible(ctx context.Context, rows []queuedRow) (bool, str
 	for _, r := range rows {
 		if !live[r.SourceID] {
 			return false, "source_invalidated", nil
+		}
+		if r.Kind == string(record.KindTask) && pol.Governed {
+			resolver, ok := o.store.(interface {
+				RepositoryRemote(context.Context, string) (string, error)
+			})
+			if !ok {
+				return false, "repository_unavailable", nil
+			}
+			remote, err := resolver.RepositoryRemote(ctx, r.Repo)
+			if err != nil || remote == "" || remote != r.Remote {
+				return false, "repository_unavailable", nil
+			}
 		}
 		if !pol.PushAllowed(r.Remote) {
 			return false, "policy_denied", nil

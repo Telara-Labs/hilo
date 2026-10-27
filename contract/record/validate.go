@@ -567,10 +567,10 @@ func validateKeyOpShape(b *KeyOpBody) error {
 		if s.Role != RoleDevice {
 			return bad("key_op: %s concerns a device key", b.Op)
 		}
-		if !IsKeyID(b.Genesis) {
+		if b.Op != OpGenesis && !IsKeyID(b.Genesis) {
 			return bad("key_op: %s must name its genesis key id", b.Op)
 		}
-		if b.Op == OpGenesis && b.Genesis != s.KeyID {
+		if b.Op == OpGenesis && b.Genesis != "" && b.Genesis != s.KeyID {
 			return bad("key_op: a genesis names itself as genesis")
 		}
 	case OpTenantKey, OpTenantKeyRotate:

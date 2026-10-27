@@ -46,6 +46,7 @@ type InstalledRuntime struct {
 	Credentials *InstalledCredentials
 }
 type InstalledCredentials struct {
+	dir      string
 	vault    SecretVault
 	peers    PeerAuthority
 	manifest installedManifest
@@ -288,7 +289,7 @@ func (p InstalledProvider) Load(ctx context.Context) (InstalledRuntime, error) {
 	if err != nil {
 		return out, installedFailure()
 	}
-	return InstalledRuntime{Config{OwnerGenesis: m.Owner, MachineID: m.Machine}, material, &InstalledCredentials{p.Vault, p.Peers, m}}, nil
+	return InstalledRuntime{Config{OwnerGenesis: m.Owner, MachineID: m.Machine}, material, &InstalledCredentials{dir: p.Dir, vault: p.Vault, peers: p.Peers, manifest: m}}, nil
 }
 func (p *InstalledCredentials) Proof(ctx context.Context, h ipc.Hello) (CredentialProof, error) {
 	if p == nil || p.vault == nil || p.peers == nil || daemon.AuthenticatedPeerPID(ctx) != h.PID || h.PID <= 0 {
@@ -296,6 +297,9 @@ func (p *InstalledCredentials) Proof(ctx context.Context, h ipc.Hello) (Credenti
 	}
 	if p.peers.VerifyAndDrain(ctx, h, p.manifest.Credential) != nil {
 		return CredentialProof{}, installedFailure()
+	}
+	if h.RepositoryContext != "" {
+		return repositoryContextProof(ctx, p.dir, h.RepositoryContext, p.vault)
 	}
 	secret, err := p.vault.Get(ctx, p.manifest.VaultHandle)
 	defer clear(secret)
