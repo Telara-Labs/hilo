@@ -16,6 +16,7 @@ const maxEvaluationBytes = 32 << 20
 type evaluationBudget struct {
 	context.Context
 	work, bytes int
+	affects     []map[string]struct{}
 }
 
 func (b *evaluationBudget) Err() error {
@@ -49,15 +50,18 @@ func (m *Model) preflightEvaluation(ctx context.Context) error {
 			return err
 		}
 	}
-	// The semantic-exposure matcher inspects explicit affect lists for every
-	// candidate. Refuse that cross product before entering its fixed point.
+	// Charge the index construction and the candidate/exposure probes before
+	// allocating the index. Repeated probes remain charged during evaluation.
 	exposureWork := 0
 	for _, e := range m.exposures {
-		cost := len(m.items) * (1 + len(e.AffectsIDs))
-		if cost > maxEvaluationWork-exposureWork {
+		if len(m.items) > maxEvaluationWork-exposureWork {
 			return ErrEvaluationBudget
 		}
-		exposureWork += cost
+		exposureWork += len(m.items)
+		if len(e.AffectsIDs) > maxEvaluationWork-exposureWork {
+			return ErrEvaluationBudget
+		}
+		exposureWork += len(e.AffectsIDs)
 		if err := reserveEvaluation(ctx, 32*len(e.AffectsIDs)); err != nil {
 			return err
 		}
@@ -203,21 +207,34 @@ func (e *Eval) hasTenantGrant(id, tenant string) bool {
 	return false
 }
 
-func (m *Model) downstreamContext(ctx context.Context, it *Item, e Exposure) bool {
+func (m *Model) downstreamContext(ctx context.Context, it *Item, index int) bool {
+	e := m.exposures[index]
 	if b, ok := ctx.(*evaluationBudget); ok {
-		if len(e.AffectsIDs) > maxEvaluationWork-b.work {
-			b.work = maxEvaluationWork + 1
-			return false
+		if b.affects == nil {
+			if len(e.AffectsIDs) > maxEvaluationWork-b.work {
+				b.work = maxEvaluationWork + 1
+				return false
+			}
+			b.work += len(e.AffectsIDs)
+			if parent, ok := b.Context.(interface{ SpendWork(int) error }); ok && parent.SpendWork(len(e.AffectsIDs)) != nil {
+				b.work = maxEvaluationWork + 1
+				return false
+			}
+			return ctx.Err() == nil && m.downstream(it, e)
 		}
-		b.work += len(e.AffectsIDs)
-	}
-	if spender, ok := ctx.(*evaluationBudget); ok {
-		if parent, ok := spender.Context.(interface{ SpendWork(int) error }); ok {
-			if parent.SpendWork(len(e.AffectsIDs)) != nil {
-				spender.work = maxEvaluationWork + 1
+		if parent, ok := b.Context.(interface{ SpendWork(int) error }); ok {
+			if parent.SpendWork(1) != nil {
+				b.work = maxEvaluationWork + 1
 				return false
 			}
 		}
+		if ctx.Err() != nil {
+			return false
+		}
+		if _, ok := b.affects[index][it.ID]; ok {
+			return true
+		}
+		return m.downstreamByContext(it, e)
 	}
 	return ctx.Err() == nil && m.downstream(it, e)
 }

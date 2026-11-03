@@ -266,6 +266,9 @@ func (m *Model) downstream(it *Item, e Exposure) bool {
 	if contains(e.AffectsIDs, it.ID) {
 		return true
 	}
+	return m.downstreamByContext(it, e)
+}
+func (m *Model) downstreamByContext(it *Item, e Exposure) bool {
 	if e.SessionKey != "" && it.SessionKey == e.SessionKey {
 		return e.UnknownOrder || it.SessionSeq > e.Seq
 	}
@@ -310,11 +313,11 @@ func (m *Model) grantSetsContext(ctx context.Context) (map[string]map[string]rec
 				return nil, err
 			}
 			ds := m.depsOf(it)
-			for _, e := range m.exposures {
+			for i, e := range m.exposures {
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
-				if m.downstreamContext(ctx, it, e) {
+				if m.downstreamContext(ctx, it, i) {
 					ds = append(ds, e.ID)
 				}
 			}
@@ -565,6 +568,21 @@ func (m *Model) evaluateContext(ctx context.Context) (*Eval, error) {
 	// Charge retained graph shape before building indexes or expanded closures.
 	if err := m.preflightEvaluation(ctx); err != nil {
 		return nil, err
+	}
+	budget.affects = make([]map[string]struct{}, len(m.exposures))
+	for i, exposure := range m.exposures {
+		budget.affects[i] = make(map[string]struct{}, len(exposure.AffectsIDs))
+		for _, id := range exposure.AffectsIDs {
+			if parent, ok := budget.Context.(interface{ SpendWork(int) error }); ok {
+				if err := parent.SpendWork(1); err != nil {
+					return nil, err
+				}
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			budget.affects[i][id] = struct{}{}
+		}
 	}
 	var evaluationErr error
 	var grantSets map[string]map[string]record.GrantRef
@@ -934,11 +952,11 @@ func (m *Model) evaluateContext(ctx context.Context) (*Eval, error) {
 				res = true
 			}
 		}
-		for _, e := range m.exposures {
+		for i, e := range m.exposures {
 			if ctx.Err() != nil {
 				return true
 			}
-			if m.downstreamContext(ctx, it, e) && ev.Tombs[e.ID] == (Tomb{}) && visit(e.ID, path) {
+			if m.downstreamContext(ctx, it, i) && ev.Tombs[e.ID] == (Tomb{}) && visit(e.ID, path) {
 				res = true
 			}
 		}
@@ -992,11 +1010,11 @@ func (m *Model) evaluateContext(ctx context.Context) (*Eval, error) {
 					add(token)
 				}
 			}
-			for _, e := range m.exposures {
+			for i, e := range m.exposures {
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
-				if !m.downstreamContext(ctx, it, e) {
+				if !m.downstreamContext(ctx, it, i) {
 					continue
 				}
 				causes, ok := exposureCauses[e.ID]
