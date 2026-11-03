@@ -31,7 +31,7 @@ function harness(t, options = {}) {
   fs.mkdirSync(path.join(root, 'release'), { mode: 0o700 });
   const write = (name, bytes, mode = 0o600) => fs.writeFileSync(path.join(root, name), bytes, { mode });
   write('package.json', JSON.stringify({ name: '@telaralabs/hilo', version: fixture.version }));
-  const spec = { version: fixture.version, family: fixture.family, tag: `v${fixture.version}`, repository: 'Telara-Labs/telara-memory' };
+  const spec = { version: fixture.version, family: fixture.family, tag: `v${fixture.version}`, repository: 'Telara-Labs/hilo' };
   write('release-spec.json', JSON.stringify(spec, null, 2) + '\n');
   for (const [name, key] of [['BUILD.json', 'build'], ['SHA256SUMS', 'sums'], ['RELEASE.sig', 'signature']]) {
     write(`release/${name}`, Buffer.from(fixture[key], 'base64'));
@@ -180,7 +180,7 @@ test('runner both signed families select one exact target and publish immutable 
       assert.equal(st.mode & 0o7777, 0o555);
       assert.equal(fs.existsSync(h.lock), false);
       assert.deepEqual(fs.readdirSync(path.dirname(h.selected)), [h.target.filename]);
-      assert.equal(h.requests[0].url, `https://github.com/Telara-Labs/telara-memory/releases/download/v1.2.3/${h.target.filename}`);
+      assert.equal(h.requests[0].url, `https://github.com/Telara-Labs/hilo/releases/download/v1.2.3/${h.target.filename}`);
       assert.equal(h.requests[0].options.agent, false);
       assert.equal(h.requests[0].options.rejectUnauthorized, true);
     });

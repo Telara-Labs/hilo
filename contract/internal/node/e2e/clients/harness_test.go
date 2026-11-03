@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/clients"
+	"github.com/Telara-Labs/hilo/contract/internal/node/clients"
 )
 
 var debugRun = flag.Bool("e2e-debug", false, "Record allowlisted peer proof diagnostics without credentials or request bodies")
@@ -275,7 +275,7 @@ func clientArgs(s clientSpec, prompt string) []string {
 	var args []string
 	switch s.name {
 	case "claude":
-		args = []string{"-p", "--output-format", "stream-json", "--verbose", "--max-turns", "6", "--allowedTools", "mcp__telara-memory__telara_task_create,mcp__telara-memory__telara_task_list", "--tools", "", prompt}
+		args = []string{"-p", "--output-format", "stream-json", "--verbose", "--max-turns", "6", "--allowedTools", "mcp__hilo__telara_task_create,mcp__hilo__telara_task_list", "--tools", "", prompt}
 	case "codex":
 		// Account-level apps (a hosted Telara connector among them) expose tools
 		// with the same names; the run must exercise only the local node.
@@ -284,8 +284,8 @@ func clientArgs(s clientSpec, prompt string) []string {
 			// is the vetted-automation case Codex documents for this flag.
 			"--dangerously-bypass-hook-trust",
 			// Headless exec refuses unapproved MCP calls; approve only this server's two tools.
-			"-c", `mcp_servers.telara-memory.default_tools_approval_mode="approve"`,
-			"-c", `mcp_servers.telara-memory.enabled_tools=["telara_task_create","telara_task_list"]`, prompt}
+			"-c", `mcp_servers.hilo.default_tools_approval_mode="approve"`,
+			"-c", `mcp_servers.hilo.enabled_tools=["telara_task_create","telara_task_list"]`, prompt}
 	case "cursor":
 		// Only disposable synthetic workspaces are passed by this harness.
 		args = []string{"--print", "--trust", "--approve-mcps", "--output-format", "stream-json", prompt}

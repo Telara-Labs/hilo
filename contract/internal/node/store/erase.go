@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // ControlSigner signs an already built record id with the active device key.

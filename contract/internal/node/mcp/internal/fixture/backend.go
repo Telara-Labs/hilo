@@ -10,10 +10,10 @@ import (
 	"strings"
 
 	tapredact "github.com/Telara-Labs/TAP-Runtime/discover/redact"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 type Content struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 func round5Execute(t *testing.T, k *kernelWorld, op, tool string, args any) CommittedReplyHandle {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 )
 
 func TestSettlementReceiptInvalidationAndUnknown(t *testing.T) {

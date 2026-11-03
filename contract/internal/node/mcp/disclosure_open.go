@@ -5,10 +5,10 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/capture"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/syncnode"
+	"github.com/Telara-Labs/hilo/contract/internal/node/capture"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/internal/node/syncnode"
 )
 
 // Runtime is preloaded by installed authority outside SQLite's writer. Neither

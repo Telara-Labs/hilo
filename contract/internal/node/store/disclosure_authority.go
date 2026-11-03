@@ -10,10 +10,10 @@ import (
 	"math"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosuretext"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosuretext"
+	"github.com/Telara-Labs/hilo/contract/internal/node/localpolicy"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 // Pools are prepared outside the SQLite writer, with bounded slots/retries.

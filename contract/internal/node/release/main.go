@@ -27,7 +27,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Telara-Labs/telara-memory/contract/releaseauth"
+	"github.com/Telara-Labs/hilo/contract/releaseauth"
 )
 
 type target struct{ OS, Arch string }
@@ -182,7 +182,7 @@ func buildDualFamily(ctx context.Context, c config, signingKey string) error {
 	if err = os.RemoveAll(buildDir); err != nil {
 		return err
 	}
-	if err = finalizeDualFamily(stageRoot, c.Out, c.Tag, signingKey, signAndVerifyFamily); err != nil {
+	if err = finalizeDualFamily(stageRoot, c.Out, c.Tag, signingKey, signAndVerifyFamily, releaseauth.Verify); err != nil {
 		return err
 	}
 	return nil
@@ -207,7 +207,10 @@ func signAndVerifyFamily(dir, signingKey string) (provenance, error) {
 	}, nil
 }
 
-func finalizeDualFamily(stageRoot, output, tag, signingKey string, finalize familyFinalizer) error {
+func finalizeDualFamily(stageRoot, output, tag, signingKey string, finalize familyFinalizer, verify func(string) (releaseauth.Provenance, error)) error {
+	if finalize == nil || verify == nil {
+		return errors.New("release finalizer and verifier required")
+	}
 	families := []struct {
 		name   string
 		prefix string
@@ -233,7 +236,7 @@ func finalizeDualFamily(stageRoot, output, tag, signingKey string, finalize fami
 	if verified.Source != tag || !verified.Signed {
 		return errors.New("dual-family release provenance mismatch")
 	}
-	return publishDualFamily(stageRoot, output)
+	return publishDualFamily(stageRoot, output, tag, verify)
 }
 
 func familyArtifactName(prefix string, t target) string {
@@ -283,58 +286,10 @@ func safeArtifactMode(mode fs.FileMode) fs.FileMode {
 	return mode.Perm() & 0755
 }
 
-func publishDualFamily(stageRoot, output string) error {
-	families := []struct {
-		name   string
-		prefix string
-	}{{"legacy", "telara-memory-"}, {"hilo", "hilo-"}}
-	for _, family := range families {
-		files, err := familyFiles(filepath.Join(stageRoot, family.name), family.prefix)
-		if err != nil {
-			return err
-		}
-		if len(files) != len(targets)+3 {
-			return errors.New("dual-family output requires both signed families")
-		}
-	}
-
-	// Mkdir is the ownership claim. Unlike a later Rename, it fails for every
-	// destination created during the build, including an empty directory.
-	if err := os.Mkdir(output, 0700); err != nil {
-		return errors.New("output path already exists or cannot be reserved")
-	}
-	createdDirs := []string{output}
-	createdFiles := []string{}
-	rollback := func() {
-		for i := len(createdFiles) - 1; i >= 0; i-- {
-			_ = os.Remove(createdFiles[i])
-		}
-		for i := len(createdDirs) - 1; i >= 0; i-- {
-			_ = os.Remove(createdDirs[i])
-		}
-	}
-	for _, family := range families {
-		sourceDir := filepath.Join(stageRoot, family.name)
-		destinationDir := filepath.Join(output, family.name)
-		if err := os.Mkdir(destinationDir, 0700); err != nil {
-			rollback()
-			return errors.New("dual-family output ownership was lost")
-		}
-		createdDirs = append(createdDirs, destinationDir)
-		files, err := familyFiles(sourceDir, family.prefix)
-		if err != nil {
-			rollback()
-			return err
-		}
-		for _, name := range files {
-			if err := os.Link(filepath.Join(sourceDir, name), filepath.Join(destinationDir, name)); err != nil {
-				rollback()
-				return errors.New("dual-family output file already exists or cannot be linked")
-			}
-			createdFiles = append(createdFiles, filepath.Join(destinationDir, name))
-		}
-	}
-	return nil
+func publishDualFamily(stageRoot, output, tag string, verify func(string) (releaseauth.Provenance, error)) error {
+	return publishReleaseTrees(context.Background(), []string{
+		filepath.Join(stageRoot, "legacy"), filepath.Join(stageRoot, "hilo"),
+	}, output, tag, verify, nil)
 }
 
 func familyFiles(dir, prefix string) ([]string, error) {
@@ -379,9 +334,9 @@ func writeFamily(buildDir, familyDir, prefix string) (map[string]string, error) 
 	digests := make(map[string]string, len(targets))
 	var sums strings.Builder
 	for _, t := range targets {
-		legacyName := familyArtifactName("telara-memory-", t)
+		buildName := familyArtifactName("hilo-", t)
 		familyName := familyArtifactName(prefix, t)
-		digest, err := copyAndHashArtifact(filepath.Join(buildDir, legacyName), filepath.Join(familyDir, familyName))
+		digest, err := copyAndHashArtifact(filepath.Join(buildDir, buildName), filepath.Join(familyDir, familyName))
 		if err != nil {
 			return nil, err
 		}
@@ -801,12 +756,12 @@ func build(ctx context.Context, c config) error {
 	}
 	var sums strings.Builder
 	for _, t := range targets {
-		name := "telara-memory-" + t.OS + "-" + t.Arch
+		name := "hilo-" + t.OS + "-" + t.Arch
 		if t.OS == "windows" {
 			name += ".exe"
 		}
 		path := filepath.Join(c.Out, name)
-		b, e := goCommand(ctx, c.Source, goEnv(t.OS, t.Arch, inputs), "build", "-p", "2", "-trimpath", "-buildvcs=false", "-mod=readonly", "-ldflags=-buildid=", "-o", path, "./cmd/telara-memory")
+		b, e := goCommand(ctx, c.Source, goEnv(t.OS, t.Arch, inputs), "build", "-p", "2", "-trimpath", "-buildvcs=false", "-mod=readonly", "-ldflags=-buildid=", "-o", path, "./cmd/hilo")
 		if e != nil {
 			return fmt.Errorf("build %s/%s failed: %s", t.OS, t.Arch, b)
 		}

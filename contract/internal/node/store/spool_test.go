@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/transport"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/transport"
 )
 
 const spoolTestID = "01K00000000000000000000000"

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 func pendingReuseLatePlan(t *testing.T, extra int) (*producerFixture, CaptureRequest, CommitPlan) {

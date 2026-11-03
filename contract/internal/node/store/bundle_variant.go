@@ -8,10 +8,10 @@ import (
 	"encoding/json"
 	tapredact "github.com/Telara-Labs/TAP-Runtime/discover/redact"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
-	"github.com/Telara-Labs/telara-memory/contract/transport"
+	"github.com/Telara-Labs/hilo/contract/internal/node/localpolicy"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/transport"
 )
 
 // variantRedactor applies the local measured ruleset and the verified tenant

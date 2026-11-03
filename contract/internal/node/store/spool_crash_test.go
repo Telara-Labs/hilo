@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
+	"github.com/Telara-Labs/hilo/contract/internal/node/localpolicy"
 	"modernc.org/sqlite"
 )
 

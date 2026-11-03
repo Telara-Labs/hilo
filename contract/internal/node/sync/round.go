@@ -7,8 +7,8 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/transport"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/transport"
 )
 
 // MaxPageItems bounds one filtered log page request.

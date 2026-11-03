@@ -21,15 +21,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/bundle"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/custodyguard"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/syncnode"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/internal/node/bundle"
+	"github.com/Telara-Labs/hilo/contract/internal/node/custodyguard"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	nodesync "github.com/Telara-Labs/hilo/contract/internal/node/sync"
+	"github.com/Telara-Labs/hilo/contract/internal/node/syncnode"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 type fullProfileExpectations struct {
@@ -237,7 +237,7 @@ func TestNativeWholeProfileCustodyTwoUpgrades(t *testing.T) {
 	var images []image
 	for _, variant := range []string{"profile-first", "profile-second", "profile-third"} {
 		exe := filepath.Join(root, variant)
-		cmd := exec.Command("go", "test", "-p", "1", "-c", "-o", exe, "-ldflags=-X github.com/Telara-Labs/telara-memory/contract/internal/node/vault.custodyBuild="+variant, ".")
+		cmd := exec.Command("go", "test", "-p", "1", "-c", "-o", exe, "-ldflags=-X github.com/Telara-Labs/hilo/contract/internal/node/vault.custodyBuild="+variant, ".")
 		if b, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fixture build %v %s", err, b)
 		}

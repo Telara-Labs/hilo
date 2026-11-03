@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
+	"github.com/Telara-Labs/hilo/contract/internal/node/localpolicy"
 )
 
 const taskID = "12345678-1234-4234-8234-123456789abc"

@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/custodyguard"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/custodyguard"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // OwnedCredentialHandles validates public identity pins before exposing opaque

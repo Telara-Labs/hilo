@@ -13,10 +13,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/replay"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
-	"github.com/Telara-Labs/telara-memory/contract/transport"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/replay"
+	"github.com/Telara-Labs/hilo/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/transport"
 )
 
 // deviceControl signs an erasure as a specific enrolled device. Unlike

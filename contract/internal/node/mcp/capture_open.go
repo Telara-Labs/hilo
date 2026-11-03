@@ -7,12 +7,12 @@ import (
 	"os"
 	goruntime "runtime"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/capture"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/clients"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/internal/node/capture"
+	"github.com/Telara-Labs/hilo/contract/internal/node/clients"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
 )
 
 // preloadCaptureVault copies the installed key only during the normal provider

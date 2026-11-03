@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/clients"
+	"github.com/Telara-Labs/hilo/contract/internal/node/clients"
 )
 
 func canonicalTemp(t *testing.T) string {
@@ -209,7 +209,7 @@ func TestHarnessAdapterMergeAndHookSpool(t *testing.T) {
 					} `json:"permissions"`
 				}
 				if err = json.Unmarshal(raw, &permissions); err != nil || permissions.ApprovalMode != "allowlist" ||
-					!slices.Equal(permissions.Permissions.Allow, []string{"Mcp(telara-memory:telara_task_create)", "Mcp(telara-memory:telara_task_list)"}) || len(permissions.Permissions.Deny) != 0 {
+					!slices.Equal(permissions.Permissions.Allow, []string{"Mcp(hilo:telara_task_create)", "Mcp(hilo:telara_task_list)"}) || len(permissions.Permissions.Deny) != 0 {
 					t.Fatal("Cursor disposable profile did not retain the exact two-tool allowlist")
 				}
 			}

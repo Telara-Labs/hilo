@@ -4,7 +4,7 @@ package vault
 
 import (
 	"context"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
 )
 
 // Other native vaults retain their OS identity across executable changes.

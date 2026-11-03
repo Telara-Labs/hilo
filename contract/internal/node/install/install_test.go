@@ -22,6 +22,22 @@ import (
 var updateGolden = flag.Bool("update-install-golden", false, "Update manager definition golden files")
 var liveAgent = flag.Bool("live-launchagent", false, "Install and remove a temporary real LaunchAgent")
 
+func TestMissingReceiptRefusesStatusAndStart(t *testing.T) {
+	dir := testRoot(t)
+	ctx := context.Background()
+	if _, err := readReceipt(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("receipt absence must remain detectable by installation: %v", err)
+	}
+	if _, err := Status(ctx, dir); !errors.Is(err, ErrUnverified) {
+		t.Fatalf("status with no receipt: %v", err)
+	}
+	for name, start := range map[string]func(context.Context, string) error{"start": Start, "autostart": Autostart} {
+		if err := start(ctx, dir); !errors.Is(err, ErrUnverified) {
+			t.Errorf("%s with no receipt: %v", name, err)
+		}
+	}
+}
+
 func testRoot(t *testing.T) string {
 	t.Helper()
 	p, e := filepath.EvalSymlinks(t.TempDir())

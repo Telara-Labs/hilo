@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/policy"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/policy"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // relogin installs the tenant authority again with the root installTenant

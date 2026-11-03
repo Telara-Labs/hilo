@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/capture"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/internal/node/capture"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
 )
 
 type contextFaultVault struct {
@@ -24,6 +24,9 @@ type contextFaultVault struct {
 	fail                    string
 	dir                     string
 	puts, deletes, abandons int
+	metadataBackup          string
+	metadataBlocked         bool
+	metadataBefore          []byte
 }
 
 func (v *contextFaultVault) Put(ctx context.Context, id string, b []byte) error {
@@ -38,9 +41,46 @@ func (v *contextFaultVault) Put(ctx context.Context, id string, b []byte) error 
 		return errors.New("synthetic_unknown_outcome")
 	}
 	if v.fail == "active-metadata" {
-		if err := os.Chmod(v.dir, 0500); err != nil {
+		// A mode-only fault is ineffective for privileged CI users. Preserve the
+		// exact creating descriptor and obstruct its final publication instead.
+		path := filepath.Join(v.dir, store.RepositoryContextsName)
+		before, err := os.ReadFile(path)
+		if err != nil {
 			return err
 		}
+		backupDir, err := os.MkdirTemp(v.dir, ".repository-context-fault-")
+		if err != nil {
+			return err
+		}
+		backup := filepath.Join(backupDir, store.RepositoryContextsName)
+		if err = os.Rename(path, backup); err != nil {
+			os.Remove(backupDir)
+			return err
+		}
+		v.metadataBackup, v.metadataBefore = backup, before
+		if err = os.Mkdir(path, 0700); err != nil {
+			return err
+		}
+		v.metadataBlocked = true
+	}
+	return nil
+}
+
+func (v *contextFaultVault) restoreMetadata() error {
+	path := filepath.Join(v.dir, store.RepositoryContextsName)
+	if v.metadataBlocked {
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+		v.metadataBlocked = false
+	}
+	if v.metadataBackup != "" {
+		backup := v.metadataBackup
+		if err := os.Rename(backup, path); err != nil {
+			return err
+		}
+		v.metadataBackup = ""
+		return os.Remove(filepath.Dir(backup))
 	}
 	return nil
 }
@@ -152,7 +192,11 @@ func TestRepositoryContextFailedEnrollmentRetiresEveryNativePhase(t *testing.T) 
 	for _, phase := range []string{"register", "binding", "before-put", "after-put", "active-metadata", "active"} {
 		t.Run(phase, func(t *testing.T) {
 			f := repositoryRecoveryWorld(t)
-			defer os.Chmod(f.dir, 0700)
+			t.Cleanup(func() {
+				if err := f.vault.restoreMetadata(); err != nil {
+					t.Error("restore metadata fault", err)
+				}
+			})
 			defer f.signer.Clear()
 			ctx := context.Background()
 			var db *sql.DB
@@ -181,8 +225,23 @@ func TestRepositoryContextFailedEnrollmentRetiresEveryNativePhase(t *testing.T) 
 			} else if err == nil {
 				t.Fatal("injected boundary acknowledged")
 			}
-			if err = os.Chmod(f.dir, 0700); err != nil {
-				t.Fatal(err)
+			if phase == "active-metadata" {
+				if !f.vault.metadataBlocked || f.vault.puts != 1 {
+					t.Fatal("metadata fault did not reach publication after native creation")
+				}
+				if err = f.vault.restoreMetadata(); err != nil {
+					t.Fatal("restore metadata fault", err)
+				}
+				raw, readErr := os.ReadFile(filepath.Join(f.dir, store.RepositoryContextsName))
+				if readErr != nil || !bytes.Equal(raw, f.vault.metadataBefore) {
+					t.Fatal("pending metadata changed during fault restoration", readErr)
+				}
+				var pending struct {
+					Contexts []disclosure.RepositoryContext `json:"contexts"`
+				}
+				if json.Unmarshal(raw, &pending) != nil || len(pending.Contexts) != 1 || pending.Contexts[0].State != "pending" || pending.Contexts[0].Native != "creating" || pending.Contexts[0].Credential == "" {
+					t.Fatal("metadata fault did not retain the issued pending context")
+				}
 			}
 			f.vault.fail = ""
 			if db != nil {

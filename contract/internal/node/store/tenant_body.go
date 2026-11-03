@@ -3,8 +3,8 @@ package store
 import (
 	"reflect"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosuretext"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosuretext"
+	"github.com/Telara-Labs/hilo/contract/internal/node/localpolicy"
 )
 
 // bodyPolicyAllowed walks the closed, decoded record schema rather than the

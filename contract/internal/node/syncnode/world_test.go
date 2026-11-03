@@ -12,11 +12,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/capture"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/internal/node/capture"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	nodesync "github.com/Telara-Labs/hilo/contract/internal/node/sync"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 const testMachine = "11111111-1111-4111-8111-111111111111"

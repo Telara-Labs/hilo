@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 	"github.com/godbus/dbus/v5"
 	"golang.org/x/sys/unix"
 )
@@ -66,7 +66,7 @@ func validLinuxLocation(m secretServiceLocation) bool {
 	if m.Version != 1 || !dbus.ObjectPath(m.Collection).IsValid() || m.Collection == "/" || len(m.Collection) > 4096 || len(m.Item) > 4096 || len(m.Bus) != 32 || !strings.HasPrefix(m.Owner, ":") || len(m.Owner) > 255 {
 		return false
 	}
-	if m.Alias != "" && m.Alias != collectionAlias && m.Alias != defaultAlias {
+	if m.Alias != "" && m.Alias != collectionAlias && m.Alias != legacyCollectionAlias && m.Alias != defaultAlias {
 		return false
 	}
 	if m.Creation != "" && valid(context.Background(), m.Creation) != nil {

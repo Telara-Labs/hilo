@@ -20,7 +20,7 @@ const (
 	Codex      Client = "codex"
 	Cursor     Client = "cursor"
 	Pi         Client = "pi"
-	ServerName        = "telara-memory"
+	ServerName        = "hilo"
 )
 
 var (
@@ -173,7 +173,7 @@ func resolve(o Options) (Options, Location, error) {
 		l.Transcripts = joinOS(o.GOOS, root, "projects")
 	case Pi:
 		l.Transcripts = joinOS(o.GOOS, root, "sessions")
-		l.Extension = joinOS(o.GOOS, root, "extensions", "telara-memory.js")
+		l.Extension = joinOS(o.GOOS, root, "extensions", "hilo.js")
 		l.Hooks = l.Extension
 	}
 	return o, l, nil
@@ -211,7 +211,7 @@ func plan(o Options, l Location) []Change {
 	if o.Client == Codex {
 		format = "toml"
 		args, _ := json.Marshal(shimArgs(o))
-		mcp = "[mcp_servers.\"telara-memory\"]\ncommand = " + quoted(o.Executable) + "\nargs = " + string(args) + "\n"
+		mcp = "[mcp_servers.\"hilo\"]\ncommand = " + quoted(o.Executable) + "\nargs = " + string(args) + "\n"
 	} else {
 		b, _ := json.MarshalIndent(map[string]any{"mcpServers": map[string]any{ServerName: entry}}, "", "  ")
 		mcp = string(b) + "\n"
@@ -431,6 +431,9 @@ func inspectShared(o Options, l Location, conflicts bool) error {
 			_ = json.Unmarshal(obj["mcpServers"], &servers)
 			if _, ok := servers[ServerName]; ok {
 				return ErrConflict
+			}
+			if _, ok := servers["telara-memory"]; ok {
+				return ErrConflict // owner must remove the legacy shared registration
 			}
 			if o.Client == Pi {
 				if _, ok := servers["telara_memory"]; ok {

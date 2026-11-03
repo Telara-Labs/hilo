@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 func ingressKeyOp(t *testing.T, b record.KeyOpBody, author ed25519.PrivateKey, machine string, signers ...ed25519.PrivateKey) SignedRecord {

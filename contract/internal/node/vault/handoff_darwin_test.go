@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/custodyguard"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/peer"
+	"github.com/Telara-Labs/hilo/contract/internal/node/custodyguard"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/peer"
 )
 
 func TestHandoffMarkerValidationAndAtomicPublication(t *testing.T) {
@@ -282,7 +282,7 @@ func TestNativeCustodyCollisionRemainsFailClosed(t *testing.T) {
 	builds := make([]image, 0, 2)
 	for _, variant := range []string{"first", "second"} {
 		exe := filepath.Join(root, variant)
-		cmd := exec.Command("go", "test", "-p", "1", "-c", "-o", exe, "-ldflags=-X github.com/Telara-Labs/telara-memory/contract/internal/node/vault.custodyBuild="+variant, ".")
+		cmd := exec.Command("go", "test", "-p", "1", "-c", "-o", exe, "-ldflags=-X github.com/Telara-Labs/hilo/contract/internal/node/vault.custodyBuild="+variant, ".")
 		cmd.Env = append(os.Environ(), "GOWORK=off")
 		if b, e := cmd.CombinedOutput(); e != nil {
 			t.Fatalf("build %v %s", e, b)
@@ -502,7 +502,7 @@ func TestNativeCustodyAcrossDifferentAdHocBuilds(t *testing.T) {
 	builds := make([]image, 0, 3)
 	for _, variant := range []string{"first", "second", "third", "older-helper"} {
 		exe := filepath.Join(root, variant)
-		cmd := exec.Command("go", "test", "-p", "1", "-c", "-o", exe, "-ldflags=-X github.com/Telara-Labs/telara-memory/contract/internal/node/vault.custodyBuild="+variant, ".")
+		cmd := exec.Command("go", "test", "-p", "1", "-c", "-o", exe, "-ldflags=-X github.com/Telara-Labs/hilo/contract/internal/node/vault.custodyBuild="+variant, ".")
 		cmd.Env = append(os.Environ(), "GOWORK=off")
 		if b, e := cmd.CombinedOutput(); e != nil {
 			t.Fatalf("build %v %s", e, b)
@@ -531,7 +531,7 @@ func TestNativeCustodyAcrossDifferentAdHocBuilds(t *testing.T) {
 	}
 	// A real static target has native custody compiled out.
 	static := filepath.Join(root, "static")
-	buildStatic := exec.Command("go", "build", "-p", "2", "-o", static, "../cmd/telara-memory")
+	buildStatic := exec.Command("go", "build", "-p", "2", "-o", static, "../cmd/hilo")
 	buildStatic.Env = append(os.Environ(), "GOWORK=off", "CGO_ENABLED=0")
 	if b, e := buildStatic.CombinedOutput(); e != nil {
 		t.Fatalf("static build %v %s", e, b)
@@ -930,9 +930,9 @@ func TestHandoffCapabilitiesNativeStaticAndOlderProtocol(t *testing.T) {
 		path := filepath.Join(root, variant)
 		var cmd *exec.Cmd
 		if variant == "static" {
-			cmd = exec.Command("go", "build", "-p", "2", "-o", path, "../cmd/telara-memory")
+			cmd = exec.Command("go", "build", "-p", "2", "-o", path, "../cmd/hilo")
 		} else {
-			cmd = exec.Command("go", "test", "-p", "1", "-c", "-o", path, "-ldflags=-X github.com/Telara-Labs/telara-memory/contract/internal/node/vault.custodyBuild="+variant, ".")
+			cmd = exec.Command("go", "test", "-p", "1", "-c", "-o", path, "-ldflags=-X github.com/Telara-Labs/hilo/contract/internal/node/vault.custodyBuild="+variant, ".")
 		}
 		cmd.Env = append(os.Environ(), "GOWORK=off")
 		if variant == "static" {

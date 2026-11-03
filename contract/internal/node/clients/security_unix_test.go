@@ -262,7 +262,7 @@ func TestPiUninstallPreservesOpenDescriptorEdits(t *testing.T) {
 	if e != nil || r.MCP != "extension_removed_or_absent" {
 		t.Fatalf("%+v %v", r, e)
 	}
-	paths, e := filepath.Glob(filepath.Join(filepath.Dir(l.Extension), ".telara-memory-remove-*"))
+	paths, e := filepath.Glob(filepath.Join(filepath.Dir(l.Extension), ".hilo-remove-*"))
 	if e != nil || len(paths) != 1 {
 		t.Fatalf("recovery paths %v %v", paths, e)
 	}

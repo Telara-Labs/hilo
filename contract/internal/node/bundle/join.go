@@ -14,12 +14,12 @@ import (
 
 	"filippo.io/age"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/custodyguard"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/internal/node/custodyguard"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	nodesync "github.com/Telara-Labs/hilo/contract/internal/node/sync"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 // A fresh machine joins an identity in four steps, and only then restores:
@@ -66,6 +66,7 @@ type joinPending struct {
 	DeviceAdd string `json:"device_add"`
 }
 
+// Immutable v1 device-code authentication domain, preserved across the Hilo rename.
 const deviceCodeDomain = "telara-memory device_add v1"
 
 func joinCode(genesis, device, machine, recipient, op string) string {

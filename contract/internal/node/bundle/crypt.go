@@ -7,7 +7,7 @@ import (
 
 	"filippo.io/age"
 
-	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
+	nodesync "github.com/Telara-Labs/hilo/contract/internal/node/sync"
 )
 
 // ScryptWorkFactor is the scrypt cost (log2 N) of new backups. MaxScryptWorkFactor

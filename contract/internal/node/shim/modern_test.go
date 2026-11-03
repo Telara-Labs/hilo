@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
 )
 
 func TestStatelessLocalAnswersWithoutDaemon(t *testing.T) {

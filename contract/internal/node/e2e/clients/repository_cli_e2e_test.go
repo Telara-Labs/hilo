@@ -26,14 +26,14 @@ import (
 	"time"
 
 	"github.com/Telara-Labs/TAP-Runtime/discover/redact"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/clients"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/clients"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 var repositoryCLIOptIn = flag.Bool("e2e-repository-product-cli", false, "Explicit actual product CLI/native Codex acceptance; requires an unoccupied owner service label")
@@ -188,7 +188,7 @@ func cliReadBuildReceipt(path, executable string) (cliBuildReceipt, string, stri
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
-	if d.Decode(&r) != nil || d.Decode(new(any)) != io.EOF || !cliHex(r.SourceCommit, 40) || !cliHex(r.SourceTree, 40) || !record.IsHex64(r.SourceManifestSHA256) || !record.IsHex64(r.ExecutableSHA256) || !strings.HasPrefix(r.CommandPath, "github.com/Telara-Labs/telara-memory/") || !strings.HasSuffix(r.CommandPath, "/cmd/telara-memory") || r.InstallVersionLabel == "" || len(r.InstallVersionLabel) > 128 || redact.Redact(r.InstallVersionLabel) != r.InstallVersionLabel || strings.ContainsAny(r.InstallVersionLabel, "\r\n\x00") {
+	if d.Decode(&r) != nil || d.Decode(new(any)) != io.EOF || !cliHex(r.SourceCommit, 40) || !cliHex(r.SourceTree, 40) || !record.IsHex64(r.SourceManifestSHA256) || !record.IsHex64(r.ExecutableSHA256) || !strings.HasPrefix(r.CommandPath, "github.com/Telara-Labs/hilo/") || !strings.HasSuffix(r.CommandPath, "/cmd/hilo") || r.InstallVersionLabel == "" || len(r.InstallVersionLabel) > 128 || redact.Redact(r.InstallVersionLabel) != r.InstallVersionLabel || strings.ContainsAny(r.InstallVersionLabel, "\r\n\x00") {
 		return r, "", "", errors.New("invalid_build_receipt")
 	}
 	actual, err := cliImageDigest(executable)
@@ -236,16 +236,26 @@ func cliRepositoryRemote(value string) (string, error) {
 	return record.RepoID(value)
 }
 
+func (c *cliAcceptanceRun) plannedRecord() (install.Record, error) {
+	return install.PlannedRecord(install.Config{Dir: c.cfg.Install, Home: c.cfg.Home, Executable: c.source, SHA256: c.digest, Version: c.r.Build.InstallVersionLabel, DataDir: c.cfg.Data, RunDir: c.cfg.Run})
+}
+
 func (c *cliAcceptanceRun) requireAbsentService(ctx context.Context) error {
-	uid := strconv.Itoa(os.Getuid())
-	label := "dev.telara.memory"
+	planned, err := c.plannedRecord()
+	if err != nil {
+		return errors.New("service_label_plan_unverified")
+	}
+	uid, label := planned.UserID, planned.Label
 	out, stderr, err := c.command(ctx, "service_absence_preflight", c.cfg.Home, c.env, nil, "/bin/launchctl", "print", "gui/"+uid+"/"+label)
 	defer clear(out)
 	defer clear(stderr)
+	return cliServiceAbsence(label, uid, out, stderr, c.r.Commands[len(c.r.Commands)-1], err)
+}
+
+func cliServiceAbsence(label, uid string, out, stderr []byte, last cliCommandReceipt, err error) error {
 	if err == nil {
 		return errors.New("service_label_occupied_preserve_existing_profile")
 	}
-	last := c.r.Commands[len(c.r.Commands)-1]
 	if last.TimedOut || last.OutputLimited {
 		return errors.New("service_label_absence_unproven")
 	}
@@ -334,7 +344,7 @@ func cliCodexEvents(raw []byte, goal string) (native, created, listed string, er
 			if threads != 1 || completed != 0 {
 				return fail()
 			}
-			if event.Item.Server != "telara-memory" || event.Item.Status != "completed" || len(event.Item.Result) == 0 || (len(event.Item.Error) != 0 && string(event.Item.Error) != "null") {
+			if event.Item.Server != "hilo" || event.Item.Status != "completed" || len(event.Item.Result) == 0 || (len(event.Item.Error) != 0 && string(event.Item.Error) != "null") {
 				return fail()
 			}
 			wrapped, e := json.Marshal(map[string]any{"result": event.Item.Result})
@@ -610,7 +620,7 @@ func (c *cliAcceptanceRun) cleanup(ctx context.Context, installedAttempted bool)
 			if _, e = os.Lstat(filepath.Join(c.cfg.Install, "install.json")); !os.IsNotExist(e) {
 				return errors.New("owned_product_uninstall_receipt_remains")
 			}
-			expectedImage := filepath.Join(c.cfg.Install, "bin", c.digest, "telara-memory")
+			expectedImage := filepath.Join(c.cfg.Install, "bin", c.digest, "hilo")
 			deleted, e := cliNativeHandles(c.cfg, expectedImage, c.digest, true)
 			if e != nil {
 				return errors.New("owned_native_cleanup_receipt_incomplete_resources_preserved")
@@ -646,6 +656,54 @@ func (c *cliAcceptanceRun) cleanup(ctx context.Context, installedAttempted bool)
 // It never installs the Go test image or uses observedBackend/daemon.Call.
 // An occupied default label is a hard refusal, including today's preserved
 // hosted profile. Run only after root selects an isolated execution context.
+func TestRepositoryCLIServicePlanTracksProductDefault(t *testing.T) {
+	root := t.TempDir()
+	c := cliAcceptanceRun{
+		cfg:    installedConfig{Home: filepath.Join(root, "home"), Install: filepath.Join(root, "install"), Data: filepath.Join(root, "data"), Run: filepath.Join(root, "run")},
+		source: filepath.Join(root, "hilo"), digest: strings.Repeat("a", 64),
+		r: &cliAcceptanceReceipt{Build: cliBuildReceipt{InstallVersionLabel: "dev"}},
+	}
+	planned, err := c.plannedRecord()
+	if err != nil || planned.Label != "dev.telara.hilo" || planned.Home != c.cfg.Home || planned.Dir != c.cfg.Install || planned.DataDir != c.cfg.Data || planned.RunDir != c.cfg.Run || planned.SHA256 != c.digest || planned.Version != "dev" || !install.ValidExecutablePath(planned) {
+		t.Fatal("acceptance plan must match the product's current install receipt")
+	}
+	c.cfg.Data = "relative"
+	if _, err := c.plannedRecord(); err == nil {
+		t.Fatal("unsafe plan must fail before native service inspection")
+	}
+}
+
+func TestRepositoryCLIServiceAbsenceRequiresExactCurrentLabel(t *testing.T) {
+	label, uid := "dev.telara.hilo", "501"
+	missing := "Could not find service \"" + label + "\" in domain for user gui: " + uid
+	for _, tc := range []struct {
+		name, output string
+		command      cliCommandReceipt
+		err          error
+		want         string
+	}{
+		{name: "exact", output: missing, err: errors.New("exit 113")},
+		{name: "bad_request_exact", output: "Bad request.\n" + missing, err: errors.New("exit 113")},
+		{name: "occupied", output: missing, want: "service_label_occupied_preserve_existing_profile"},
+		{name: "legacy_label", output: strings.ReplaceAll(missing, label, "dev.telara.memory"), err: errors.New("exit 113"), want: "service_label_absence_unproven"},
+		{name: "other_user", output: strings.ReplaceAll(missing, uid, "502"), err: errors.New("exit 113"), want: "service_label_absence_unproven"},
+		{name: "unknown_error", output: "permission denied", err: errors.New("exit 1"), want: "service_label_absence_unproven"},
+		{name: "timeout", output: missing, command: cliCommandReceipt{TimedOut: true}, err: errors.New("deadline"), want: "service_label_absence_unproven"},
+		{name: "limited", output: missing, command: cliCommandReceipt{OutputLimited: true}, err: errors.New("exit 113"), want: "service_label_absence_unproven"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := cliServiceAbsence(label, uid, nil, []byte(tc.output), tc.command, tc.err)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || err.Error() != tc.want {
+				t.Fatalf("want %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
 func TestRepositoryCLIInstalledCodexSameSession(t *testing.T) {
 	if !*repositoryCLIOptIn {
 		t.Skip("explicit -e2e-repository-product-cli required")
@@ -745,7 +803,7 @@ func TestRepositoryCLIInstalledCodexSameSession(t *testing.T) {
 	c.cfg = installedConfig{Root: root, Home: filepath.Join(root, "home"), Data: filepath.Join(root, "data"), Run: filepath.Join(root, "run"), Client: "codex"}
 	c.cfg.Keychain = filepath.Join(root, "unused-sandbox-denial.keychain")
 	c.cfg.ClientConfig = filepath.Join(c.cfg.Home, ".codex")
-	c.cfg.Install = filepath.Join(c.cfg.Home, "Library", "Application Support", "telara-memory-install")
+	c.cfg.Install = filepath.Join(c.cfg.Home, "Library", "Application Support", "hilo-install")
 	for _, path := range []string{c.cfg.Home, c.cfg.ClientConfig, filepath.Join(c.cfg.Home, "tmp"), filepath.Join(c.cfg.Home, "project")} {
 		if os.MkdirAll(path, 0700) != nil {
 			fail("owned_layout_creation_failed")
@@ -758,7 +816,11 @@ func TestRepositoryCLIInstalledCodexSameSession(t *testing.T) {
 		fail("private_unix_socket_paths_too_long")
 	}
 	c.env = isolatedEnv(c.cfg.Home, c.cfg.ClientConfig, s)
-	r.Paths = map[string]string{"root": root, "home": c.cfg.Home, "data": c.cfg.Data, "run": c.cfg.Run, "install": c.cfg.Install, "client_config": c.cfg.ClientConfig, "launchd_label": "dev.telara.memory"}
+	planned, err := c.plannedRecord()
+	if err != nil {
+		fail("actual_product_install_plan_invalid")
+	}
+	r.Paths = map[string]string{"root": root, "home": c.cfg.Home, "data": c.cfg.Data, "run": c.cfg.Run, "install": c.cfg.Install, "client_config": c.cfg.ClientConfig, "launchd_label": planned.Label}
 	ctx, cancel := context.WithTimeout(context.Background(), 10**childTimeout)
 	defer cancel()
 	// This guard precedes auth copying, native custody and install mutation.
@@ -775,7 +837,7 @@ func TestRepositoryCLIInstalledCodexSameSession(t *testing.T) {
 	}
 	installation, err := cliInstallRecord(raw)
 	clear(raw)
-	if err != nil || installation.Home != c.cfg.Home || installation.Dir != c.cfg.Install || installation.DataDir != c.cfg.Data || installation.RunDir != c.cfg.Run || installation.SHA256 != c.digest || installation.Version != build.InstallVersionLabel || installation.Label != "dev.telara.memory" || installation.UserID != strconv.Itoa(os.Getuid()) || verifyShimImage(c.cfg, installation.Executable) != nil {
+	if err != nil || installation != planned || verifyShimImage(c.cfg, installation.Executable) != nil {
 		fail("actual_installed_receipt_mismatch")
 	}
 	c.installed = installation.Executable
@@ -936,14 +998,14 @@ func TestRepositoryCLIInstalledCodexSameSession(t *testing.T) {
 		fail("owned_repository_id_invalid")
 	}
 	// The vendor edits its own isolated TOML. No generic shared config merger.
-	for _, args := range [][]string{{"mcp", "remove", "telara-memory"}, {"mcp", "add", "telara-memory", "--", c.installed, "shim", "--data-dir", c.cfg.Data, "--run-dir", c.cfg.Run, "--repository-context", enrolled.ID}} {
+	for _, args := range [][]string{{"mcp", "remove", "hilo"}, {"mcp", "add", "hilo", "--", c.installed, "shim", "--data-dir", c.cfg.Data, "--run-dir", c.cfg.Run, "--repository-context", enrolled.ID}} {
 		out, err = launch("vendor_scoped_mcp_configuration", args)
 		clear(out)
 		if err != nil {
 			fail("vendor_scoped_mcp_configuration_failed")
 		}
 	}
-	promptB := "Resume this same session. Use only telara-memory MCP. Call telara_task_create exactly once with goal " + goal + ". Then call telara_task_list with query " + goal + " and mode detail to read back that exact task. Finally reply CAPTURE_CANARY " + phaseB + " " + canary + " and end this turn. Do not read files or use other tools."
+	promptB := "Resume this same session. Use only hilo MCP. Call telara_task_create exactly once with goal " + goal + ". Then call telara_task_list with query " + goal + " and mode detail to read back that exact task. Finally reply CAPTURE_CANARY " + phaseB + " " + canary + " and end this turn. Do not read files or use other tools."
 	out, err = launch("actual_vendor_same_session_phase_b", repositoryResumeArgs(s, native, promptB))
 	if err != nil {
 		fail("actual_native_resume_failed")
@@ -1031,7 +1093,7 @@ func TestRepositoryCLIEventProofRejectsEchoesRetriesAndCrossThread(t *testing.T)
 		if tool == "telara_task_list" {
 			args = map[string]any{"query": goal}
 		}
-		return map[string]any{"type": "item.completed", "item": map[string]any{"type": "mcp_tool_call", "server": "telara-memory", "tool": tool, "arguments": args, "status": "completed", "error": nil, "result": map[string]any{"isError": false, "content": []any{map[string]any{"type": "text", "text": "task_id " + task + " goal " + goal}}}}}
+		return map[string]any{"type": "item.completed", "item": map[string]any{"type": "mcp_tool_call", "server": "hilo", "tool": tool, "arguments": args, "status": "completed", "error": nil, "result": map[string]any{"isError": false, "content": []any{map[string]any{"type": "text", "text": "task_id " + task + " goal " + goal}}}}}
 	}
 	for _, mode := range []string{"positive", "echo-only", "duplicate-create", "list-before-create", "foreign-server", "failed-result", "other-goal", "second-thread", "after-completion"} {
 		t.Run(mode, func(t *testing.T) {

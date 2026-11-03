@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
-	qk "github.com/Telara-Labs/telara-memory/contract/internal/node/quarantinekeys"
-	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	qk "github.com/Telara-Labs/hilo/contract/internal/node/quarantinekeys"
+	nodesync "github.com/Telara-Labs/hilo/contract/internal/node/sync"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 // scrubSyncCopies runs with the main writer held. Acquisition of the sibling

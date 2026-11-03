@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 	"golang.org/x/sys/unix"
 )
 

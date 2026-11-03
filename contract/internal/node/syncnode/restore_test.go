@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // A restored hosted-enrolled node holds restored data until one round has

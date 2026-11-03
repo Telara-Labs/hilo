@@ -204,7 +204,7 @@ const source=readFileSync(%s,'utf8');
 const mod=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const handlers=new Map(); let registered;
 mod.default({registerMcpServer:(name,config)=>{registered={name,config}},on:(name,fn)=>handlers.set(name,fn)});
-if(registered.name!=='telara-memory'||registered.config.args[0]!=='shim') throw Error('registration');
+if(registered.name!=='hilo'||registered.config.args[0]!=='shim') throw Error('registration');
 const ctx={cwd:%s,sessionManager:{getSessionId:()=>%s,getSessionFile:()=>%s}};
 for(const event of ['session_start','agent_end','session_shutdown']) await handlers.get(event)({secret:'never persisted'},ctx);
 if(handlers.size!==3) throw Error('events');

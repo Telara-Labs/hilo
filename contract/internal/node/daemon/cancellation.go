@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 )
 
 // CancellationID ignores malformed and unrelated notifications without replying.

@@ -3,8 +3,8 @@ package sync
 import (
 	"encoding/base64"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/transport"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/transport"
 )
 
 // RawZstd frames b as one raw-block zstd frame, the transport encoding used

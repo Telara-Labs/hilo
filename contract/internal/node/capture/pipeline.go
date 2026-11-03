@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/localpolicy"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 type Root struct{ Client, AbsPath string }

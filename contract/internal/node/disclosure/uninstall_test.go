@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
 )
 
 func TestDeleteInstalledSecretValidatesManifestAndRetainsData(t *testing.T) {

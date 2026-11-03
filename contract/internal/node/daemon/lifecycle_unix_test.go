@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 )
 
 type settling struct{ entered, settle, closed chan struct{} }

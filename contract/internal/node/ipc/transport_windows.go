@@ -36,6 +36,8 @@ func platformPaths(data, run string) (Paths, error) {
 	if e != nil {
 		return Paths{}, e
 	}
+	// Keep the v1 pipe locator for verified legacy installations and clients.
+	// Hilo profile paths still produce distinct per-owner endpoints.
 	h := shaPath(sid.String() + "\x00" + strings.ToLower(filepath.Clean(data)))
 	return Paths{Data: data, Run: run, Endpoint: fmt.Sprintf(`\\.\pipe\telara-memory-%x`, h[:16])}, nil
 }

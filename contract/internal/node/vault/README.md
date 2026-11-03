@@ -100,7 +100,7 @@ Selection happens once per profile, before any handle exists, and is persisted
 in the owner-only custody record. Later reads, writes and deletes use the
 recorded collection path and never resolve an alias again.
 
-1. If the `telara-memory` alias resolves, that dedicated collection is used.
+1. For a fresh profile, if the `hilo` alias resolves, that dedicated collection is used.
 2. Otherwise CreateCollection is asked for it. A reply without a prompt selects
    the new dedicated collection.
 3. If the service refuses with a D-Bus error reply, or the creation needs a
@@ -111,8 +111,10 @@ recorded collection path and never resolve an alias again.
    mistaken for a refusal. No default collection also refuses; custody never
    creates one, since that needs a prompt.
 
-The record keeps `alias` (`telara-memory` or `default`; empty in records written
-before this path, which always used the dedicated alias) for diagnosis.
+The record keeps `alias` (`hilo`, the historical `telara-memory`, or `default`;
+empty in older records that used the dedicated alias) for diagnosis. Existing
+profiles keep their recorded collection and native handles during the Hilo
+rename. They do not resolve a new alias or move credentials.
 
 A profile holds several independent secrets at once: the installed runtime
 authority, the export key, the sync DPoP key and refresh credentials. The
@@ -173,7 +175,8 @@ Trade-offs of the default collection.
   under a separate collection policy. A locked default collection refuses;
   nothing unlocks it.
 - Visibility. The item is listed with the user's other login secrets, under the
-  label "Telara Memory runtime authority".
+  label "Hilo runtime authority" for newly created items. Existing native items
+  retain their recorded identities; the rename does not rewrite custody.
 - Compatibility. Records written before this change stay readable. A legacy
   `creating` record has no creation value, so it refuses instead of guessing.
   An older build rejects a record with the new fields, and so fails closed.

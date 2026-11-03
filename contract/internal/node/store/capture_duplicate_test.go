@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 func duplicateLatePlan(t *testing.T, extra int) (*producerFixture, CaptureRequest, CommitPlan) {

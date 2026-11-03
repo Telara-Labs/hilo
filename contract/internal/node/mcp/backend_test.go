@@ -10,11 +10,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	mcp "github.com/Telara-Labs/telara-memory/contract/internal/node/mcp/internal/fixture"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcp/internal/teststore"
-	"github.com/Telara-Labs/telara-memory/contract/replay"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	mcp "github.com/Telara-Labs/hilo/contract/internal/node/mcp/internal/fixture"
+	"github.com/Telara-Labs/hilo/contract/internal/node/mcp/internal/teststore"
+	"github.com/Telara-Labs/hilo/contract/replay"
 )
 
 const taskID = "89abcdef-1234-4234-8234-123456789abc"

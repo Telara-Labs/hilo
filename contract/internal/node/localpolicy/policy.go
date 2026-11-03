@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 
 	tapredact "github.com/Telara-Labs/TAP-Runtime/discover/redact"
-	contract "github.com/Telara-Labs/telara-memory/contract"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	contract "github.com/Telara-Labs/hilo/contract"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
-const Engine = "tap-discover/a711ce77ba63"
+const Engine = "tap-discover/b60687139cee"
 const ID = Engine + "/local"
 
 type policyError struct{}

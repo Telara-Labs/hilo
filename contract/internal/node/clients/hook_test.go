@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/transport"
+	"github.com/Telara-Labs/hilo/contract/transport"
 )
 
 const sessionFixture = "01234567-89ab-4cde-8fab-0123456789ab"

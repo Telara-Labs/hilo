@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/peer"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/peer"
 )
 
 // Deliberately closed fields. No errors, hello metadata, credentials, tokens,

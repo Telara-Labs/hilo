@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	tapredact "github.com/Telara-Labs/TAP-Runtime/discover/redact"
-	contract "github.com/Telara-Labs/telara-memory/contract"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	contract "github.com/Telara-Labs/hilo/contract"
+	"github.com/Telara-Labs/hilo/contract/internal/node/localpolicy"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 func TestSharedPolicyPreservesCaptureBoundary(t *testing.T) {

@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	contractdata "github.com/Telara-Labs/telara-memory/contract"
+	contractdata "github.com/Telara-Labs/hilo/contract"
 )
 
-const pureModulePath = "github.com/Telara-Labs/telara-memory/contract"
+const pureModulePath = "github.com/Telara-Labs/hilo/contract"
 
 type pureModule struct {
 	Path, Version, Dir string

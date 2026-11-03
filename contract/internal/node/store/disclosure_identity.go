@@ -6,7 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // Wire correlation exists only for the active connection. It is never hashed,

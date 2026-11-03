@@ -9,7 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 
-	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
+	nodesync "github.com/Telara-Labs/hilo/contract/internal/node/sync"
 )
 
 // SecretVault is the native OS credential store used by installation.

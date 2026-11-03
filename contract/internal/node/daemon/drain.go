@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 )
 
 // ErrSettlement means shutdown could not be proved. It never authorizes handoff.

@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
 )
 
 // Sidecar states reported by InspectStatus.

@@ -17,6 +17,8 @@ var (
 	ErrInvalid             = errors.New("secret_vault_invalid_input")
 )
 
+// Immutable native credential lookup/lock namespace. Preserve existing handles
+// across the Hilo rename; product labels and new collection names use Hilo.
 const service = "dev.telara.memory.runtime"
 const maxSecret = 2560
 

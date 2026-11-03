@@ -3,8 +3,8 @@ package fixture
 import (
 	"errors"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // Transport numbers must never pass through binary floating point. Keep the

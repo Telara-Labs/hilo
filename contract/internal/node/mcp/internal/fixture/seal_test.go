@@ -3,9 +3,9 @@ package fixture
 import (
 	"bytes"
 	"crypto/ed25519"
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 	"strings"
 	"testing"
 )

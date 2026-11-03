@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/jcs"
 )
 
 // validateEnvelope checks duplicate names, bounded depth and strict Unicode

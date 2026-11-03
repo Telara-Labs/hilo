@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/Telara-Labs/telara-memory/contract/transport"
+	"github.com/Telara-Labs/hilo/contract/transport"
 	"golang.org/x/sys/unix"
 )
 

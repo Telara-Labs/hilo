@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/vault"
+	"github.com/Telara-Labs/hilo/contract/internal/node/vault"
 )
 
 // This is a closed vocabulary. Never serialize error strings, paths or substrings

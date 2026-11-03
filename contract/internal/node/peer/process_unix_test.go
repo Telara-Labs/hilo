@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
 )
 
 func TestPeerImageHelper(t *testing.T) {

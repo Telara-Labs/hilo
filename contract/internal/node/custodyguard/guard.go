@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 )
 
 var ErrPending = errors.New("custody_upgrade_pending")
@@ -28,6 +28,21 @@ type Handle struct {
 }
 
 type leaseKey struct{}
+type contentionObserverKey struct{}
+
+// ObserveContention associates a nonblocking signal with this acquisition.
+// The caller must not close the signal until the acquisition returns.
+func ObserveContention(ctx context.Context, signal chan<- struct{}) context.Context {
+	return context.WithValue(ctx, contentionObserverKey{}, signal)
+}
+
+func signalContention(signal chan<- struct{}) {
+	defer func() { _ = recover() }() // A closed observer cannot disrupt admission.
+	select {
+	case signal <- struct{}{}:
+	default:
+	}
+}
 
 // Lease is admission held by an authenticated lifecycle owner. Preparation
 // persists the durable writer freeze before releasing admission; final
@@ -102,6 +117,7 @@ func BeginUpgrade(ctx context.Context, dir string) (*Lease, error) {
 	if err := ipc.ValidateDir(dir, false); err != nil {
 		return nil, err
 	}
+	signalled := false
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -112,6 +128,10 @@ func BeginUpgrade(ctx context.Context, dir string) (*Lease, error) {
 		}
 		if !errors.Is(err, ipc.ErrBusy) {
 			return nil, err
+		}
+		if signal, ok := ctx.Value(contentionObserverKey{}).(chan<- struct{}); ok && signal != nil && !signalled {
+			signalContention(signal)
+			signalled = true
 		}
 		timer := time.NewTimer(10 * time.Millisecond)
 		select {

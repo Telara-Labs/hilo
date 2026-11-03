@@ -8,8 +8,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/localpolicy"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 const (

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/replay"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/replay"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 // kernelOnJoined runs a disclosure engine over a joined device's store with

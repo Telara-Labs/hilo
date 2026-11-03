@@ -1,8 +1,8 @@
 package syncnode
 
 import (
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/custodyguard"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/internal/node/custodyguard"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
 )
 
 // OwnedCredentialHandles reads only validated typed metadata. The lifecycle

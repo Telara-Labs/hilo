@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
-	"github.com/Telara-Labs/telara-memory/contract/transport"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	nodesync "github.com/Telara-Labs/hilo/contract/internal/node/sync"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/transport"
 )
 
 // foreignDerived is another device's chunk holding text that declares it
@@ -445,8 +445,90 @@ func TestLocalScrubFencesStalePreparedExport(t *testing.T) {
 	resume()
 	select {
 	case err := <-done:
-		if !errors.Is(err, nodesync.ErrCancelled) {
+		// Registration can reject the scrubbed source before the sidecar
+		// fence runs. Both outcomes must leave no prepared bytes behind.
+		if !errors.Is(err, nodesync.ErrCancelled) && store.Code(err) != "repository_source_unavailable" {
 			t.Fatal("stale export persisted", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("stale export did not finish")
+	}
+	if n := count(t, wk, "SELECT count(*) FROM outbox WHERE body IS NOT NULL"); n != 0 {
+		t.Fatal("stale body retained", n)
+	}
+	if n := count(t, wk, "SELECT count(*) FROM operation WHERE length(raw)>0"); n != 0 {
+		t.Fatal("stale immutable operation retained", n)
+	}
+}
+
+// Pause after real variant registration so the sidecar fence is the rejection
+// point when local scrub completes before the export transaction resumes.
+type scrubPausedRegistration struct {
+	*store.Store
+	entered chan struct{}
+	release chan struct{}
+	policy  chan store.SyncPolicy
+	once    sync.Once
+}
+
+func (s *scrubPausedRegistration) SyncPushPolicy(ctx context.Context) (store.SyncPolicy, error) {
+	p, err := s.Store.SyncPushPolicy(ctx)
+	if err == nil {
+		s.policy <- p
+	}
+	return p, err
+}
+
+func (s *scrubPausedRegistration) RegisterRepositoryVariant(ctx context.Context, source string, variant store.SignedRecord) error {
+	if err := s.Store.RegisterRepositoryVariant(ctx, source, variant); err != nil {
+		return err
+	}
+	s.once.Do(func() { close(s.entered); <-s.release })
+	return nil
+}
+
+func TestLocalScrubSidecarFenceRejectsRegisteredVariant(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.enroll()
+	wk := w.worker()
+	root := w.task(1, repoA, "active")
+	w.selectRepo(wk, repoA)
+	paused := &scrubPausedRegistration{Store: w.st, entered: make(chan struct{}), release: make(chan struct{}), policy: make(chan store.SyncPolicy, 1)}
+	var once sync.Once
+	resume := func() { once.Do(func() { close(paused.release) }) }
+	defer resume()
+	wk.cfg.Store = paused
+	done := make(chan error, 1)
+	go func() { _, err := wk.export(ctx, p, newOutbox(wk.state, w.st, p.Scope())); done <- err }()
+	select {
+	case <-paused.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("export did not complete variant registration")
+	}
+	pol := <-paused.policy
+	if pol.Governed {
+		t.Fatal("fixture cannot distinguish repository recheck from sidecar fence")
+	}
+	ctl, _, err := signedOf(w.control(2, record.KindErasure, root.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = w.st.ApplyControl(ctx, ctl); err != nil {
+		t.Fatal(err)
+	}
+	r, err := w.st.Scrub(ctx, ctl.AdvisoryID)
+	if err != nil || r.State != "complete" {
+		t.Fatal("scrub", r, err)
+	}
+	if n := count(t, wk, "SELECT count(*) FROM quarantine_fence WHERE kind=? AND value=?", fenceID, root.ID); n != 1 {
+		t.Fatal("source fence missing", n)
+	}
+	resume()
+	select {
+	case err := <-done:
+		if !errors.Is(err, nodesync.ErrCancelled) {
+			t.Fatal("sidecar fence did not cancel export", err)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("stale export did not finish")

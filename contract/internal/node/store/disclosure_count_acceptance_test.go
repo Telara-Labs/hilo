@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/replay"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/replay"
 )
 
 // These tests exercise actual signed records, the fixed mutation builder, engine
@@ -312,15 +312,52 @@ func TestDisclosureCountAcceptanceConcreteGrantExcludesUnknownAndUnscoped(t *tes
 	}
 }
 
-// This fixture supplies explicitly trusted OWNER-side repository evidence to the
-// actual private database. It is not ordinary request input, an installed broker,
-// native attribution proof, or a public way to assert a repository. Resolve and
-// the production current-evidence/authorization checks still execute normally.
+func countAcceptanceRepoID(t *testing.T, label string) string {
+	t.Helper()
+	repo, err := record.RepoID("github.com/acme/fixture-" + label)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
+
+// This fixture admits a real signed repository-proof session before changing
+// explicitly trusted OWNER-side unit scope evidence. It is not ordinary request
+// input, an installed broker, native attribution or repository enrollment proof.
+// Production admission, current repository verification and authorization remain
+// active. Distinct fixture sessions prevent two repositories sharing one LID.
 func countAcceptanceTrustedRepoFixture(t *testing.T, k *kernelWorld, repo string) {
 	t.Helper()
 	ctx := context.Background()
 	state := "unknown"
 	if repo != "" {
+		remote, native := "", ""
+		for _, fixture := range []struct{ label, native string }{
+			{"a", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
+			{"b", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"},
+		} {
+			if countAcceptanceRepoID(t, fixture.label) == repo {
+				remote, native = "github.com/acme/fixture-"+fixture.label, fixture.native
+			}
+		}
+		if remote == "" {
+			t.Fatal("fixture repository must have an actual canonical identity")
+		}
+		current, err := k.s.RepositoryRemote(ctx, repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current == "" {
+			sk, err := record.SessionKey("claude-code", "local", record.NativeGlobal, native, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			proof := k.signed(record.Header{Type: record.KindSession, Prov: record.ProvTranscript, Subj: record.Subject{SessionKey: sk, RepoID: repo}, LID: record.SessionLID(sk, testMachine, 0)}, &record.SessionBody{NativeID: native, NativeIDKind: record.NativeGlobal, Repo: &record.RepoRef{ID: repo, Remote: remote}})
+			k.append(proof)
+		}
+		if verified, err := k.s.RepositoryRemote(ctx, repo); err != nil || verified != remote {
+			t.Fatal("signed fixture repository proof did not verify", verified, err)
+		}
 		state = "known"
 	}
 	if err := k.s.write(ctx, func() error {
@@ -346,8 +383,8 @@ func countAcceptanceTrustedRepoFixture(t *testing.T, k *kernelWorld, repo string
 func TestDisclosureCountAcceptanceTrustedRepoPredicateAndCurrentEvidence(t *testing.T) {
 	k := newKernel(t)
 	ctx := context.Background()
-	repoA := "r1:" + strings.Repeat("a", 64)
-	repoB := "r1:" + strings.Repeat("b", 64)
+	repoA := countAcceptanceRepoID(t, "a")
+	repoB := countAcceptanceRepoID(t, "b")
 	countAcceptanceTrustedRepoFixture(t, k, repoA)
 	stale := k.sc
 	create := k.execute("repo-a-task", "local.create_task", map[string]any{"goal": "Trusted fixture A"})

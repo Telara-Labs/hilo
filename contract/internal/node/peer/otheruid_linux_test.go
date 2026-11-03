@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 )
 
 // The other-uid attack needs root to launch two real accounts, so it runs only

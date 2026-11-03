@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/shim"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/shim"
 )
 
 func TestMain(m *testing.M) {
@@ -124,7 +124,7 @@ func TestLocationsAndGoldenPreviewsEveryClientOS(t *testing.T) {
 				if len(changes) != 1 || changes[0].Action != "create_owned" {
 					t.Fatal(changes)
 				}
-				if !strings.Contains(changes[0].Snippet, "registerMcpServer(\"telara-memory\"") {
+				if !strings.Contains(changes[0].Snippet, "registerMcpServer(\"hilo\"") {
 					t.Fatal("no native registration")
 				}
 				if strings.Contains(changes[0].Snippet, "process.env") {
@@ -233,7 +233,7 @@ func TestConflictsAndStatus(t *testing.T) {
 		t.Run(string(c), func(t *testing.T) {
 			o := options(t, c)
 			l, _ := Locations(o)
-			put(t, l.MCP, []byte(`{"mcpServers":{"telara-memory":{"command":"other"}}}`))
+			put(t, l.MCP, []byte(`{"mcpServers":{"hilo":{"command":"other"}}}`))
 			if _, e := Install(context.Background(), o); !errors.Is(e, ErrConflict) {
 				t.Fatal(e)
 			}
@@ -243,6 +243,13 @@ func TestConflictsAndStatus(t *testing.T) {
 			}
 			if c != Pi && r.MCP != "entry_present_runtime_unverified" {
 				t.Fatal(r)
+			}
+			put(t, l.MCP, []byte(`{"mcpServers":{"telara-memory":{"command":"other"}}}`))
+			if _, e := Install(context.Background(), o); !errors.Is(e, ErrConflict) {
+				t.Fatalf("legacy registration must remain a conflict: %v", e)
+			}
+			if r, e := Status(context.Background(), o); e != nil || r.MCP != "manual_pending" {
+				t.Fatalf("legacy registration must not appear as Hilo: %+v %v", r, e)
 			}
 			if _, e = Uninstall(context.Background(), o); e != nil {
 				t.Fatal(e)

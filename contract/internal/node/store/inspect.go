@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/policy"
+	"github.com/Telara-Labs/hilo/contract/policy"
 )
 
 // PolicyDiagnostics is the installed tenant policy state. It carries ids,

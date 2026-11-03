@@ -21,7 +21,7 @@ func WriteText(w io.Writer, r Report) error {
 		return strings.Join(xs, ", ")
 	}
 
-	b.WriteString("telara-memory doctor\n")
+	b.WriteString("hilo doctor\n")
 	line("data directory", r.DataDir)
 	line("problems", list(r.Problems))
 

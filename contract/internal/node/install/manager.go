@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 )
 
 func lockInstall(dir string) (io.Closer, error) {
@@ -102,6 +102,10 @@ func managerAvailable(ctx context.Context, r Record) error {
 	return e
 }
 func managerInstall(ctx context.Context, r Record) error {
+	return managerInstallMode(ctx, r, false)
+}
+
+func managerInstallMode(ctx context.Context, r Record, deferLinuxStart bool) error {
 	var e error
 	switch r.Platform {
 	case "darwin":
@@ -109,7 +113,11 @@ func managerInstall(ctx context.Context, r Record) error {
 	case "linux":
 		if _, e = nativeCommand(ctx, r.Platform, "--user", "daemon-reload"); e == nil {
 			if e = registered(ctx, r); e == nil {
-				_, e = nativeCommand(ctx, r.Platform, "--user", "enable", "--now", service(r))
+				if deferLinuxStart {
+					_, e = nativeCommand(ctx, r.Platform, "--user", "enable", service(r))
+				} else {
+					_, e = nativeCommand(ctx, r.Platform, "--user", "enable", "--now", service(r))
+				}
 			}
 		}
 	case "windows":

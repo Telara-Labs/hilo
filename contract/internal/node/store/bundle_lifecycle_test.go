@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 // inflight registers one export the way the export command does: the lock
@@ -139,10 +139,15 @@ func TestBundleExportPausedAfterSelectionLosesToErasure(t *testing.T) {
 // governedSession is a session with one chunk and a repository remote,
 // sealed under the given policy id.
 func governedSession(w *world, pol, text string) (SignedRecord, SignedRecord) {
+	w.t.Helper()
+	repo, err := record.RepoID("github.com/acme/widgets")
+	if err != nil {
+		w.t.Fatal(err)
+	}
 	e := w.event(text)
 	sk := w.sessionKey()
-	chunk := w.signed(record.Header{Type: record.KindChunk, Prov: record.ProvTranscript, Subj: record.Subject{SessionKey: sk}, LID: record.ChunkLID(sk, testMachine, e.ID), Pol: pol}, &record.ChunkBody{Events: []record.Event{e}})
-	session := w.signed(record.Header{Type: record.KindSession, Prov: record.ProvTranscript, Subj: record.Subject{SessionKey: sk}, LID: record.SessionLID(sk, testMachine, 0), Pol: pol}, &record.SessionBody{NativeID: "22222222-2222-4222-8222-222222222222", NativeIDKind: record.NativeGlobal, MachineOS: "darwin", Chunks: []string{chunk.AdvisoryID}, Repo: &record.RepoRef{Remote: "github.com/acme/widgets"}})
+	chunk := w.signed(record.Header{Type: record.KindChunk, Prov: record.ProvTranscript, Subj: record.Subject{SessionKey: sk, RepoID: repo}, LID: record.ChunkLID(sk, testMachine, e.ID), Pol: pol}, &record.ChunkBody{Events: []record.Event{e}})
+	session := w.signed(record.Header{Type: record.KindSession, Prov: record.ProvTranscript, Subj: record.Subject{SessionKey: sk, RepoID: repo}, LID: record.SessionLID(sk, testMachine, 0), Pol: pol}, &record.SessionBody{NativeID: "22222222-2222-4222-8222-222222222222", NativeIDKind: record.NativeGlobal, MachineOS: "darwin", Chunks: []string{chunk.AdvisoryID}, Repo: &record.RepoRef{ID: repo, Remote: "github.com/acme/widgets"}})
 	return chunk, session
 }
 

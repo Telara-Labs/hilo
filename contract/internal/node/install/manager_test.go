@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -30,6 +32,13 @@ func (m *managerFixture) command(_ context.Context, platform string, args ...str
 		m.present = true
 	}
 	if platform == "linux-bus" {
+		if args[len(args)-1] != "ExecStart" {
+			kind := "a(sasbttttuii)"
+			if args[len(args)-1] == "EnvironmentFiles" {
+				kind = "a(sb)"
+			}
+			return json.Marshal(map[string]any{"type": kind, "data": []any{}})
+		}
 		return json.Marshal(map[string]any{"type": "a(sasbttttuii)", "data": [][]any{{r.Executable, []string{r.Executable, "managed-daemon", "--install-dir", r.Dir}, false, 0, 0, 0, 0, 0, 0, 0}}})
 	}
 	joined := strings.Join(args, " ")
@@ -45,6 +54,7 @@ func (m *managerFixture) command(_ context.Context, platform string, args ...str
 	if strings.Contains(joined, "init.scope") {
 		return []byte(strings.Repeat("a", 32)), nil
 	}
+
 	if platform == "windows" && joined == "/Query /FO CSV /NH" {
 		if m.present {
 			return []byte(fmt.Sprintf("\"%s\",Ready\n", `\`+r.Label)), nil
@@ -58,7 +68,7 @@ func (m *managerFixture) command(_ context.Context, platform string, args ...str
 		if !m.present {
 			return []byte("LoadState=not-found\n"), nil
 		}
-		return []byte(fmt.Sprintf("LoadState=loaded\nFragmentPath=%s\nDropInPaths=\nUser=\nExecCondition=\nExecStartPre=\nExecStartPost=\nExecReload=\nExecStop=\nExecStopPost=\nEnvironment=\nEnvironmentFiles=\nRootDirectory=\nRootImage=\n", definitionPath(r))), nil
+		return []byte(fmt.Sprintf("LoadState=loaded\nFragmentPath=%s\nDropInPaths=\nUser=\nEnvironment=\nRootDirectory=\nRootImage=\n", definitionPath(r))), nil
 	}
 	if len(args) > 0 && (args[0] == "bootstrap" || args[0] == "/Create" || strings.Contains(joined, "enable --now")) {
 		m.present = true
@@ -95,6 +105,95 @@ func TestManagerPlans(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLinuxDeferredRegistrationDoesNotStart(t *testing.T) {
+	r, _ := receiptFixture(t)
+	r.Platform = "linux"
+	for _, tc := range []struct {
+		deferred bool
+		want     string
+	}{{true, "--user enable " + service(r)}, {false, "--user enable --now " + service(r)}} {
+		m := &managerFixture{record: r}
+		if err := managerInstallMode(adapted(m.command), r, tc.deferred); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, args := range m.calls {
+			if len(args) > 1 && args[1] == "enable" {
+				if got := strings.Join(args, " "); got != tc.want {
+					t.Fatalf("deferred=%v command=%q want=%q", tc.deferred, got, tc.want)
+				}
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("missing enable command")
+		}
+	}
+}
+
+func TestDeferredRegistrationOtherPlatformsAndFailure(t *testing.T) {
+	for _, platform := range []string{"darwin", "windows"} {
+		r, _ := receiptFixture(t)
+		r.Platform = platform
+		a, b := &managerFixture{record: r}, &managerFixture{record: r}
+		if err := managerInstallMode(adapted(a.command), r, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := managerInstallMode(adapted(b.command), r, true); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(a.calls, b.calls) {
+			t.Fatalf("%s deferred changed commands", platform)
+		}
+	}
+	r, _ := receiptFixture(t)
+	r.Platform = "linux"
+	m := &managerFixture{record: r}
+	ctx := adapted(func(ctx context.Context, platform string, args ...string) ([]byte, error) {
+		if platform == "linux" && len(args) > 1 && args[1] == "enable" {
+			return nil, ErrUnavailable
+		}
+		return m.command(ctx, platform, args...)
+	})
+	if err := managerInstallMode(ctx, r, true); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("enable failure: %v", err)
+	}
+}
+
+func TestDeferredRegistrationRetryAfterFailure(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux registration path")
+	}
+	r, _ := receiptFixture(t)
+	m := &managerFixture{record: r}
+	enabled, fail := false, true
+	command := func(ctx context.Context, platform string, args ...string) ([]byte, error) {
+		if platform == "linux" && len(args) > 1 && args[1] == "enable" {
+			if fail {
+				return nil, ErrUnavailable
+			}
+			enabled = true
+		}
+		if platform == "linux" && len(args) > 1 && args[1] == "is-enabled" && !enabled {
+			return nil, ErrUnavailable
+		}
+		return m.command(ctx, platform, args...)
+	}
+	ctx := adapted(command)
+	if _, err := RegisterDeferred(ctx, r.Dir); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("initial failure: %v", err)
+	}
+	fail = false
+	if report, err := RegisterDeferred(ctx, r.Dir); err != nil || report.State != "registered" || !enabled {
+		t.Fatalf("retry: %+v %v", report, err)
+	}
+	for _, args := range m.calls {
+		if strings.Contains(strings.Join(args, " "), "--now") {
+			t.Fatalf("retry started service: %v", args)
+		}
 	}
 }
 func TestManagerErrorsAndSessions(t *testing.T) {

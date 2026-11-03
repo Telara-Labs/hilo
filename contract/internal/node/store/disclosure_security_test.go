@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 	"strings"
 	"testing"
 )

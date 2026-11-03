@@ -29,7 +29,7 @@ jobs:
             contract/internal/node/go.sum
       - name: runtime security invariants
         working-directory: contract/internal/node
-        run: go test -mod=readonly -p 2 -v -count=1 -timeout 15m -run 'Test(PiCompositeCallIdentity|LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|QuarantineRecallClosureAllArrivalOrders|LocalUnseenErasureFencesHostedQuarantine|LocalErasureScrubsSidecarWithoutHostedRound|LocalScrubDoesNotDeadlockSidecarWriter|LocalScrubFencesStalePreparedExport|HostedServiceKeyRotationVerifiesNewReceipts|TransferredMetadataKeepsPolicyProvenance|RepositoryProofRequiresCurrentVerifiedIdentity|GovernedTaskBundleUsesSignedRepositoryProof|NodeLocalAdapterUsesSharedCorpus|NodeExportAdapterUsesEverySharedCorpusCase|HostedEnrollment|ReleaseDirectory)' ./capture ./store ./syncnode ./localpolicy ./cmd/telara-memory
+        run: go test -mod=readonly -p 2 -v -count=1 -timeout 15m -run 'Test(PiCompositeCallIdentity|LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|QuarantineRecallClosureAllArrivalOrders|LocalUnseenErasureFencesHostedQuarantine|LocalErasureScrubsSidecarWithoutHostedRound|LocalScrubDoesNotDeadlockSidecarWriter|LocalScrubFencesStalePreparedExport|HostedServiceKeyRotationVerifiesNewReceipts|TransferredMetadataKeepsPolicyProvenance|RepositoryProofRequiresCurrentVerifiedIdentity|GovernedTaskBundleUsesSignedRepositoryProof|NodeLocalAdapterUsesSharedCorpus|NodeExportAdapterUsesEverySharedCorpusCase|HostedEnrollment|ReleaseDirectory)' ./capture ./store ./syncnode ./localpolicy ./cmd/hilo
 
   linux-security:
     runs-on: ubuntu-latest
@@ -49,7 +49,7 @@ jobs:
       - name: Linux native custody and current security invariants
         run: |
           cd /ci-source/contract/internal/node
-          go test -mod=readonly -p 2 -v -count=1 -timeout 15m -run 'Test(PiCompositeCallIdentity|LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|HostedEnrollment|HostedServiceKeyRotation|TransferredMetadataKeepsPolicyProvenance|RepositoryProof|TenantKeyOutsideLoginRefused|GovernedTaskBundle|LocalErasureScrubs|LocalScrub|SecretServiceProfileHoldsIndependentSecrets|SecretServiceInstalledAuthorityReassignmentBeforeAndAfterLoad|InstalledStuckClientHintDoesNotBlockOtherClient)' ./capture ./store ./syncnode ./vault ./cmd/telara-memory
+          go test -mod=readonly -p 2 -v -count=1 -timeout 15m -run 'Test(PiCompositeCallIdentity|LateOccurrenceBulkBarrierIsDurableMetadataOnly|NativeCodexDefaultModesRequirePrivateContainment|HostedEnrollment|HostedServiceKeyRotation|TransferredMetadataKeepsPolicyProvenance|RepositoryProof|TenantKeyOutsideLoginRefused|GovernedTaskBundle|LocalErasureScrubs|LocalScrub|SecretServiceProfileHoldsIndependentSecrets|SecretServiceInstalledAuthorityReassignmentBeforeAndAfterLoad|InstalledStuckClientHintDoesNotBlockOtherClient)' ./capture ./store ./syncnode ./vault ./cmd/hilo
 
   windows-security:
     runs-on: windows-latest
@@ -64,7 +64,7 @@ jobs:
       - name: native owner ACL and read-only diagnostics
         working-directory: contract/internal/node
         shell: bash
-        run: go test -mod=readonly -p 2 -v -count=1 -timeout 15m -run 'Test(Windows|SQLiteURIUsesNativeAbsolutePath|DoctorMainStoreInspectionSidecars|DoctorSyncInspectionWritesNothing|ReleaseDirectory)' ./store ./ipc ./doctor ./cmd/telara-memory
+        run: go test -mod=readonly -p 2 -v -count=1 -timeout 15m -run 'Test(Windows|SQLiteURIUsesNativeAbsolutePath|DoctorMainStoreInspectionSidecars|DoctorSyncInspectionWritesNothing|ReleaseDirectory)' ./store ./ipc ./doctor ./cmd/hilo
 
   native-client-driver:
     runs-on: macos-15
@@ -84,7 +84,7 @@ jobs:
         run: go test -mod=readonly -p 2 -tags e2e -c -o "$GITHUB_WORKSPACE/clients.test" ./e2e/clients
       - name: build actual node CLI for native acceptance
         working-directory: contract/internal/node
-        run: go build -mod=readonly -p 2 -trimpath -o "$GITHUB_WORKSPACE/telara-memory-darwin-arm64" ./cmd/telara-memory
+        run: go build -mod=readonly -p 2 -trimpath -o "$GITHUB_WORKSPACE/hilo-darwin-arm64" ./cmd/hilo
       - name: compile native acceptance utility
         run: |
           ./clients.test export-native-helper-source "$PWD/native-helper.c"
@@ -95,7 +95,7 @@ jobs:
           name: native-client-driver
           path: |
             clients.test
-            telara-memory-darwin-arm64
+            hilo-darwin-arm64
             keychain-helper
             keychain-helper.sha256
           retention-days: 3
@@ -206,7 +206,7 @@ jobs:
               if not stat.S_ISREG(info.st_mode): raise SystemExit(f"non-regular source file {path}")
               payload=Path(path).read_bytes()
               files[relative]={"sha256":hashlib.sha256(payload).hexdigest(),"mode":stat.S_IMODE(info.st_mode)}
-          value={"schema":"telara-memory.contract-source.v1","source_commit":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),"contract_tree":subprocess.check_output(["git","rev-parse","HEAD:contract"],text=True).strip(),"files":files}
+          value={"schema":"hilo.contract-source.v1","source_commit":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),"contract_tree":subprocess.check_output(["git","rev-parse","HEAD:contract"],text=True).strip(),"files":files}
           Path(sys.argv[1]).write_text(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n",encoding="utf-8")
           PY
           cat > race-evidence/verify-source-export.py <<'PY'
@@ -214,7 +214,7 @@ jobs:
           from pathlib import Path
           manifest_path,source_root=map(Path,sys.argv[1:])
           manifest=json.loads(manifest_path.read_text(encoding="utf-8"))
-          if manifest.get("schema")!="telara-memory.contract-source.v1": raise SystemExit("unknown source manifest schema")
+          if manifest.get("schema")!="hilo.contract-source.v1": raise SystemExit("unknown source manifest schema")
           expected=manifest.get("files")
           if not isinstance(expected,dict) or not expected: raise SystemExit("empty or invalid source manifest")
           actual={}
@@ -277,8 +277,8 @@ jobs:
           import hashlib,json,sys
           from pathlib import Path
           root=Path(sys.argv[1]); shard=int(sys.argv[2])
-          puremod="github.com/Telara-Labs/telara-memory/contract"
-          nodemod="github.com/Telara-Labs/telara-memory/contract/internal/node"
+          puremod="github.com/Telara-Labs/hilo/contract"
+          nodemod="github.com/Telara-Labs/hilo/contract/internal/node"
           def lines(name):
               values=(root/name).read_text(encoding="utf-8").splitlines()
               if not values or len(values)!=len(set(values)): raise SystemExit(f"empty or duplicate inventory: {name}")
@@ -316,7 +316,7 @@ jobs:
           if len(contract_selected)+len(node_selected)!=len(selected): raise SystemExit("race package cannot be assigned to exactly one module inventory")
           (root/"selected-contract-packages.list").write_text("".join(x+"\n" for x in relative(contract_selected,puremod)),encoding="utf-8")
           (root/"selected-node-packages.list").write_text("".join(x+"\n" for x in relative(node_selected,nodemod)),encoding="utf-8")
-          receipt={"schema":"telara-memory.race-module-union.v1","source_commit":(root/"source-commit.txt").read_text().strip(),"contract_tree":(root/"contract-tree.txt").read_text().strip(),"source_manifest_sha256":hashlib.sha256((root/"source-contract-files.json").read_bytes()).hexdigest(),"pure_count":len(pure),"runtime_count":len(node),"union_count":len(union),"pure_test_packages":len(pure_tests),"runtime_test_packages":len(node_tests),"store_package":store,"store_functions":len(functions),"shard":shard,"selected_non_store":len(selected),"selected_store_functions":len(selected_store),"union_sha256":hashlib.sha256(("\n".join(union)+"\n").encode()).hexdigest()}
+          receipt={"schema":"hilo.race-module-union.v1","source_commit":(root/"source-commit.txt").read_text().strip(),"contract_tree":(root/"contract-tree.txt").read_text().strip(),"source_manifest_sha256":hashlib.sha256((root/"source-contract-files.json").read_bytes()).hexdigest(),"pure_count":len(pure),"runtime_count":len(node),"union_count":len(union),"pure_test_packages":len(pure_tests),"runtime_test_packages":len(node_tests),"store_package":store,"store_functions":len(functions),"shard":shard,"selected_non_store":len(selected),"selected_store_functions":len(selected_store),"union_sha256":hashlib.sha256(("\n".join(union)+"\n").encode()).hexdigest()}
           (root/"module-package-union.json").write_text(json.dumps(receipt,sort_keys=True,indent=2)+"\n",encoding="utf-8")
           PY
       - uses: actions/setup-go@v5
@@ -429,8 +429,8 @@ jobs:
                   elif value.startswith(prefix+"/"): out.append("./"+value[len(prefix)+1:])
                   else: fail(f"path outside module prefix: {value}")
               return out
-          puremod="github.com/Telara-Labs/telara-memory/contract"
-          nodemod="github.com/Telara-Labs/telara-memory/contract/internal/node"
+          puremod="github.com/Telara-Labs/hilo/contract"
+          nodemod="github.com/Telara-Labs/hilo/contract/internal/node"
           baselines={}
           logs={}
           producer_temp_roots={}
@@ -474,10 +474,10 @@ jobs:
                   if name in baselines and value!=baselines[name]: fail(f"source identity differs for {name}")
                   baselines[name]=value
               source_manifest=json.loads((folder/"source-contract-files.json").read_text(encoding="utf-8"))
-              if source_manifest.get("schema")!="telara-memory.contract-source.v1" or source_manifest.get("source_commit")!=(folder/"source-commit.txt").read_text().strip() or source_manifest.get("contract_tree")!=(folder/"contract-tree.txt").read_text().strip(): fail(f"full source manifest identity mismatch in shard {number}")
+              if source_manifest.get("schema")!="hilo.contract-source.v1" or source_manifest.get("source_commit")!=(folder/"source-commit.txt").read_text().strip() or source_manifest.get("contract_tree")!=(folder/"contract-tree.txt").read_text().strip(): fail(f"full source manifest identity mismatch in shard {number}")
               if not isinstance(source_manifest.get("files"),dict) or not source_manifest["files"]: fail(f"empty full source manifest in shard {number}")
               receipt=json.loads((folder/"module-package-union.json").read_text(encoding="utf-8"))
-              if receipt.get("schema")!="telara-memory.race-module-union.v1" or receipt.get("shard")!=number: fail(f"invalid union receipt for shard {number}")
+              if receipt.get("schema")!="hilo.race-module-union.v1" or receipt.get("shard")!=number: fail(f"invalid union receipt for shard {number}")
               if receipt.get("source_commit")!=(folder/"source-commit.txt").read_text().strip() or receipt.get("contract_tree")!=(folder/"contract-tree.txt").read_text().strip(): fail(f"receipt source binding mismatch in shard {number}")
               logs[number]={name:(folder/name).read_bytes() for name in ("pure-packages.jsonl","runtime-packages.jsonl","store.jsonl")}
               combined=(folder/"packages.jsonl").read_bytes()
@@ -496,8 +496,8 @@ jobs:
           node=unique_lines(shards[1]/"runtime-packages.list")
           pure_tests=unique_lines(shards[1]/"pure-test-packages.list")
           node_tests=unique_lines(shards[1]/"runtime-test-packages.list")
-          if puremod+"/cmd/telara-memory" in pure or puremod+"/release" in pure: fail("runtime CLI/release packages were assigned to the pure module")
-          if nodemod+"/cmd/telara-memory" not in node or nodemod+"/release" not in node: fail("runtime CLI/release packages are missing from the runtime inventory")
+          if puremod+"/cmd/hilo" in pure or puremod+"/release" in pure: fail("runtime CLI/release packages were assigned to the pure module")
+          if nodemod+"/cmd/hilo" not in node or nodemod+"/release" not in node: fail("runtime CLI/release packages are missing from the runtime inventory")
           functions=unique_lines(shards[1]/"all-store-functions.list")
           if any(value!=puremod and not value.startswith(puremod+"/") for value in pure): fail("pure package inventory outside pure module")
           if any(value==nodemod or value.startswith(nodemod+"/") for value in pure): fail("nested runtime package leaked into pure module inventory")
@@ -529,7 +529,7 @@ jobs:
           if sorted(seen_functions)!=sorted(functions) or len(seen_functions)!=len(set(seen_functions)): fail("store function shards are not disjoint and complete")
 
           skip_rules={
-            (nodemod+"/cmd/telara-memory","TestProcessDaemonDarwinAncestorACL"): {"source":"cmd/telara-memory/process_unix_test.go","line":557,"reason":"macOS ACL regression","coverage":"covered_by_macos_full_unit","coverage_status":"PENDING"},
+            (nodemod+"/cmd/hilo","TestProcessDaemonDarwinAncestorACL"): {"source":"cmd/hilo/process_unix_test.go","line":557,"reason":"macOS ACL regression","coverage":"covered_by_macos_full_unit","coverage_status":"PENDING"},
             (nodemod+"/release","TestReproducibleRelease"): {"source":"release/main_test.go","line":27,"reason":"explicit -release-source module snapshot required","coverage":"release_snapshot_gate","coverage_status":"PENDING"},
             (nodemod+"/release","TestAdversarialCleanTagRelease"): {"source":"release/main_test.go","line":576,"reason":"explicit -release-repository required","coverage":"release_repository_gate","coverage_status":"PENDING"},
             (nodemod+"/release","TestPublishDualFamilyRefusesConcurrentDestinationWithoutClobber/symlink"): {"source":"release/main_test.go","line":453,"reason_prefix":"symlink fixture unavailable: ","operation":"symlink","old_basename":"link-target","new_basename":"release","go_temp_pattern":"TestPublishDualFamilyRefusesConcurrentDestinationWithoutClobber","allowed_errnos":["operation not permitted","permission denied","function not implemented","operation not supported","not supported"],"coverage":"release_symlink_fixture","coverage_status":"UNRESOLVED"},
@@ -548,11 +548,11 @@ jobs:
             (nodemod+"/vault","TestSecretServiceNativeProfileHoldsIndependentSecrets"): {"source":"vault/custody_handles_linux_test.go","line":421,"reason":"no session bus; native multi-secret custody UNVERIFIED","coverage":"linux_secret_service_session","coverage_status":"UNRESOLVED"},
             (nodemod+"/vault","TestSecretServiceNativeLifecycle"): {"source":"vault/vault_linux_test.go","line":19,"reason":"no session bus; native Secret Service lifecycle UNVERIFIED","coverage":"linux_secret_service_session","coverage_status":"UNRESOLVED"},
             (nodemod+"/vault","TestSecretServiceNativeForeignItemRefused"): {"source":"vault/vault_linux_test.go","line":59,"reason":"no session bus; native Secret Service foreign item refusal UNVERIFIED","coverage":"linux_secret_service_session","coverage_status":"UNRESOLVED"},
-            (nodemod+"/cmd/telara-memory","TestProcessUnsafeDirectories/wrong-owner"): {"source":"cmd/telara-memory/process_unix_test.go","line":239,"reason":"requires unprivileged test process","coverage":"unprivileged_process_fixture","coverage_status":"UNRESOLVED"},
-            (nodemod+"/cmd/telara-memory","TestLiveWiredLaunchAgent"): {"source":"cmd/telara-memory/wiring_process_unix_test.go","line":400,"reason":"lead must run with -live-wired-launchagent outside sandbox","coverage":"explicit_live_wired_launchagent","coverage_status":"UNRESOLVED"},
+            (nodemod+"/cmd/hilo","TestProcessUnsafeDirectories/wrong-owner"): {"source":"cmd/hilo/process_unix_test.go","line":239,"reason":"requires unprivileged test process","coverage":"unprivileged_process_fixture","coverage_status":"UNRESOLVED"},
+            (nodemod+"/cmd/hilo","TestLiveWiredLaunchAgent"): {"source":"cmd/hilo/wiring_process_unix_test.go","line":400,"reason":"lead must run with -live-wired-launchagent outside sandbox","coverage":"explicit_live_wired_launchagent","coverage_status":"UNRESOLVED"},
           }
-          if puremod+"/cmd/telara-memory" in pure or puremod+"/release" in pure: fail("runtime CLI/release packages were assigned to the pure module")
-          if nodemod+"/cmd/telara-memory" not in node or nodemod+"/release" not in node: fail("runtime CLI/release packages are missing from the runtime inventory")
+          if puremod+"/cmd/hilo" in pure or puremod+"/release" in pure: fail("runtime CLI/release packages were assigned to the pure module")
+          if nodemod+"/cmd/hilo" not in node or nodemod+"/release" not in node: fail("runtime CLI/release packages are missing from the runtime inventory")
           if any(pkg.startswith(puremod+"/cmd/") or pkg==puremod+"/release" for pkg,_ in skip_rules): fail("runtime skip rule uses an obsolete pure-module package identity")
           policy_hash=hashlib.sha256(json.dumps(sorted((pkg,test,rule) for (pkg,test),rule in skip_rules.items()),separators=(",",":" )).encode()).hexdigest()
           allowed_actions={"start","run","pause","cont","output","bench","pass","skip","fail","build-output","build-fail"}

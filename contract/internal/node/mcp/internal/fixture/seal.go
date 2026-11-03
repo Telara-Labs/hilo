@@ -8,10 +8,10 @@ import (
 	"sync"
 
 	tapredact "github.com/Telara-Labs/TAP-Runtime/discover/redact"
-	contract "github.com/Telara-Labs/telara-memory/contract"
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	contract "github.com/Telara-Labs/hilo/contract"
+	"github.com/Telara-Labs/hilo/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 // Sealer holds only preloaded key material. It never installs keys, uses a file
@@ -51,7 +51,7 @@ func NewSealer(owner, machine string, salt []byte, key ed25519.PrivateKey) (*Sea
 		return nil, errors.New("ruleset_unavailable")
 	}
 	upstream := tapredact.CurrentRuleset()
-	s := &Sealer{owner: owner, machine: machine, keyID: sig.KeyID(key.Public().(ed25519.PublicKey)), valid: true, rules: record.Ruleset{Epoch: upstream.Epoch, Digest: upstream.Digest, Behavior: behavior, Engine: "tap-discover/a711ce77ba63"}}
+	s := &Sealer{owner: owner, machine: machine, keyID: sig.KeyID(key.Public().(ed25519.PublicKey)), valid: true, rules: record.Ruleset{Epoch: upstream.Epoch, Digest: upstream.Digest, Behavior: behavior, Engine: "tap-discover/b60687139cee"}}
 	var golden record.Ruleset
 	if json.Unmarshal(contract.RedactionGoldenV1(), &golden) != nil || golden != s.rules {
 		return nil, errors.New("ruleset_unavailable")

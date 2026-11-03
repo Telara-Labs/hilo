@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
 )
 
 func verifyShimImage(cfg installedConfig, exe string) error {

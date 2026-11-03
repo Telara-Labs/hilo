@@ -18,8 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 )
 
 const handoffFile = "custody-upgrade.json"
@@ -39,7 +39,13 @@ func digestValid(s string) bool {
 	return e == nil && len(b) == 32 && strings.ToLower(s) == s
 }
 func handoffTarget(r install.Record, digest string) string {
-	return filepath.Join(r.Dir, "bin", digest, "telara-memory")
+	// Source receipts admit only the two closed image names. Preserve the
+	// legacy basename because old retained helpers compute that target too.
+	name := "hilo"
+	if r.Executable == filepath.Join(r.Dir, "bin", r.SHA256, "telara-memory") {
+		name = "telara-memory"
+	}
+	return filepath.Join(r.Dir, "bin", digest, name)
 }
 
 func privateRead(path string) ([]byte, error) {
@@ -84,7 +90,7 @@ func readHandoff(data string) (custodyHandoff, error) {
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
 	if d.Decode(&m) != nil || d.Decode(new(any)) != io.EOF || m.Version != 1 || !digestValid(m.Source.SHA256) || !digestValid(m.Target) ||
-		m.Source.Executable != handoffTarget(m.Source, m.Source.SHA256) || m.Source.DataDir != data ||
+		!install.ValidExecutablePath(m.Source) || m.Source.DataDir != data ||
 		!filepath.IsAbs(m.Source.Dir) || filepath.Clean(m.Source.Dir) != m.Source.Dir ||
 		valid(context.Background(), m.Handle) != nil || (m.Phase != "prepared" && m.Phase != "ready") ||
 		(m.Keychain != "" && (!filepath.IsAbs(m.Keychain) || filepath.Clean(m.Keychain) != m.Keychain)) {
@@ -430,7 +436,7 @@ func runHandoffHelper(args []string, in io.Reader, out io.Writer) bool {
 // ResumeUpgrade uses the retained receipt image after an interrupted transfer.
 // It never depends on cached plaintext or launches a shim-supplied executable.
 func (v *Vault) ResumeUpgrade(ctx context.Context, source install.Record, target string) error {
-	if ctx == nil || !digestValid(target) || source.Executable != handoffTarget(source, source.SHA256) {
+	if ctx == nil || !digestValid(target) || !install.ValidExecutablePath(source) {
 		return ErrInvalid
 	}
 	if e := ctx.Err(); e != nil {
@@ -461,7 +467,7 @@ func (v *Vault) lifecycleImage(ctx context.Context, source install.Record, targe
 	if e := ctx.Err(); e != nil {
 		return e
 	}
-	if v == nil || v.closed || source.Executable != handoffTarget(source, source.SHA256) {
+	if v == nil || v.closed || !install.ValidExecutablePath(source) {
 		return ErrInvalid
 	}
 	report, e := install.Status(ctx, source.Dir)

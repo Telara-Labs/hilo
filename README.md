@@ -1,15 +1,16 @@
-# telara-memory
+# Hilo
 
-[![ci](https://github.com/Telara-Labs/telara-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/Telara-Labs/telara-memory/actions/workflows/ci.yml)
+[![ci](https://github.com/Telara-Labs/hilo/actions/workflows/ci.yml/badge.svg)](https://github.com/Telara-Labs/hilo/actions/workflows/ci.yml)
 
 > **Pre-release.** There is no tagged or signed release yet. Build from source, and read the
 > [status table](#status) before relying on it.
 
-telara-memory is a local, cross-client memory node for AI coding agents. It captures sessions
-from Claude Code, Codex CLI, Cursor and Pi into one signed, erasable store on your machine, and
-serves that memory back to any of those clients over MCP. It works with no account and sends
-nothing off the machine by default. If you choose to, you can log in to a hosted tenant and turn
-on metadata-only sync, which runs under a signed tenant policy.
+Hilo is a local, cross-client memory node for AI coding agents. It implements transcript
+adapters for Claude Code, Codex CLI, Cursor and Pi, a signed local record store, erasure
+and MCP read-back. Current-candidate installed capture and erasure acceptance are still
+incomplete. The local product is designed to work without an account and sends nothing
+off the machine by default. This release targets local use. Hosted provisioning,
+relay access and sync are deferred and are not available release features.
 
 ## Why it exists
 
@@ -20,16 +21,20 @@ tool keeps its own transcripts in its own format, and none of them reads the oth
 Memory about your work should belong to you, not to whichever tool happened to record it. That
 means three things.
 
-- **One store across tools.** Every supported client writes into the same local record store and
-  reads from it through the same MCP tools.
-- **Provable erasure.** Deleting a record removes it and everything derived from it, scrubs the
-  bytes from the database files, and returns a receipt that says whether the scrub finished.
-- **You decide what leaves.** Nothing is pushed by default. Sync is opt-in, carries metadata only,
-  and is limited to the repositories and record kinds you select.
+- **One store across tools.** Supported clients are designed to write into the same local
+  record store and read through the same MCP tools. Current-candidate installed
+  vendor capture acceptance remains pending.
+- **Erasure with receipts.** The erasure implementation removes a record and its derived
+  copies, scrubs database bytes, and returns a receipt describing scrub completion.
+  Final installed acceptance of the current candidate remains pending.
+- **You decide what leaves.** Nothing is pushed by default. Local encrypted bundles support
+  explicit backup and transfer. The deferred sync implementation restricts exported metadata
+  to selected repositories and record kinds under signed tenant policy.
 
 ## Features
 
-Every item below is implemented in this repository. Paths are relative to `contract/`.
+The table describes source implementations, not completed installed acceptance.
+Current validation limits are listed under [Status](#status). Paths are relative to `contract/`.
 
 | Area | What it does | Where |
 |---|---|---|
@@ -38,12 +43,12 @@ Every item below is implemented in this repository. Paths are relative to `contr
 | Records | Strict canonical JSON, content-addressed ids, Ed25519 signatures, and causal key enrollment, rotation and revocation. Closed schemas reject unknown fields. | `jcs`, `record`, `sig`, `heads` |
 | Store | A single-writer SQLite store (pure Go, no cgo) with full-text search, atomic spool admission and crash recovery. | `internal/node/store` |
 | Read-back | A local MCP server over stdio with eight tools (`telara_task_list`, `_create`, `_resume`, `_checkpoint`, `_pause`, `_complete`, `telara_knowledge_search`, `telara_get_context`). Replies are byte-budgeted, re-checked against current policy before release, and labeled as evidence rather than instructions. | `internal/node/mcp`, `internal/node/mcpcatalog`, `internal/node/disclosure` |
-| Erasure | `erase` removes exact records and their derived copies, physically scrubs database, WAL and full-text index bytes, and prints a receipt. Pending scrubs can be retried. | `internal/node/store/erase.go`, `scrub.go`, `internal/node/cmd/telara-memory/erase.go` |
+| Erasure | `erase` removes exact records and their derived copies, physically scrubs database, WAL and full-text index bytes, and prints a receipt. Pending scrubs can be retried. | `internal/node/store/erase.go`, `scrub.go`, `internal/node/cmd/hilo/erase.go` |
 | Key custody | The device signing key lives in the OS keystore, macOS Keychain or Linux Secret Service. There is no plaintext file fallback. A Windows Credential Manager backend exists but has not been run natively. | `internal/node/vault` |
 | Local transport | A Unix domain socket (named pipe on Windows) with owner-only permissions and a kernel peer-identity check. There is no HTTP listener. | `internal/node/ipc`, `internal/node/peer` |
 | Service | Installs a verified, content-addressed copy of the binary and registers it with launchd or systemd (Task Scheduler on Windows), with upgrade and uninstall. | `internal/node/install` |
-| Bundles | Encrypted same-identity bundles using age. Transfer to a trusted device after a six-word code check, or back up to a passphrase. Private keys are never exported. | `internal/node/bundle`, `internal/node/cmd/telara-memory/bundle.go` |
-| Sync | Optional, metadata-only push of session and task records to a hosted tenant, with DPoP-bound credentials, a TLS-pinned tenant policy root, and per-repository selection rules. | `internal/node/sync`, `internal/node/syncnode` |
+| Bundles | Encrypted same-identity bundles using age. Transfer to a trusted device after a six-word code check, or back up to a passphrase. Private keys are never exported. | `internal/node/bundle`, `internal/node/cmd/hilo/bundle.go` |
+| Sync, deferred | Source for metadata-only push of session and task records, with DPoP-bound credentials, a TLS-pinned tenant policy root, and per-repository selection rules. Hosted provisioning and end-to-end acceptance are pending. | `internal/node/sync`, `internal/node/syncnode` |
 | Tenant policy | Signed policy with rollback and tamper detection and trusted time. It can block repositories, force redaction, restrict push and read-back, and act as a kill switch. | `policy`, `internal/node/localpolicy` |
 | Doctor | A read-only health report covering the key store, daemon reachability, hook trust, capture gaps, scrub state and sync blockers. | `internal/node/doctor` |
 
@@ -54,19 +59,25 @@ at `contract/internal/node/` declares Go 1.26 and targets macOS or Linux. On mac
 build with cgo enabled, the default with Xcode command line tools, because Keychain
 custody refuses static builds.
 
-This C1 source candidate has not completed actual Go 1.25 dependency resolution or
-compiler validation. The runtime intentionally lacks its unpublished pure dependency
-pin and cannot build yet. The runtime commands below apply after that exact published
-dependency and its real checksums are adopted. No local replacement or workspace is
-part of this boundary.
+Linux runtime requires an active per-user systemd session, an unlocked Secret
+Service and kernel support for `SO_PEERPIDFD`. The tested Debian 6.1 runner lacks
+that socket capability. Native acceptance on a supported kernel remains pending.
+
+The runtime pins the Hilo contract at
+`v0.0.0-20261027213637-d00c9dc2ded7` with its published module checksums.
+The repository is currently private. Cloning it and resolving its private Go modules
+requires GitHub access to those repositories until public source publication. Final
+runtime validation is incomplete, so the commands below are development instructions. The current Linux native acceptance
+run failed during service registration; its repair and a fresh-profile rerun are
+pending. No local replacement or workspace is part of this boundary.
 
 ### Build
 
 ```sh
-git clone https://github.com/Telara-Labs/telara-memory.git
-cd telara-memory/contract/internal/node
+git clone https://github.com/Telara-Labs/hilo.git
+cd hilo/contract/internal/node
 mkdir -p "$HOME/.local/bin"
-GOWORK=off go build -o "$HOME/.local/bin/telara-memory" ./cmd/telara-memory
+GOWORK=off go build -o "$HOME/.local/bin/hilo" ./cmd/hilo
 ```
 
 ### Install the node
@@ -76,7 +87,7 @@ copies a verified image into the install directory, provisions the device key in
 starts the service and waits until it is ready.
 
 ```sh
-BIN="$HOME/.local/bin/telara-memory"
+BIN="$HOME/.local/bin/hilo"
 SUM="$(shasum -a 256 "$BIN" | cut -d' ' -f1)"   # on Linux, sha256sum works too
 "$BIN" install --source "$BIN" --sha256 "$SUM" --version dev
 "$BIN" status
@@ -87,8 +98,8 @@ SUM="$(shasum -a 256 "$BIN" | cut -d' ' -f1)"   # on Linux, sha256sum works too
 ### Connect a client
 
 ```sh
-telara-memory clients status
-telara-memory clients install --client claude   # also codex, cursor, pi
+hilo clients status
+hilo clients install --client claude   # also codex, cursor, pi
 ```
 
 For Claude Code, Codex CLI and Cursor, the command prints the MCP server and hook snippets and
@@ -99,8 +110,8 @@ changing anything, and use `clients uninstall` to remove what was installed.
 ### Check health
 
 ```sh
-telara-memory doctor          # human-readable
-telara-memory doctor --json
+hilo doctor          # human-readable
+hilo doctor --json
 ```
 
 `doctor` never starts the daemon, never changes the installation and never reads record content.
@@ -108,35 +119,33 @@ telara-memory doctor --json
 ### Erase
 
 ```sh
-telara-memory erase --id <record-id>              # asks you to type "erase"
-telara-memory erase --id <id1> --id <id2> --yes --json
-telara-memory erase --scrub-pending               # retry unfinished physical scrubs
+hilo erase --id <record-id>              # asks you to type "erase"
+hilo erase --id <id1> --id <id2> --yes --json
+hilo erase --scrub-pending               # retry unfinished physical scrubs
 ```
 
 `--reason` accepts `user_request` (the default), `redaction_miss`, `device_compromise` or
 `retention_policy`. The command exits non-zero until the physical scrub is complete.
 
-### Bundles, sync and removal
+### Bundles and removal
 
 ```sh
-telara-memory bundle backup --id <record-id> --out backup.age   # passphrase read from stdin
-telara-memory bundle restore --in backup.age --backup
+hilo bundle backup --id <record-id> --out backup.age   # passphrase read from stdin
+hilo bundle restore --in backup.age --backup
 
-telara-memory login --key                  # print the device key thumbprint to bind
-telara-memory login < login.json           # login document on stdin, never in argv
-telara-memory sync select --id my-rule --repo <repo-id> --kinds session,task
-telara-memory sync status
-telara-memory logout
-
-telara-memory uninstall
+hilo uninstall
 ```
 
 Device-to-device transfer uses `bundle invite`, `join`, `add-device` and `enroll`, then
 `bundle export --to <device-key-id>`.
 
-### Hosted enrollment bridge
+### Deferred hosted commands
 
-`telara-memory login --hosted` accepts an existing human sign-in and an owned
+`login`, `logout` and `sync` contain operator integration paths for future hosted
+acceptance. They are outside this release's local quick start. No hosted account,
+Telara credential or gateway is required for local installation, capture or MCP reads.
+
+The `hilo login --hosted` implementation accepts an existing human sign-in and an owned
 bootstrap credential through standard input with explicit `consent` and
 `memory_only` values, selected repository IDs, operations and an expiry. It
 obtains the installed signed genesis and uses the native device DPoP key. It
@@ -144,7 +153,8 @@ refuses redirects and validates the returned grant and authenticated tenant
 policy before storing the refresh credential in the OS vault.
 
 This operator bridge does not provide browser signup or device authorization.
-The hosted endpoints require deployment and acceptance before use.
+Hosted provisioning and sync remain deferred. The endpoints require deployment and
+acceptance before use; successful local tests do not establish hosted availability.
 
 ## Architecture
 
@@ -210,24 +220,24 @@ serving.
 
 | Verified | Evidence |
 |---|---|
-| Targeted security checks | Current candidate CI passes offline erasure, quarantine arrival orders, shared redaction corpus, governed task bundle and signed-release verification. Full platform and race suites remain pending. |
+| Pure contract checks | The private feature candidate passed the pure unit, build, vet and race gates and 30 pure conformance vectors. This does not establish runtime or signed-release acceptance. |
 | Conformance vectors | Go vector registry plus an independent Python checker for V1 to V7 (RFC 8785, Ed25519) |
 | Fuzzing | Fuzz targets for every client decoder, hook parsing, records, keys, policy and framing, run on macOS and Linux with no crashes |
-| Native key custody | macOS Keychain lifecycle, and GNOME Keyring through Secret Service on Linux |
+| Linux native test session | The isolated runner started a real GNOME Keyring Secret Service and confirmed child-process cleanup. Hilo installation failed before MCP and storage acceptance; current-candidate custody acceptance remains incomplete. |
 | Local socket attack | Linux test with a second user attacking the daemon socket, run directories and data paths, all refused |
 
 | Not yet done | Notes |
 |---|---|
 | External penetration test | Not started |
 | Native Windows runs | Windows tests run in CI; service registration and Credential Manager custody have not been exercised on a real install |
-| Real-client runs | Codex CLI has created and read back memory through an installed node. Claude Code, Cursor and Pi runs through the same harness are pending |
+| Real-client runs | Current-candidate vendor transcript capture has not run with operator authentication. Product-generated MCP task lifecycle and storage acceptance are also pending after the failed Linux installation. |
 | Release signing | Verification and signing code are implemented. No signed release artifacts have been produced yet. |
-| Hosted endpoints | Sync and login are implemented on the node, but the hosted service is not live |
-| Module split validation | The source boundary is assembled. Actual Go 1.25 dependency closure/compiler proof and the published pure dependency pin for runtime are pending |
+| Hosted endpoints | Deferred from the local release. Operator login/sync source does not establish hosted availability |
+| Runtime validation | The private published contract dependency and runtime checksums are pinned, and Linux CLI and test-driver compilation passed. Runtime unit fixtures and native service registration require repairs and fresh acceptance. |
 
 Other Linux secret stores (KWallet, KeePassXC) and real desktop sessions are also untested.
 
-After dependency resolution, run the pure checks from `contract/`. The nested node
+Run the pure checks from `contract/`. The nested node
 module is excluded from this `./...` inventory.
 
 ```sh
@@ -237,8 +247,8 @@ GOWORK=off go run ./cmd/conformance --pure
 python3 conformance/python_vectors.py   # after installing conformance/requirements.txt
 ```
 
-Run the node checks separately from `contract/internal/node/` after its exact pure
-dependency is pinned.
+Run the node checks separately from `contract/internal/node/` against its pinned pure
+dependency.
 
 ```sh
 GOWORK=off go test ./...
@@ -263,9 +273,9 @@ executable. An installation from a release directory selects the current
 platform artifact and checks its digest against the authenticated manifest.
 
 ```sh
-telara-memory verify-release --dir /absolute/path/to/release
-telara-memory install --release-dir /absolute/path/to/release
-telara-memory upgrade --release-dir /absolute/path/to/release
+hilo verify-release --dir /absolute/path/to/release
+hilo install --release-dir /absolute/path/to/release
+hilo upgrade --release-dir /absolute/path/to/release
 ```
 
 `--release-dir` refuses simultaneous `--source`, `--sha256` or `--version`

@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 func (s *Store) validateCaptureMembership(d *databaseState, q CaptureRequest, p CaptureProgress, t *CaptureTxn, plan CommitPlan, allowed map[string]bool) error {

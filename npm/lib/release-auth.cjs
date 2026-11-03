@@ -6,6 +6,42 @@ const { createPublicKey, verify, createHash } = require('node:crypto');
 // runtime key argument, downloaded key, or unsigned verification mode.
 const PINNED_PUBLIC_KEY = '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA1wXK9aXEAqss35V5/vqINRX0MGZM1wEP/fmctFGiOi4=\n-----END PUBLIC KEY-----\n';
 const KEY = createPublicKey(PINNED_PUBLIC_KEY);
+// Compiled exact historical manifest authorities only. Empty in this proposal;
+// active pin, historical fixture bytes and public export surface are unchanged.
+// Actual population requires independent inventory/pin/bootstrap review.
+const HISTORICAL_POLICY = Object.freeze([]);
+const HISTORY = (() => {
+  if (!Array.isArray(HISTORICAL_POLICY) || HISTORICAL_POLICY.length > 4 || KEY.asymmetricKeyType !== 'ed25519') throw new Error('release_verification_failed');
+  const seenKeys = new Set([KEY.export({ type: 'spki', format: 'der' }).toString('hex')]);
+  const seenPairs = new Set();
+  const result = [];
+  let total = 0;
+  for (const item of HISTORICAL_POLICY) {
+    if (!item || typeof item !== 'object' || Reflect.ownKeys(item).length !== 2 ||
+        typeof item.publicKey !== 'string' || item.publicKey.length > 8192 ||
+        !Array.isArray(item.manifests) || item.manifests.length === 0 || item.manifests.length > 256 || total + item.manifests.length > 512) throw new Error('release_verification_failed');
+    let key;
+    try { key = createPublicKey(item.publicKey); } catch { throw new Error('release_verification_failed'); }
+    const id = key.export({ type: 'spki', format: 'der' }).toString('hex');
+    if (key.asymmetricKeyType !== 'ed25519' || seenKeys.has(id)) throw new Error('release_verification_failed');
+    seenKeys.add(id);
+    total += item.manifests.length;
+    const pairs = new Set();
+    for (const pair of item.manifests) {
+      if (!pair || typeof pair !== 'object' || Reflect.ownKeys(pair).length !== 2 ||
+          typeof pair.build !== 'string' || typeof pair.sums !== 'string' ||
+          !/^[0-9a-f]{64}$/.test(pair.build) || !/^[0-9a-f]{64}$/.test(pair.sums)) throw new Error('release_verification_failed');
+      const identity = `${pair.build}:${pair.sums}`;
+      if (seenPairs.has(identity)) throw new Error('release_verification_failed');
+      seenPairs.add(identity);
+      pairs.add(identity);
+    }
+    result.push(Object.freeze({ key, pairs }));
+  }
+  return Object.freeze(result);
+})();
+// Immutable v1 authentication domain shared with the native verifier. Renaming
+// the product must not invalidate already signed metadata.
 const DOMAIN = Buffer.from('telara-memory-release-v1\0', 'ascii');
 const MAX_ARTIFACT = 512 * 1024 * 1024;
 const manifests = new WeakSet();
@@ -35,6 +71,12 @@ function artifactName(prefix, platform, arch) {
   return `${prefix}${platform}-${arch}${platform === 'windows' ? '.exe' : ''}`;
 }
 
+function verifyMetadataSignature(build, sums, payload, signature) {
+  if (verify(null, payload, KEY, signature)) return true;
+  const pair = `${createHash('sha256').update(build).digest('hex')}:${createHash('sha256').update(sums).digest('hex')}`;
+  return HISTORY.some(authority => authority.pairs.has(pair) && verify(null, payload, authority.key, signature));
+}
+
 function canonicalBuild(tag) {
   return Buffer.from(`{\n  "format": 1,\n  "source": "${tag}",\n  "toolchain": "go1.26.1",\n  "verification": "clean-tag-export-signed",\n  "signed": true\n}\n`, 'ascii');
 }
@@ -58,7 +100,7 @@ function authenticateMetadata(metadata, expected) {
   const sig = Buffer.from(base64, 'base64');
   if (sig.length !== 64 || sig.toString('base64') !== base64) invalid();
   const payload = Buffer.concat([DOMAIN, build, Buffer.from([0]), sums]);
-  if (!verify(null, payload, KEY, sig)) invalid();
+  if (!verifyMetadataSignature(build, sums, payload, sig)) invalid();
   const tag = `v${version}`;
   if (!build.equals(canonicalBuild(tag))) invalid();
 

@@ -1,7 +1,7 @@
 package store
 
 import (
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // Current native resource membership comes from actual reduced session/event

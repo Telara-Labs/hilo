@@ -4,11 +4,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	mcp "github.com/Telara-Labs/telara-memory/contract/internal/node/mcp/internal/fixture"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcp/internal/teststore"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/shim"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	mcp "github.com/Telara-Labs/hilo/contract/internal/node/mcp/internal/fixture"
+	"github.com/Telara-Labs/hilo/contract/internal/node/mcp/internal/teststore"
+	"github.com/Telara-Labs/hilo/contract/internal/node/shim"
 	"os"
 	"os/signal"
 )

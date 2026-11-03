@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	nodesync "github.com/Telara-Labs/hilo/contract/internal/node/sync"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // HostedEnrollmentInput is explicit operator consent using an existing human
@@ -78,6 +78,10 @@ func (in HostedEnrollmentInput) validate() error {
 // terminal policy roots or write a credential until existing LoginTLS verifies
 // the returned authority with a fresh authenticated device-bound login.
 func EnrollHosted(ctx context.Context, dir string, vault SecretVault, roots *x509.CertPool, in HostedEnrollmentInput) (LoginReport, error) {
+	return enrollHosted(ctx, dir, vault, roots, in, nil)
+}
+
+func enrollHosted(ctx context.Context, dir string, vault SecretVault, roots *x509.CertPool, in HostedEnrollmentInput, expected *HostedEnrollmentInspection) (LoginReport, error) {
 	defer func() { in.UserToken = ""; in.Bootstrap = "" }()
 	if in.validate() != nil {
 		return LoginReport{}, ErrEnrollment
@@ -104,21 +108,25 @@ func EnrollHosted(ctx context.Context, dir string, vault SecretVault, roots *x50
 		return LoginReport{}, ErrCredential
 	}
 	body, err := json.Marshal(struct {
-		DeviceID   string          `json:"device_id"`
-		Consent    bool            `json:"consent"`
-		MemoryOnly bool            `json:"memory_only"`
-		Bootstrap  string          `json:"bootstrap"`
-		Genesis    record.Envelope `json:"genesis"`
-		Ops        []string        `json:"ops"`
-		Repos      []string        `json:"repos"`
-		Origin     string          `json:"origin"`
-		ExpiresAt  int64           `json:"expires_at_unix"`
-	}{p.Device, true, true, in.Bootstrap, genesis, in.Ops, in.Repos, "local", in.ExpiresAt})
+		DeviceID   string                      `json:"device_id"`
+		Consent    bool                        `json:"consent"`
+		MemoryOnly bool                        `json:"memory_only"`
+		Bootstrap  string                      `json:"bootstrap"`
+		Genesis    record.Envelope             `json:"genesis"`
+		Ops        []string                    `json:"ops"`
+		Repos      []string                    `json:"repos"`
+		Origin     string                      `json:"origin"`
+		ExpiresAt  int64                       `json:"expires_at_unix"`
+		Expected   *HostedEnrollmentInspection `json:"expected,omitempty"`
+	}{p.Device, true, true, in.Bootstrap, genesis, in.Ops, in.Repos, "local", in.ExpiresAt, expected})
 	if err != nil {
 		return LoginReport{}, ErrEnrollment
 	}
 	defer clear(body)
 	target := in.Server + "/v1/memory/enroll"
+	if expected != nil {
+		target = in.Server + "/v1/memory/enrollment/bound"
+	}
 	proof, err := nodesync.EnrollmentProof(ctx, &vaultSigner{store: k, public: public}, target, in.UserToken, time.Now().Unix())
 	if err != nil {
 		return LoginReport{}, ErrCredential
@@ -148,6 +156,9 @@ func EnrollHosted(ctx context.Context, dir string, vault SecretVault, roots *x50
 	}
 	defer func() { doc.RefreshToken = "" }()
 	if doc.Origin != in.Server || doc.RefreshToken != in.Bootstrap || doc.Grant.GenesisID != p.Genesis || doc.Grant.DeviceID != p.Device || doc.Grant.Origin != "local" || doc.Grant.ExpiresAtUnix != in.ExpiresAt || !sameSelection(doc.Grant.Ops, in.Ops) || !sameSelection(doc.Grant.Repos, in.Repos) {
+		return LoginReport{}, ErrLoginUnverified
+	}
+	if expected != nil && (doc.Tenant != expected.Tenant || doc.User != expected.User || doc.Config != expected.Config) {
 		return LoginReport{}, ErrLoginUnverified
 	}
 	return LoginTLS(ctx, dir, vault, roots, doc)

@@ -272,10 +272,83 @@ func TestSystemdRejectsAuxiliaryActions(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	for _, key := range []string{"ExecCondition", "ExecStartPre", "ExecStartPost", "ExecReload", "ExecStop", "ExecStopPost", "Environment", "EnvironmentFiles", "RootDirectory", "RootImage", "DropInPaths"} {
+	if e := verifySystemdRegistration(good, r); e != nil {
+		t.Fatal("rejected real systemctl scalar reply without omitted empty arrays", e)
+	}
+	for _, key := range []string{"Environment", "RootDirectory", "RootImage", "DropInPaths"} {
 		bad := bytes.Replace(good, []byte(key+"=\n"), []byte(key+"=foreign\n"), 1)
 		if e := verifySystemdRegistration(bad, r); e == nil {
 			t.Fatal("adopted auxiliary config", key)
+		}
+	}
+}
+
+func TestSystemdEmptyPropertyRequiresTypedEmptyArray(t *testing.T) {
+	for _, kind := range []string{"a(sasbttttuii)", "a(sb)"} {
+		good := []byte(`{"type":"` + kind + `","data":[]}`)
+		if e := verifySystemdEmptyProperty(good, kind); e != nil {
+			t.Fatal(kind, e)
+		}
+		for _, bad := range [][]byte{
+			[]byte(`{"type":"` + kind + `"}`),
+			[]byte(`{"type":"` + kind + `","data":null}`),
+			[]byte(`{"type":"wrong","data":[]}`),
+			[]byte(`{"type":"` + kind + `","data":[[]]}`),
+			[]byte(`{"type":"` + kind + `","data":""}`),
+			[]byte(`{"type":"` + kind + `","data":{}}`),
+			[]byte(`{"type":"` + kind + `","data":[[]],"data":[]}`),
+			[]byte(`{"type":"` + kind + `","data":[],"data":[[]]}`),
+			[]byte(`{"type":"wrong","type":"` + kind + `","data":[]}`),
+			[]byte(`{"type":"` + kind + `","type":"` + kind + `","data":[]}`),
+			[]byte(`{"type":"` + kind + `","data":[],"unknown":null}`),
+			[]byte(`{"type":"` + kind + `","data":[],"Type":"` + kind + `"}`),
+			[]byte(`[{"type":"` + kind + `","data":[]}]`),
+			append(append([]byte{}, good...), good...),
+			append(append([]byte{}, good...), []byte(" trailing")...),
+			append(append([]byte{}, good...), []byte(strings.Repeat(" ", 65536))...),
+		} {
+			if e := verifySystemdEmptyProperty(bad, kind); e == nil {
+				t.Fatal("accepted unverified empty property", kind)
+			}
+		}
+	}
+}
+
+func TestSystemdRegistrationRequiresEveryNativeEmptyProperty(t *testing.T) {
+	r, _ := receiptFixture(t)
+	r.Platform = "linux"
+	m := &managerFixture{record: r, present: true}
+	if e := registered(adapted(m.command), r); e != nil {
+		t.Fatal("native-shaped empty arrays must permit verified registration", e)
+	}
+	for _, property := range []string{"ExecCondition", "ExecStartPre", "ExecStartPost", "ExecReload", "ExecStop", "ExecStopPost", "EnvironmentFiles"} {
+		for _, failure := range []string{"read_error", "nonempty", "wrong_type", "missing"} {
+			t.Run(property+"/"+failure, func(t *testing.T) {
+				seen := false
+				ctx := adapted(func(ctx context.Context, platform string, args ...string) ([]byte, error) {
+					if platform == "linux-bus" && args[len(args)-1] == property {
+						seen = true
+						if failure == "read_error" {
+							return nil, ErrUnavailable
+						}
+						kind := "a(sasbttttuii)"
+						if property == "EnvironmentFiles" {
+							kind = "a(sb)"
+						}
+						if failure == "missing" {
+							return []byte(`{}`), nil
+						}
+						if failure == "wrong_type" {
+							return []byte(`{"type":"wrong","data":[]}`), nil
+						}
+						return []byte(`{"type":"` + kind + `","data":[[]]}`), nil
+					}
+					return m.command(ctx, platform, args...)
+				})
+				if e := registered(ctx, r); e == nil || !seen {
+					t.Fatal("registration accepted or skipped failed native property", property, e)
+				}
+			})
 		}
 	}
 }

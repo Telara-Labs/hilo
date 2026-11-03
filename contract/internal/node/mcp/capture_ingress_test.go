@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/capture"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/clients"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/capture"
+	"github.com/Telara-Labs/hilo/contract/internal/node/clients"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
 )
 
 type ingressRuntime struct {

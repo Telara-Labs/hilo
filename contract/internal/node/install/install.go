@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 )
 
 // Config contains explicit install inputs. SHA256 must come from an authenticated
@@ -56,7 +56,49 @@ func DefaultDir() (string, error) {
 	if e != nil {
 		return "", e
 	}
-	return filepath.Join(base, "telara-memory-install"), nil
+	return defaultDirAt(base)
+}
+
+// defaultDirAt receives the already resolved OS base. Keeping discovery here
+// permits deterministic private-directory checks without environment overrides.
+func defaultDirAt(base string) (string, error) {
+	current := filepath.Join(base, "hilo-install")
+	legacy := filepath.Join(base, "telara-memory-install")
+	_, ce := os.Lstat(current)
+	_, le := os.Lstat(legacy)
+	if ce != nil && !os.IsNotExist(ce) {
+		return "", ce
+	}
+	if le != nil && !os.IsNotExist(le) {
+		return "", le
+	}
+	if ce == nil && le == nil {
+		return "", ErrUnverified
+	}
+	if le == nil {
+		// Read only a validated owner receipt and digest-pinned executable.
+		// Explicit upgrade preserves its manager label, profile and custody.
+		r, err := readReceipt(legacy)
+		if err != nil {
+			return "", err
+		}
+		// Discovery authenticates bytes without evaluating start/stop intent.
+		// Explicit start/uninstall must remain possible for a stopped install.
+		v, err := verify(r.Executable, r.SHA256)
+		if err != nil {
+			return "", err
+		}
+		if err := v.Close(); err != nil {
+			return "", err
+		}
+		return legacy, nil
+	}
+	if ce == nil {
+		if err := checkDir(current, true); err != nil {
+			return "", err
+		}
+	}
+	return current, nil
 }
 
 func randomName() (string, error) {
@@ -66,7 +108,10 @@ func randomName() (string, error) {
 }
 func absolute(s string) bool { return filepath.IsAbs(s) && filepath.Clean(s) == s && cleanValue(s) }
 func imagePath(dir, digest string) string {
-	name := "telara-memory"
+	return namedImagePath(dir, digest, "hilo")
+}
+
+func namedImagePath(dir, digest, name string) string {
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -75,7 +120,7 @@ func imagePath(dir, digest string) string {
 
 // ValidExecutablePath shares the platform-specific installed image convention.
 func ValidExecutablePath(r Record) bool {
-	return validDigest(r.SHA256) && absolute(r.Dir) && r.Executable == imagePath(r.Dir, r.SHA256)
+	return validDigest(r.SHA256) && absolute(r.Dir) && (r.Executable == imagePath(r.Dir, r.SHA256) || r.Executable == namedImagePath(r.Dir, r.SHA256, "telara-memory"))
 }
 
 func validateRecord(r Record, dir string) error {
@@ -84,7 +129,7 @@ func validateRecord(r Record, dir string) error {
 		return ErrUnverified
 	}
 	if r.Schema != 1 || r.Dir != dir || !absolute(dir) || !absolute(r.Home) || !absolute(r.DataDir) || !absolute(r.RunDir) ||
-		!labelPattern.MatchString(r.Label) || !validDigest(r.SHA256) || !cleanValue(r.Version) || len(r.Version) > 128 || r.Platform != runtime.GOOS || r.UserID != userID() || r.Executable != imagePath(dir, r.SHA256) {
+		!labelPattern.MatchString(r.Label) || !validDigest(r.SHA256) || !cleanValue(r.Version) || len(r.Version) > 128 || r.Platform != runtime.GOOS || r.UserID != userID() || !ValidExecutablePath(r) {
 		return ErrUnverified
 	}
 	return nil
@@ -173,7 +218,7 @@ func PlannedRecord(c Config) (Record, error) {
 		c.Home, _ = os.UserHomeDir()
 	}
 	if c.Label == "" {
-		c.Label = "dev.telara.memory"
+		c.Label = "dev.telara.hilo"
 	}
 	r := Record{1, c.Dir, c.Home, c.Label, runtime.GOOS, userID(), imagePath(c.Dir, c.SHA256), c.SHA256, c.Version, c.DataDir, c.RunDir}
 	if e := validateRecord(r, c.Dir); e != nil {
@@ -186,6 +231,16 @@ func PlannedRecord(c Config) (Record, error) {
 // receipt. Existing installs require Upgrade; no implicit reinstall/downgrade.
 // Manager absence is persisted and returned as a distinct capture blocker.
 func Install(ctx context.Context, c Config) (Report, error) {
+	return install(ctx, c, false)
+}
+
+// InstallDeferred registers Linux autostart without starting it while the
+// caller holds bootstrap writer admission. The caller must start it afterwards.
+func InstallDeferred(ctx context.Context, c Config) (Report, error) {
+	return install(ctx, c, true)
+}
+
+func install(ctx context.Context, c Config, deferLinuxStart bool) (Report, error) {
 	r, e := PlannedRecord(c)
 	if e != nil {
 		return Report{}, e
@@ -210,7 +265,7 @@ func Install(ctx context.Context, c Config) (Report, error) {
 	if e = writeJSON(filepath.Join(c.Dir, "install.json"), r); e != nil {
 		return Report{}, e
 	}
-	return register(ctx, r)
+	return register(ctx, r, deferLinuxStart)
 }
 
 func copyImage(source string, r Record) error {
@@ -246,7 +301,7 @@ func copyImage(source string, r Record) error {
 	return x.Close()
 }
 
-func register(ctx context.Context, r Record) (Report, error) {
+func register(ctx context.Context, r Record, deferLinuxStart bool) (Report, error) {
 	if e := managerAvailable(ctx, r); e != nil {
 		if e = writeJSON(filepath.Join(r.Dir, "manager.json"), Report{State: "autostart_unavailable", Record: r}); e != nil {
 			return Report{}, e
@@ -279,7 +334,7 @@ func register(ctx context.Context, r Record) (Report, error) {
 	if e = writeAtomic(path, b, 0600); e != nil {
 		return Report{}, e
 	}
-	if e = managerInstall(ctx, r); e != nil {
+	if e = managerInstallMode(ctx, r, deferLinuxStart); e != nil {
 		if se := writeJSON(filepath.Join(r.Dir, "manager.json"), Report{"autostart_unavailable", r}); se != nil {
 			return Report{}, se
 		}
@@ -299,6 +354,15 @@ func register(ctx context.Context, r Record) (Report, error) {
 // the exact owner-only definition for the verified installation, never replaces
 // an unrelated preexisting service file.
 func Register(ctx context.Context, dir string) (Report, error) {
+	return registerInstalled(ctx, dir, false)
+}
+
+// RegisterDeferred retries Linux registration without launching during bootstrap.
+func RegisterDeferred(ctx context.Context, dir string) (Report, error) {
+	return registerInstalled(ctx, dir, true)
+}
+
+func registerInstalled(ctx context.Context, dir string, deferLinuxStart bool) (Report, error) {
 	lock, e := lockInstall(dir)
 	if e != nil {
 		return Report{}, e
@@ -313,7 +377,7 @@ func Register(ctx context.Context, dir string) (Report, error) {
 		return Report{}, e
 	}
 	defer v.Close()
-	return register(ctx, r)
+	return register(ctx, r, deferLinuxStart)
 }
 
 // Status verifies bytes and queries the real service manager on every call.
@@ -321,6 +385,9 @@ func Register(ctx context.Context, dir string) (Report, error) {
 func Status(ctx context.Context, dir string) (Report, error) {
 	r, e := readReceipt(dir)
 	if e != nil {
+		if errors.Is(e, os.ErrNotExist) {
+			return Report{}, ErrUnverified
+		}
 		return Report{}, e
 	}
 	v, e := verify(r.Executable, r.SHA256)
@@ -362,6 +429,9 @@ func start(ctx context.Context, dir string, explicit bool) error {
 	defer lock.Close()
 	r, e := readReceipt(dir)
 	if e != nil {
+		if errors.Is(e, os.ErrNotExist) {
+			return ErrUnverified
+		}
 		return e
 	}
 	v, e := verify(r.Executable, r.SHA256)
@@ -452,7 +522,12 @@ func Upgrade(ctx context.Context, dir, source, digest, version string, q Quiesce
 	next := r
 	next.SHA256 = digest
 	next.Version = version
+	// Preserve the exact basename of a verified legacy installation for the
+	// old retained custody helper. Fresh installations always use hilo.
 	next.Executable = imagePath(dir, digest)
+	if r.Executable == namedImagePath(dir, r.SHA256, "telara-memory") {
+		next.Executable = namedImagePath(dir, digest, "telara-memory")
+	}
 	if e = validateRecord(next, dir); e != nil {
 		return Report{}, e
 	}

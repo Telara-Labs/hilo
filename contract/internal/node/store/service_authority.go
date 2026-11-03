@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 const serviceAuthoritySchema = `CREATE TABLE IF NOT EXISTS tenant_service_key(id TEXT PRIMARY KEY,tenant TEXT NOT NULL,header BLOB NOT NULL,body BLOB NOT NULL,sigs BLOB NOT NULL,login INTEGER NOT NULL CHECK(login IN(0,1)));`

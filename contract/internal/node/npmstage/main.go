@@ -23,10 +23,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Telara-Labs/telara-memory/contract/releaseauth"
+	"github.com/Telara-Labs/hilo/contract/releaseauth"
 )
 
-const repository = "Telara-Labs/telara-memory"
+const repository = "Telara-Labs/hilo"
 const publicKeyHash = "8f56b2313dfb0ce37156cec349393b230d4055bc01501fb2adfa1f3cd6c5f492"
 
 var errUnsafe = errors.New("npm_staging_unsafe_or_changed_path")
@@ -417,7 +417,7 @@ func versionedPackage(raw []byte, version string) ([]byte, error) {
 	var files []string
 	if json.Unmarshal(p["name"], &name) != nil || name != "@telaralabs/hilo" || json.Unmarshal(p["private"], &private) != nil || !private ||
 		json.Unmarshal(p["license"], &license) != nil || license != "Apache-2.0" || json.Unmarshal(p["engines"], &engines) != nil || len(engines) != 1 || (engines["node"] != ">=22" && engines["node"] != ">=22.0.0") ||
-		json.Unmarshal(p["bin"], &bin) != nil || len(bin) != 2 || (bin["hilo"] != "bin/hilo.cjs" && bin["hilo"] != "./bin/hilo.cjs") || bin["telara-memory"] != bin["hilo"] ||
+		json.Unmarshal(p["bin"], &bin) != nil || len(bin) != 1 || (bin["hilo"] != "bin/hilo.cjs" && bin["hilo"] != "./bin/hilo.cjs") ||
 		json.Unmarshal(p["files"], &files) != nil || !equalSet(files, packageFiles) {
 		return nil, errors.New("npm source package contract mismatch")
 	}

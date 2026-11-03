@@ -11,8 +11,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/peer"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/hilo/contract/internal/node/peer"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -147,7 +147,7 @@ func TestNativeCustodyAcrossDifferentSignedBuilds(t *testing.T) {
 	var firstOwner string
 	for _, variant := range []string{"first", "second"} {
 		exe := filepath.Join(t.TempDir(), variant)
-		cmd := exec.Command("go", "test", "-p", "1", "-c", "-o", exe, "-ldflags=-X github.com/Telara-Labs/telara-memory/contract/internal/node/vault.custodyBuild="+variant, ".")
+		cmd := exec.Command("go", "test", "-p", "1", "-c", "-o", exe, "-ldflags=-X github.com/Telara-Labs/hilo/contract/internal/node/vault.custodyBuild="+variant, ".")
 		cmd.Env = append(os.Environ(), "GOWORK=off")
 		if b, e := cmd.CombinedOutput(); e != nil {
 			t.Fatalf("build %v %s", e, b)

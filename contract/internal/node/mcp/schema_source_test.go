@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcp"
+	"github.com/Telara-Labs/hilo/contract/internal/node/mcp"
 )
 
 // Read git objects, never a sibling stream's possibly dirty source file. A

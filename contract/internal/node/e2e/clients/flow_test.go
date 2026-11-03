@@ -22,10 +22,10 @@ import (
 	"time"
 
 	"github.com/Telara-Labs/TAP-Runtime/discover/redact"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/clients"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/clients"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/record"
 	_ "modernc.org/sqlite"
 )
 
@@ -276,8 +276,8 @@ func runClient(t *testing.T, s clientSpec) {
 	}
 	r.Paths["client_binary"] = binary
 	prompts := map[string]string{
-		"A": "Use the telara-memory MCP server. Call telara_task_create exactly once with goal " + n + ". After success, write this synthetic capture canary as plain response text: CAPTURE_CANARY " + n + " " + canary + ". Then end the session. Do not use any other tools or read files.",
-		"B": "This is a fresh session. Use the telara-memory MCP server to call telara_task_list with query " + n + " and mode detail. Print the returned task goal. Do not create a task, use shell tools or read files.",
+		"A": "Use the hilo MCP server. Call telara_task_create exactly once with goal " + n + ". After success, write this synthetic capture canary as plain response text: CAPTURE_CANARY " + n + " " + canary + ". Then end the session. Do not use any other tools or read files.",
+		"B": "This is a fresh session. Use the hilo MCP server to call telara_task_list with query " + n + " and mode detail. Print the returned task goal. Do not create a task, use shell tools or read files.",
 	}
 	var failures []string
 	for _, phaseName := range []string{"A", "B"} {
@@ -364,7 +364,7 @@ func mergeReport(cfg installedConfig, r clients.Report) error {
 		// these two local task tools are needed by this disposable round trip.
 		// The vendor merges this profile with its defaults; allowlist mode stays
 		// enabled and no wildcard, shell or filesystem permission is added.
-		return privateWrite(filepath.Join(cfg.ClientConfig, "cli-config.json"), []byte(`{"approvalMode":"allowlist","permissions":{"allow":["Mcp(telara-memory:telara_task_create)","Mcp(telara-memory:telara_task_list)"],"deny":[]}}`))
+		return privateWrite(filepath.Join(cfg.ClientConfig, "cli-config.json"), []byte(`{"approvalMode":"allowlist","permissions":{"allow":["Mcp(hilo:telara_task_create)","Mcp(hilo:telara_task_list)"],"deny":[]}}`))
 	}
 	if cfg.Client == "codex" {
 		// Existing vendor setting forces file custody; never ask login keyring.

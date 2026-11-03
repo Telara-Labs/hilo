@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosuretext"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosuretext"
+	"github.com/Telara-Labs/hilo/contract/record"
 	"strings"
 	"testing"
 )

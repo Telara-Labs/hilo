@@ -6,14 +6,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/Telara-Labs/telara-memory/contract/policy"
+	"github.com/Telara-Labs/hilo/contract/policy"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 	"modernc.org/sqlite"
 )
 

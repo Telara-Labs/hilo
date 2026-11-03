@@ -2,7 +2,7 @@
 
 package store
 
-import "github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+import "github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 
 // Directory creation uses a protected inheritable owner-only DACL, so native
 // SQLite main/WAL/SHM files and atomic profile writes inherit private access.

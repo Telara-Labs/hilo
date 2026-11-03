@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 )
 
 func interruptedPublication(t *testing.T, stage int) (upgradePublication, context.Context, string) {

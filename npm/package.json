@@ -7,8 +7,7 @@
     "node": ">=22"
   },
   "bin": {
-    "hilo": "bin/hilo.cjs",
-    "telara-memory": "bin/hilo.cjs"
+    "hilo": "bin/hilo.cjs"
   },
   "files": [
     "bin/hilo.cjs",

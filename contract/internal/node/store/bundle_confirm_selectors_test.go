@@ -6,7 +6,7 @@ import (
 	"crypto/ed25519"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // TestBundleConfirmedSelectorControlsRestore carries a valid same-genesis

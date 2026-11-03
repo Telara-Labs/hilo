@@ -20,7 +20,8 @@ const secretRoot dbus.ObjectPath = "/org/freedesktop/secrets"
 
 // collectionAlias is preferred. Services that refuse non-default aliases, such
 // as GNOME Keyring, select the default collection instead.
-const collectionAlias = "telara-memory"
+const collectionAlias = "hilo"
+const legacyCollectionAlias = "telara-memory"
 const defaultAlias = "default"
 
 type linuxSession struct {
@@ -113,7 +114,7 @@ func (s *linuxSession) selectCollection(create bool) error {
 		return ErrUnavailable
 	}
 	var prompt dbus.ObjectPath
-	props := map[string]dbus.Variant{"org.freedesktop.Secret.Collection.Label": dbus.MakeVariant("Telara Memory")}
+	props := map[string]dbus.Variant{"org.freedesktop.Secret.Collection.Label": dbus.MakeVariant("Hilo")}
 	e := s.call(secretRoot, "Service.CreateCollection", props, collectionAlias).Store(&path, &prompt)
 	if e == nil && prompt == "/" {
 		s.collection, s.alias = path, collectionAlias
@@ -308,7 +309,7 @@ func (v *Vault) put(ctx context.Context, h string, b []byte) error {
 	if e = v.saveLinuxEntry(m, slot); e != nil {
 		return e
 	}
-	props := map[string]dbus.Variant{"org.freedesktop.Secret.Item.Label": dbus.MakeVariant("Telara Memory runtime authority"), "org.freedesktop.Secret.Item.Attributes": dbus.MakeVariant(m.attributes())}
+	props := map[string]dbus.Variant{"org.freedesktop.Secret.Item.Label": dbus.MakeVariant("Hilo runtime authority"), "org.freedesktop.Secret.Item.Attributes": dbus.MakeVariant(m.attributes())}
 	var item, prompt dbus.ObjectPath
 	if s.call(s.collection, "Collection.CreateItem", props, wireSecret{s.session, []byte{}, []byte{}, "application/octet-stream"}, false).Store(&item, &prompt) != nil || prompt != "/" || !item.IsValid() || item == "/" {
 		return ErrUnavailable

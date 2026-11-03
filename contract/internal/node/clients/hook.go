@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/Telara-Labs/TAP-Runtime/discover/redact"
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
-	"github.com/Telara-Labs/telara-memory/contract/transport"
+	"github.com/Telara-Labs/hilo/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/transport"
 )
 
 const maxHookInput = 1 << 20

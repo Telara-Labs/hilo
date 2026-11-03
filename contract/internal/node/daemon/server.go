@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcpcatalog"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/mcpcatalog"
 )
 
 var Version = "dev"
@@ -133,14 +133,14 @@ func Setup(r Request) (Response, bool) {
 			out.Error = &RPCError{Code: -32602, Message: "invalid_arguments"}
 			return out, true
 		}
-		out.Result = map[string]any{"protocolVersion": legacyProtocolVersion(p.ProtocolVersion), "capabilities": capabilities(), "serverInfo": map[string]any{"name": "telara-memory", "version": Version}, "instructions": instructions}
+		out.Result = map[string]any{"protocolVersion": legacyProtocolVersion(p.ProtocolVersion), "capabilities": capabilities(), "serverInfo": map[string]any{"name": "hilo", "version": Version}, "instructions": instructions}
 		return out, true
 	case "server/discover":
 		if string(params) != "{}" {
 			out.Error = &RPCError{Code: -32602, Message: "invalid_arguments"}
 			return out, true
 		}
-		out.Result = map[string]any{"supportedVersions": SupportedProtocolVersions(), "capabilities": capabilities(), "_meta": map[string]any{"io.modelcontextprotocol/serverInfo": map[string]string{"name": "telara-memory", "version": Version}}, "instructions": instructions, "ttlMs": 3600000, "cacheScope": "public"}
+		out.Result = map[string]any{"supportedVersions": SupportedProtocolVersions(), "capabilities": capabilities(), "_meta": map[string]any{"io.modelcontextprotocol/serverInfo": map[string]string{"name": "hilo", "version": Version}}, "instructions": instructions, "ttlMs": 3600000, "cacheScope": "public"}
 		return out, true
 	case "tools/list":
 		if string(params) != "{}" {

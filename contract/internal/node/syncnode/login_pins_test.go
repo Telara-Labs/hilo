@@ -11,8 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/internal/node/custodyguard"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 func attackerServiceKey(t *testing.T) (ServiceKey, ed25519.PrivateKey) {
@@ -139,22 +140,17 @@ func TestEnrollmentServiceKeysAreNeverReceiptAuthority(t *testing.T) {
 // interleave runs first; when it reaches stage it starts second and lets first
 // continue as soon as second either finishes or is waiting on the profile
 // lock. It returns both results.
-func interleave(t *testing.T, stage string, first, second func() error) (error, error) {
+func interleave(t *testing.T, stage string, first func() error, second func(context.Context) error) (error, error) {
 	t.Helper()
 	waiting := make(chan struct{}, 1)
 	done := make(chan error, 1)
 	var fired atomic.Bool
-	lockContended = func() {
-		select {
-		case waiting <- struct{}{}:
-		default:
-		}
-	}
+	secondCtx := custodyguard.ObserveContention(context.Background(), waiting)
 	crashPoint = func(at string) {
 		if at != stage || !fired.CompareAndSwap(false, true) {
 			return
 		}
-		go func() { done <- second() }()
+		go func() { done <- second(secondCtx) }()
 		select {
 		case <-waiting:
 		case err := <-done:
@@ -163,7 +159,6 @@ func interleave(t *testing.T, stage string, first, second func() error) (error, 
 	}
 	defer func() {
 		crashPoint = func(string) {}
-		lockContended = func() {}
 	}()
 	errFirst := first()
 	if !fired.Load() {
@@ -218,7 +213,7 @@ func TestConcurrentEnrollmentsLeaveNoOrphanedCredential(t *testing.T) {
 			}
 			e1, e2 := e, e
 			e1.RefreshToken, e2.RefreshToken = e.RefreshToken+"_one", e.RefreshToken+"_two"
-			err1, err2 := interleave(t, stage, func() error { return Enroll(ctx, w.dir, w.vault, e1) }, func() error { return Enroll(ctx, w.dir, w.vault, e2) })
+			err1, err2 := interleave(t, stage, func() error { return Enroll(ctx, w.dir, w.vault, e1) }, func(ctx context.Context) error { return Enroll(ctx, w.dir, w.vault, e2) })
 			if err1 != nil || err2 != nil {
 				t.Fatalf("enrollments: %v, %v", err1, err2)
 			}
@@ -255,7 +250,7 @@ func TestLogoutInterleavedWithReplacementCompletes(t *testing.T) {
 				t.Fatal(err)
 			}
 			e.RefreshToken += "_replacement"
-			errEnroll, errLogout := interleave(t, stage, func() error { return Enroll(ctx, w.dir, w.vault, e) }, func() error {
+			errEnroll, errLogout := interleave(t, stage, func() error { return Enroll(ctx, w.dir, w.vault, e) }, func(ctx context.Context) error {
 				_, err := LogoutDetailed(ctx, w.dir, w.vault)
 				return err
 			})

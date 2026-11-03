@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/transport"
+	"github.com/Telara-Labs/hilo/contract/transport"
 )
 
 var fuzzClients = []Client{Claude, Codex, Cursor, Pi}

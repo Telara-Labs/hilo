@@ -7,8 +7,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 	"io"
 	"os"
 	"os/exec"
@@ -32,7 +32,7 @@ func buildBinary(t *testing.T, name, path string) string {
 func TestBuiltProcessShimDaemonMCP(t *testing.T) {
 	// Actual shipped CLI shim and actual daemon in a separately built driver.
 	// Only the explicitly authorized store/credential boundary is a fake.
-	binary := buildBinary(t, "telara-memory", "../cmd/telara-memory")
+	binary := buildBinary(t, "telara-memory", "../cmd/hilo")
 	driver := buildBinary(t, "mcp-fixture-daemon", "./testdata/process")
 	base := t.TempDir()
 	if e := os.Chmod(base, 0700); e != nil {

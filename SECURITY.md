@@ -1,14 +1,17 @@
 # Security
 
-telara-memory stores records of your agent sessions on your machine, signs
+Hilo stores records of your agent sessions on your machine, signs
 them, and can erase them. Its canonical encoding, record signatures, key
 enrollment, erasure rules and policy checks are security boundaries.
 
 ## Reporting a vulnerability
 
-Email security@telara.dev. Do not open a public issue. Include the version
-or commit you ran, what you did, what happened, and what you expected to be
-refused. We acknowledge reports within three business days.
+Report privately to contact@telara.dev and identify Hilo in the subject.
+Do not open a public issue. Include the version or commit you ran, what you
+did, what happened, and what you expected to be refused.
+
+Luis Alcaraz owns vulnerability triage. We acknowledge reports within three
+business days.
 
 ## In scope
 

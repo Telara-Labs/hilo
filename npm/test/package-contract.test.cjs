@@ -31,5 +31,5 @@ test('private npm package has no lifecycle scripts and stages only reviewed file
 test('README places authenticated prefetch on explicit command invocation', () => {
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
   assert.match(readme, /does not run lifecycle scripts or download a native executable/i);
-  assert.match(readme, /first explicit invocation of either command, the launcher authenticates and prefetches/i);
+  assert.match(readme, /first explicit invocation of `hilo`, the launcher authenticates and prefetches/i);
 });

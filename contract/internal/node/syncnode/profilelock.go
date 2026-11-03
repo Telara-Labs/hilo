@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/custodyguard"
+	"github.com/Telara-Labs/hilo/contract/internal/node/custodyguard"
 )
 
 // profileLockName is the owner-only lock file beside the profile. It holds no

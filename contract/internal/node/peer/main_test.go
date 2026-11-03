@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install/installtest"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install/installtest"
 )
 
 // Install fixtures live under the temporary directory, so it must be a root

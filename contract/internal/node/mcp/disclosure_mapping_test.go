@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosuretext"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosuretext"
+	"github.com/Telara-Labs/hilo/contract/internal/node/localpolicy"
 )
 
 func normalizedMapping(t *testing.T, tool, raw string) (disclosuretext.NormalizedCommand, error) {

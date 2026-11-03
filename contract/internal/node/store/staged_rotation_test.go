@@ -6,8 +6,8 @@ import (
 	"crypto/ed25519"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 // rotation builds a device_rotate of previous to next, signed by both and

@@ -15,13 +15,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/bundle"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/custodyguard"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/syncnode"
+	"github.com/Telara-Labs/hilo/contract/internal/node/bundle"
+	"github.com/Telara-Labs/hilo/contract/internal/node/custodyguard"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/internal/node/syncnode"
 )
 
 type profileTransfer struct {
@@ -102,7 +102,7 @@ func profilePurpose(p string) bool {
 func cleanupPurpose(p string) bool { return strings.HasSuffix(p, "-retired") }
 
 func (m profileHandoff) validate() error {
-	if m.Version != 2 || !filepath.IsAbs(m.Source.DataDir) || filepath.Clean(m.Source.DataDir) != m.Source.DataDir || !filepath.IsAbs(m.Source.Dir) || filepath.Clean(m.Source.Dir) != m.Source.Dir || !digestValid(m.Target) || !digestValid(m.Generation) || !digestValid(m.Source.SHA256) || m.Source.Executable != handoffTarget(m.Source, m.Source.SHA256) || len(m.Entries) == 0 || len(m.Entries) > 64 || (m.Phase != "preparing" && m.Phase != "ready" && m.Phase != "retiring") {
+	if m.Version != 2 || !filepath.IsAbs(m.Source.DataDir) || filepath.Clean(m.Source.DataDir) != m.Source.DataDir || !filepath.IsAbs(m.Source.Dir) || filepath.Clean(m.Source.Dir) != m.Source.Dir || !digestValid(m.Target) || !digestValid(m.Generation) || !digestValid(m.Source.SHA256) || !install.ValidExecutablePath(m.Source) || len(m.Entries) == 0 || len(m.Entries) > 64 || (m.Phase != "preparing" && m.Phase != "ready" && m.Phase != "retiring") {
 		return ErrUnavailable
 	}
 	seen := map[string]bool{}
@@ -338,7 +338,7 @@ func (v *Vault) copyProfileEntry(ctx context.Context, m *profileHandoff, i int) 
 // refuses all cooperating credential writers after admission is released, until
 // publication recovery has reconciled every target and old namespace.
 func (v *Vault) PrepareUpgrade(ctx context.Context, source install.Record, target string) error {
-	if ctx == nil || v == nil {
+	if ctx == nil || v == nil || !digestValid(target) || !install.ValidExecutablePath(source) {
 		return ErrInvalid
 	}
 	self, err := os.Executable()

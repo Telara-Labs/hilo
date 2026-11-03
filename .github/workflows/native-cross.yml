@@ -30,20 +30,20 @@ jobs:
         run: |
           test "$(go version)" = "go version go1.26.1 linux/amd64"
           go test -mod=readonly -p 2 -trimpath -buildvcs=false -ldflags=-buildid= -tags e2e -c -o "$GITHUB_WORKSPACE/clients-darwin-arm64.test" ./e2e/clients
-          go build -mod=readonly -p 2 -trimpath -buildvcs=false -ldflags=-buildid= -o "$GITHUB_WORKSPACE/telara-memory-darwin-arm64" ./cmd/telara-memory
+          go build -mod=readonly -p 2 -trimpath -buildvcs=false -ldflags=-buildid= -o "$GITHUB_WORKSPACE/hilo-darwin-arm64" ./cmd/hilo
       - name: source and artifact receipts
         run: |
           git rev-parse HEAD > SOURCE_COMMIT
           git rev-parse HEAD:contract > CONTRACT_TREE
           git status --porcelain --untracked-files=all -- contract > SOURCE_STATUS
           test ! -s SOURCE_STATUS
-          sha256sum clients-darwin-arm64.test telara-memory-darwin-arm64 > SHA256SUMS
+          sha256sum clients-darwin-arm64.test hilo-darwin-arm64 > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: native-cross-darwin-arm64
           path: |
             clients-darwin-arm64.test
-            telara-memory-darwin-arm64
+            hilo-darwin-arm64
             SOURCE_COMMIT
             CONTRACT_TREE
             SOURCE_STATUS

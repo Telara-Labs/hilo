@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/quarantinekeys"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/quarantinekeys"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // Quarantined hosted data is a managed copy: v1 imports none of it, so it is

@@ -6,7 +6,7 @@
 // Pi's documented extensions directory is a separate, node-owned surface. Its
 // extension registers the stdio server in memory, without changing mcp.json.
 // The extension invokes the same bounded identity-only hook as other clients.
-// Uninstall retains a hidden .telara-memory-remove-* recovery inode in the
+// Uninstall retains a hidden .hilo-remove-* recovery inode in the
 // extensions directory, without a JavaScript suffix. Existing open descriptors
 // may still write to it; it must never be pruned automatically. This is source
 // code/installation metadata only, never captured transcript or hook content.

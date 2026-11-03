@@ -3,8 +3,8 @@ package capture
 import (
 	"context"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	"github.com/Telara-Labs/telara-memory/contract/transport"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/transport"
 )
 
 // GapSignalStore acknowledges a hint whose capture was refused for a reason a

@@ -5,11 +5,11 @@ package disclosure
 import (
 	"context"
 	"crypto/ed25519"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
 	"sync"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosuretext"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosuretext"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
 )
 
 type Config = store.DisclosureConfig

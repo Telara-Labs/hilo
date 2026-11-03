@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	tapredact "github.com/Telara-Labs/TAP-Runtime/discover/redact"
-	contract "github.com/Telara-Labs/telara-memory/contract"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	contract "github.com/Telara-Labs/hilo/contract"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 func TestImmutableMeasuredPolicy(t *testing.T) {

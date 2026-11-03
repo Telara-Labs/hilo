@@ -15,7 +15,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/releaseauth"
+	"github.com/Telara-Labs/hilo/contract/releaseauth"
 )
 
 func privateDir(t *testing.T) string {
@@ -85,7 +85,7 @@ func packageFixture(t *testing.T) []byte {
 	return canonical(t, map[string]any{
 		"name": "@telaralabs/hilo", "private": true, "description": "TEST-ONLY private staging template", "license": "Apache-2.0",
 		"engines": map[string]string{"node": ">=22"},
-		"bin":     map[string]string{"hilo": "bin/hilo.cjs", "telara-memory": "bin/hilo.cjs"},
+		"bin":     map[string]string{"hilo": "bin/hilo.cjs"},
 		"files":   []string{"bin/hilo.cjs", "README.md", "LICENSE", "lib/release-auth.cjs", "lib/runner.cjs", "release/BUILD.json", "release/SHA256SUMS", "release/RELEASE.sig", "release/release-key.pub", "release-spec.json"},
 	})
 }
@@ -381,7 +381,7 @@ func TestNPMStageFilesystemPublishOnlyNotFullReleaseAcceptance(t *testing.T) {
 		}
 	}
 	var spec releaseSpec
-	if json.Unmarshal(input.Files["release-spec.json"], &spec) != nil || spec.Repository != "Telara-Labs/telara-memory" || !bytes.Equal(input.Files["release-spec.json"], []byte("{\n  \"version\": \"1.2.3\",\n  \"family\": \"hilo\",\n  \"tag\": \"v1.2.3\",\n  \"repository\": \"Telara-Labs/telara-memory\"\n}\n")) {
+	if json.Unmarshal(input.Files["release-spec.json"], &spec) != nil || spec.Repository != "Telara-Labs/hilo" || !bytes.Equal(input.Files["release-spec.json"], []byte("{\n  \"version\": \"1.2.3\",\n  \"family\": \"hilo\",\n  \"tag\": \"v1.2.3\",\n  \"repository\": \"Telara-Labs/hilo\"\n}\n")) {
 		t.Fatal("runner spec byte contract drift")
 	}
 }

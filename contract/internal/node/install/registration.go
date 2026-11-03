@@ -35,7 +35,7 @@ func registered(ctx context.Context, r Record) error {
 		}
 		e = verifyLaunchRegistration(b, r)
 	case "linux":
-		b, e = nativeCommand(ctx, r.Platform, "--user", "show", service(r), "--property=LoadState,FragmentPath,DropInPaths,User,ExecCondition,ExecStartPre,ExecStartPost,ExecReload,ExecStop,ExecStopPost,Environment,EnvironmentFiles,RootDirectory,RootImage")
+		b, e = nativeCommand(ctx, r.Platform, "--user", "show", service(r), "--property=LoadState,FragmentPath,DropInPaths,User,Environment,RootDirectory,RootImage")
 		if e != nil {
 			return ErrUnavailable
 		}
@@ -43,6 +43,9 @@ func registered(ctx context.Context, r Record) error {
 			return ErrUnverified
 		}
 		e = verifySystemdRegistration(b, r)
+		if e == nil {
+			e = verifySystemdEmptyProperties(ctx, r)
+		}
 		if e == nil {
 			b, e = nativeCommand(ctx, "linux-bus", "--user", "--json=short", "get-property", "org.freedesktop.systemd1", systemdObject(r), "org.freedesktop.systemd1.Service", "ExecStart")
 			if e != nil {
@@ -170,7 +173,7 @@ func verifySystemdRegistration(b []byte, r Record) error {
 			return ErrUnverified
 		}
 	}
-	for _, key := range []string{"ExecCondition", "ExecStartPre", "ExecStartPost", "ExecReload", "ExecStop", "ExecStopPost", "Environment", "EnvironmentFiles", "RootDirectory", "RootImage"} {
+	for _, key := range []string{"Environment", "RootDirectory", "RootImage"} {
 		value, ok := m[key]
 		if !ok || value != "" {
 			return ErrUnverified
@@ -182,6 +185,65 @@ func verifySystemdRegistration(b []byte, r Record) error {
 
 	return nil
 }
+
+// systemctl show omits empty command arrays and EnvironmentFiles, even with
+// --all. Require successful, correctly typed native property reads instead of
+// interpreting omitted text as evidence that no auxiliary actions exist.
+func verifySystemdEmptyProperties(ctx context.Context, r Record) error {
+	for _, property := range []string{"ExecCondition", "ExecStartPre", "ExecStartPost", "ExecReload", "ExecStop", "ExecStopPost", "EnvironmentFiles"} {
+		b, e := nativeCommand(ctx, "linux-bus", "--user", "--json=short", "get-property", "org.freedesktop.systemd1", systemdObject(r), "org.freedesktop.systemd1.Service", property)
+		if e != nil {
+			return ErrUnavailable
+		}
+		kind := "a(sasbttttuii)"
+		if property == "EnvironmentFiles" {
+			kind = "a(sb)"
+		}
+		if e = verifySystemdEmptyProperty(b, kind); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+func verifySystemdEmptyProperty(b []byte, kind string) error {
+	if len(b) >= 65536 {
+		return ErrUnverified
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	start, e := d.Token()
+	if e != nil || start != json.Delim('{') {
+		return ErrUnverified
+	}
+	fields := map[string]json.RawMessage{}
+	for d.More() {
+		token, e := d.Token()
+		key, ok := token.(string)
+		if e != nil || !ok || (key != "type" && key != "data") {
+			return ErrUnverified
+		}
+		if _, exists := fields[key]; exists {
+			return ErrUnverified
+		}
+		var value json.RawMessage
+		if d.Decode(&value) != nil {
+			return ErrUnverified
+		}
+		fields[key] = value
+	}
+	end, e := d.Token()
+	var trailing any
+	if e != nil || end != json.Delim('}') || len(fields) != 2 || d.Decode(&trailing) != io.EOF {
+		return ErrUnverified
+	}
+	var actual string
+	var data []json.RawMessage
+	if json.Unmarshal(fields["type"], &actual) != nil || actual != kind || json.Unmarshal(fields["data"], &data) != nil || data == nil || len(data) != 0 {
+		return ErrUnverified
+	}
+	return nil
+}
+
 func systemdObject(r Record) string {
 	var b strings.Builder
 	for _, c := range []byte(service(r)) {

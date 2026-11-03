@@ -7,7 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
+	"github.com/Telara-Labs/hilo/contract/internal/node/localpolicy"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 )

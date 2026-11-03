@@ -12,7 +12,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/custodyguard"
+	"github.com/Telara-Labs/hilo/contract/internal/node/custodyguard"
 )
 
 // These filesystem cases isolate journal and binding rules. The unchanged real

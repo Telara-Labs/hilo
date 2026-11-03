@@ -8,7 +8,7 @@ const { createHash, randomBytes } = require('node:crypto');
 const auth = require('./release-auth.cjs');
 
 const PACKAGE_ROOT = path.resolve(__dirname, '..');
-const REPOSITORY = 'Telara-Labs/telara-memory';
+const REPOSITORY = 'Telara-Labs/hilo';
 const PUBLIC_KEY_SHA256 = '8f56b2313dfb0ce37156cec349393b230d4055bc01501fb2adfa1f3cd6c5f492';
 const MAX_ARTIFACT = 512 * 1024 * 1024;
 const MAX_REDIRECTS = 3;

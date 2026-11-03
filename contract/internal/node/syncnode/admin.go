@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	nodesync "github.com/Telara-Labs/telara-memory/contract/internal/node/sync"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	nodesync "github.com/Telara-Labs/hilo/contract/internal/node/sync"
 )
 
 // Enrollment is the hosted enrollment result for this device's DPoP key. It is

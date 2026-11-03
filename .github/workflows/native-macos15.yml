@@ -29,12 +29,12 @@ jobs:
           go test -mod=readonly -p 2 -tags e2e -v -count=1 -run '^TestHarness(AuthIsolation|EnvironmentAndArguments|PrecompiledNativeHelper|ExplicitCursorAPIKeyScope|AdapterMergeAndHookSpool)$' ./e2e/clients
           go test -mod=readonly -p 2 -count=1 -run '^TestPiCompositeCallIdentity$' ./capture
           go test -mod=readonly -p 2 -tags e2e -c -o "$GITHUB_WORKSPACE/clients.test" ./e2e/clients
-          go build -mod=readonly -p 2 -trimpath -o "$GITHUB_WORKSPACE/telara-memory-darwin-arm64" ./cmd/telara-memory
+          go build -mod=readonly -p 2 -trimpath -o "$GITHUB_WORKSPACE/hilo-darwin-arm64" ./cmd/hilo
       - name: compile exact native utility and record source
         run: |
           ./clients.test export-native-helper-source "$PWD/native-helper.c"
           /usr/bin/clang -Wno-deprecated-declarations native-helper.c -framework Security -framework CoreFoundation -o keychain-helper
-          shasum -a 256 clients.test telara-memory-darwin-arm64 keychain-helper native-helper.c > SHA256SUMS
+          shasum -a 256 clients.test hilo-darwin-arm64 keychain-helper native-helper.c > SHA256SUMS
           git rev-parse HEAD > SOURCE_COMMIT
           git rev-parse HEAD:contract > CONTRACT_TREE
           git status --porcelain --untracked-files=all -- contract > SOURCE_STATUS
@@ -44,7 +44,7 @@ jobs:
           name: native-macos15-driver
           path: |
             clients.test
-            telara-memory-darwin-arm64
+            hilo-darwin-arm64
             keychain-helper
             native-helper.c
             SHA256SUMS

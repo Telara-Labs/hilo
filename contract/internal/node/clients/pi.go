@@ -11,8 +11,10 @@ import (
 	"path/filepath"
 )
 
-const extensionName = "telara-memory.js"
-const receiptName = ".telara-memory.receipt.json"
+const extensionName = "hilo.js"
+const receiptName = ".hilo.receipt.json"
+const legacyExtensionName = "telara-memory.js"
+const legacyReceiptName = ".telara-memory.receipt.json"
 
 // Native JS, no npm dependency and no shell. Accessors are documented Pi APIs.
 // Event bodies never enter the child input. The child owns redaction/spooling.
@@ -23,7 +25,7 @@ func piExtension(o Options) string {
 import { spawn } from "node:child_process";
 export default function (pi) {
   if (typeof pi.registerMcpServer === "function") {
-    pi.registerMcpServer("telara-memory", ` + string(mcp) + `);
+    pi.registerMcpServer("hilo", ` + string(mcp) + `);
   }
   for (const event of ["session_start", "agent_end", "session_shutdown"]) {
     pi.on(event, async (_event, ctx) => {
@@ -65,7 +67,11 @@ type piReceipt struct {
 func digest(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
 func readReceipt(d *directory) (*piReceipt, error) {
-	b, e := d.read(receiptName, 1024)
+	return readNamedReceipt(d, receiptName)
+}
+
+func readNamedReceipt(d *directory, name string) (*piReceipt, error) {
+	b, e := d.read(name, 1024)
 	if e != nil {
 		return nil, e
 	}
@@ -95,6 +101,9 @@ func installPi(ctx context.Context, o Options, l Location) error {
 		return e
 	}
 	defer unlock()
+	if e = migrateLegacyPi(ctx, d); e != nil {
+		return e
+	}
 	want := []byte(piExtension(o))
 	r, re := readReceipt(d)
 	prior, pe := d.read(extensionName, 1<<20)
@@ -133,13 +142,61 @@ func installPi(ctx context.Context, o Options, l Location) error {
 	return publishOwned(d, extensionName, want)
 }
 
+// migrateLegacyPi runs under the same pinned-directory install lock. It parks
+// only an owner-receipted, unchanged legacy extension before publishing Hilo,
+// so the two event adapters are never loaded together. A crash before the new
+// extension publication is retryable; the parked inode is retained for recovery.
+func migrateLegacyPi(ctx context.Context, d *directory) error {
+	r, re := readNamedReceipt(d, legacyReceiptName)
+	old, oe := d.read(legacyExtensionName, 1<<20)
+	if errors.Is(re, os.ErrNotExist) {
+		if errors.Is(oe, os.ErrNotExist) {
+			return nil
+		}
+		if oe != nil {
+			return oe
+		}
+		return ErrConflict
+	}
+	if re != nil {
+		return re
+	}
+	if oe != nil && !errors.Is(oe, os.ErrNotExist) {
+		return oe
+	}
+	if oe == nil && digest(old) != r.Digest {
+		return ErrConflict
+	}
+	// No implicit choice between two registered generations, even if owned.
+	for _, name := range []string{extensionName, receiptName} {
+		if _, err := d.read(name, 1<<20); !errors.Is(err, os.ErrNotExist) {
+			if err != nil {
+				return err
+			}
+			return ErrConflict
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if oe == nil {
+		if err := removeOwned(d, legacyExtensionName, r.Digest); err != nil {
+			return err
+		}
+	}
+	if err := d.remove(legacyReceiptName); err != nil {
+		return err
+	}
+	return d.sync()
+}
+
 func publishOwned(d *directory, name string, b []byte) error {
 	// Separate tmp name then no-replace rename. No incomplete extension loads.
 	tmp, e := ulid()
 	if e != nil {
 		return e
 	}
-	tmp = ".telara-memory-" + tmp
+	tmp = ".hilo-" + tmp
 	if e = d.create(tmp, b); e != nil {
 		return e
 	}
@@ -171,6 +228,11 @@ func uninstallPi(ctx context.Context, o Options, l Location) error {
 		return e
 	}
 	defer unlock()
+	// Hilo uninstall must also remove an unchanged, owner-receipted legacy
+	// adapter. Never report removal while that adapter remains registered.
+	if e = migrateLegacyPi(ctx, d); e != nil {
+		return e
+	}
 	r, e := readReceipt(d)
 	if errors.Is(e, os.ErrNotExist) {
 		_, e = d.read(extensionName, 1<<20)
@@ -213,6 +275,27 @@ func piStatus(o Options, l Location, r Report) (Report, error) {
 	defer d.close()
 	receipt, e := readReceipt(d)
 	if errors.Is(e, os.ErrNotExist) {
+		legacy, le := readNamedReceipt(d, legacyReceiptName)
+		if errors.Is(le, os.ErrNotExist) {
+			return r, nil
+		}
+		if le != nil {
+			return r, le
+		}
+		b, be := d.read(legacyExtensionName, 1<<20)
+		if errors.Is(be, os.ErrNotExist) {
+			r.Gaps = append(r.Gaps, "legacy_extension_migration_interrupted")
+			return r, nil
+		}
+		if be != nil {
+			return r, be
+		}
+		if digest(b) != legacy.Digest {
+			return r, ErrConflict
+		}
+		r.MCP = "legacy_extension_installed_migration_required"
+		r.Capture = "legacy_extension_dispatch_unverified"
+		r.Gaps = append(r.Gaps, "legacy_extension_migration_required")
 		return r, nil
 	}
 	if e != nil {
@@ -244,7 +327,7 @@ func removeOwned(d *directory, name, want string) error {
 	if e != nil {
 		return e
 	}
-	parked := ".telara-memory-remove-" + label
+	parked := ".hilo-remove-" + label
 	if e = renameOwned(d, name, parked); e != nil {
 		return e
 	}

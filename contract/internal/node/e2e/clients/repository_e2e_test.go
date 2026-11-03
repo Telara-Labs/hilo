@@ -20,13 +20,13 @@ import (
 	"time"
 
 	"github.com/Telara-Labs/TAP-Runtime/discover/redact"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/clients"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/internal/node/clients"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 var nativeRepositoryCodex = flag.Bool("e2e-repository-codex", false, "Explicitly exercise owner repository enrollment and resume the same actual Codex session")
@@ -317,10 +317,10 @@ func TestRepositoryInstalledCodexSameSession(t *testing.T) {
 		t.Fatal("native context enrollment failed")
 	}
 	// Vendor CLI performs its own config editing; no handwritten TOML merge.
-	if _, err = run(ctx, project, clientEnv, nil, binary, "mcp", "remove", "telara-memory"); err != nil {
+	if _, err = run(ctx, project, clientEnv, nil, binary, "mcp", "remove", "hilo"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = run(ctx, project, clientEnv, nil, binary, "mcp", "add", "telara-memory", "--", installed.record.Executable, "shim", "--data-dir", cfg.Data, "--repository-context", enrolled.ID); err != nil {
+	if _, err = run(ctx, project, clientEnv, nil, binary, "mcp", "add", "hilo", "--", installed.record.Executable, "shim", "--data-dir", cfg.Data, "--repository-context", enrolled.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err = setPhase(cfg, "B"); err != nil {
@@ -330,7 +330,7 @@ func TestRepositoryInstalledCodexSameSession(t *testing.T) {
 	if phaseBNonce == n {
 		t.Fatal("phase B nonce must be new")
 	}
-	promptB := "This is the same resumed session. Use telara-memory MCP and call telara_task_create exactly once with goal " + n + ". Then reply CAPTURE_CANARY " + phaseBNonce + " " + canary + " and end this turn. Do not read files or use other tools."
+	promptB := "This is the same resumed session. Use hilo MCP and call telara_task_create exactly once with goal " + n + ". Then reply CAPTURE_CANARY " + phaseBNonce + " " + canary + " and end this turn. Do not read files or use other tools."
 	if _, err = launch(repositoryResumeArgs(s, native, promptB)); err != nil {
 		recordFailureCodes(t, &r, err)
 		t.Fatal("actual same-session resumption", err)

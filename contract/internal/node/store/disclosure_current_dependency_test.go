@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/replay"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/replay"
 )
 
 func TestDisclosureCurrentDependencyRenderWorkRefusalDoesNotHoldOwner(t *testing.T) {
@@ -74,7 +74,7 @@ func currentDependencySession(t *testing.T, k *kernelWorld, native string, deps 
 func TestDisclosureCurrentDependencyNestedBindingRequiresExpansion(t *testing.T) {
 	k := newKernel(t)
 	ctx := context.Background()
-	repoA, repoB := "r1:"+strings.Repeat("a", 64), "r1:"+strings.Repeat("b", 64)
+	repoA, repoB := countAcceptanceRepoID(t, "a"), countAcceptanceRepoID(t, "b")
 	countAcceptanceTrustedRepoFixture(t, k, repoA)
 	args := map[string]any{"goal": "nestedcurrentdependencycontent"}
 	root := k.execute("nested-root", "local.create_task", args)
@@ -159,8 +159,8 @@ func TestDisclosureCurrentDependencyOutOfGrantBindingUnavailable(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			k := newKernel(t)
 			ctx := context.Background()
-			repoA := "r1:" + strings.Repeat("a", 64)
-			repoB := "r1:" + strings.Repeat("b", 64)
+			repoA := countAcceptanceRepoID(t, "a")
+			repoB := countAcceptanceRepoID(t, "b")
 			countAcceptanceTrustedRepoFixture(t, k, repoA)
 			args := map[string]any{"goal": "currentdependencyrepocontent"}
 			original := k.execute("current-dependency-create", "local.create_task", args)

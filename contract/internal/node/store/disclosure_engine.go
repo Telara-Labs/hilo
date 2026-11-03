@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosuretext"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/replay"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosuretext"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/replay"
 )
 
 func (e *DisclosureEngine) Execute(ctx context.Context, h ClientHandle, sh ScopeHandle, call CallIdentity, command TypedCommand, budget ByteBudget) (out CommittedReplyHandle, retErr error) {

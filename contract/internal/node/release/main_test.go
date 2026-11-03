@@ -18,6 +18,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Telara-Labs/hilo/contract/releaseauth"
 )
 
 var reproSource = flag.String("release-source", "", "Frozen runtime module source for real six-target, two-build reproducibility gate")
@@ -143,7 +145,7 @@ func TestWriteFamilyCreatesSeparateSixTargetSetsWithIdenticalBinaries(t *testing
 		t.Fatal(err)
 	}
 	for _, target := range targets {
-		name := familyArtifactName("telara-memory-", target)
+		name := familyArtifactName("hilo-", target)
 		path := filepath.Join(buildDir, name)
 		if err := os.WriteFile(path, []byte("one built binary "+target.OS+"/"+target.Arch), 0777); err != nil {
 			t.Fatal(err)
@@ -299,7 +301,7 @@ func TestPublishDualFamilyPreservesSeparateFinalizedDirectories(t *testing.T) {
 	}
 	makeStagedSignedFamilies(t, stage, "")
 	output := filepath.Join(root, "release")
-	if err := publishDualFamily(stage, output); err != nil {
+	if err := publishDualFamily(stage, output, "v1.2.3", syntheticFinalizedVerifier); err != nil {
 		t.Fatal(err)
 	}
 	for _, family := range []struct {
@@ -346,7 +348,7 @@ func TestFinalizeDualFamilyPublishesOnlyAfterBothFinalizersSucceed(t *testing.T)
 		}
 		calls = append(calls, filepath.Base(dir))
 		return want, nil
-	})
+	}, syntheticFinalizedVerifier)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +382,7 @@ func TestFinalizeDualFamilyDoesNotPublishWhenEitherFamilyFails(t *testing.T) {
 					return provenance{}, errors.New("fixture family verification failed")
 				}
 				return provenance{Format: 1, Source: "v1.2.3", Toolchain: releaseToolchain, Verification: "clean-tag-export-signed", Signed: true}, nil
-			})
+			}, syntheticFinalizedVerifier)
 			if err == nil || calls != failAt {
 				t.Fatalf("failAt=%d calls=%d err=%v", failAt, calls, err)
 			}
@@ -407,7 +409,7 @@ func TestFinalizeDualFamilyDoesNotPublishOnProvenanceMismatch(t *testing.T) {
 			source = "v1.2.4"
 		}
 		return provenance{Format: 1, Source: source, Toolchain: releaseToolchain, Verification: "clean-tag-export-signed", Signed: true}, nil
-	})
+	}, syntheticFinalizedVerifier)
 	if err == nil || calls != 2 {
 		t.Fatalf("calls=%d err=%v", calls, err)
 	}
@@ -453,7 +455,7 @@ func TestPublishDualFamilyRefusesConcurrentDestinationWithoutClobber(t *testing.
 					t.Skipf("symlink fixture unavailable: %v", err)
 				}
 			}
-			if err := publishDualFamily(stage, output); err == nil {
+			if err := publishDualFamily(stage, output, "v1.2.3", syntheticFinalizedVerifier); err == nil {
 				t.Fatal("published over a concurrently created destination")
 			}
 			info, err := os.Lstat(output)
@@ -495,7 +497,7 @@ func TestPublishDualFamilyDoesNotCreateOutputWhenEitherFamilyIsMissing(t *testin
 			}
 			makeStagedSignedFamilies(t, stage, missing)
 			output := filepath.Join(root, "release")
-			if err := publishDualFamily(stage, output); err == nil {
+			if err := publishDualFamily(stage, output, "v1.2.3", syntheticFinalizedVerifier); err == nil {
 				t.Fatal("published with an incomplete family set")
 			}
 			if _, err := os.Lstat(output); !os.IsNotExist(err) {
@@ -781,7 +783,7 @@ func TestReleaseSourceRootsDistinguishRepositoryAndRuntime(t *testing.T) {
 	if err := os.MkdirAll(node, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for name, data := range map[string]string{"go.mod": "module github.com/Telara-Labs/telara-memory/contract/internal/node\n", "go.sum": "existing real sums\n"} {
+	for name, data := range map[string]string{"go.mod": "module github.com/Telara-Labs/hilo/contract/internal/node\n", "go.sum": "existing real sums\n"} {
 		if err := os.WriteFile(filepath.Join(node, name), []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -790,10 +792,16 @@ func TestReleaseSourceRootsDistinguishRepositoryAndRuntime(t *testing.T) {
 	if err := copySource(node, copy); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := os.ReadFile(filepath.Join(copy, "go.mod")); err != nil || string(got) != "module github.com/Telara-Labs/telara-memory/contract/internal/node\n" {
+	if got, err := os.ReadFile(filepath.Join(copy, "go.mod")); err != nil || string(got) != "module github.com/Telara-Labs/hilo/contract/internal/node\n" {
 		t.Fatal("runtime source root was not copied directly", err)
 	}
 	if _, err := os.Stat(filepath.Join(copy, "contract")); !os.IsNotExist(err) {
 		t.Fatal("nested source root reintroduced a checkout dependency", err)
 	}
+}
+
+// Only synthetic orchestration fixtures use this package-private callback.
+// The CLI supplies releaseauth.Verify directly and accepts no trust override.
+func syntheticFinalizedVerifier(string) (releaseauth.Provenance, error) {
+	return releaseauth.Provenance{Format: 1, Source: "v1.2.3", Toolchain: releaseToolchain, Verification: "clean-tag-export-signed", Signed: true}, nil
 }

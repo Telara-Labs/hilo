@@ -6,7 +6,7 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/jcs"
 )
 
 // RPCIDKey preserves exact decimal identity without floating point.

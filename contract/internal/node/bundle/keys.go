@@ -14,10 +14,10 @@ import (
 
 	"filippo.io/age"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/custodyguard"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/store"
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/internal/node/custodyguard"
+	"github.com/Telara-Labs/hilo/contract/internal/node/store"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 // Vault is the profile's OS secret vault. Export key secrets live only here.
@@ -103,6 +103,7 @@ type Offer struct {
 	Code      string `json:"code"`
 }
 
+// Immutable v1 export-code authentication domain, preserved across the Hilo rename.
 const exportKeyCodeDomain = "telara-memory export key v1"
 
 func offerCode(o Offer) string {

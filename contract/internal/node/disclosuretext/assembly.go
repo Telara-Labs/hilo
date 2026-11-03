@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/localpolicy"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/internal/node/localpolicy"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // AssemblyPolicy keeps interval detection and redaction tied to the same policy.

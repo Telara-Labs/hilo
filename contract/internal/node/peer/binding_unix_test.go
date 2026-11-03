@@ -7,7 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
 	"golang.org/x/sys/unix"
 	"io"
 	"net"

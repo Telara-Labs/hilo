@@ -3,12 +3,12 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"github.com/Telara-Labs/telara-memory/contract/jcs"
+	"github.com/Telara-Labs/hilo/contract/jcs"
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/view"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/view"
 )
 
 func TestReductionEventEncodingSizeMatchesFixedDTO(t *testing.T) {

@@ -6,14 +6,14 @@
   "StateDir": "/Users/fixture/state",
   "Location": {
     "MCP": "/Users/fixture/.pi/agent/mcp.json",
-    "Hooks": "/Users/fixture/.pi/agent/extensions/telara-memory.js",
+    "Hooks": "/Users/fixture/.pi/agent/extensions/hilo.js",
     "Transcripts": "/Users/fixture/.pi/agent/sessions",
-    "Extension": "/Users/fixture/.pi/agent/extensions/telara-memory.js"
+    "Extension": "/Users/fixture/.pi/agent/extensions/hilo.js"
   },
   "MCPBefore": "{\r\n \"userSetting\": true, \"mcpServers\": {\"unrelated\":{\"command\":\"other\"}}\r\n}\r\n",
   "MCPAfter": "{\r\n \"userSetting\": true, \"mcpServers\": {\"unrelated\":{\"command\":\"other\"}}\r\n}\r\n",
   "HooksBefore": "{\"userSetting\":true,\"hooks\":{\"Other\":[{\"command\":\"unrelated\"}]}}\n",
   "HooksAfter": "{\"userSetting\":true,\"hooks\":{\"Other\":[{\"command\":\"unrelated\"}]}}\n",
-  "MCPSnippet": "{\n  \"mcpServers\": {\n    \"telara-memory\": {\n      \"args\": [\n        \"shim\",\n        \"--data-dir\",\n        \"/Users/fixture/state\"\n      ],\n      \"command\": \"/Users/fixture/bin/telara-memory\"\n    }\n  }\n}\n",
+  "MCPSnippet": "{\n  \"mcpServers\": {\n    \"hilo\": {\n      \"args\": [\n        \"shim\",\n        \"--data-dir\",\n        \"/Users/fixture/state\"\n      ],\n      \"command\": \"/Users/fixture/bin/telara-memory\"\n    }\n  }\n}\n",
   "HooksSnippet": "{\n  \"hooks\": {\n    \"SessionEnd\": [\n      {\n        \"hooks\": [\n          {\n            \"command\": \"'/Users/fixture/bin/telara-memory' 'hook' '--client' 'pi' '--home' '/Users/fixture' '--state-dir' '/Users/fixture/state' '--config-root' '/Users/fixture/.pi/agent'\",\n            \"timeout\": 1,\n            \"type\": \"command\"\n          }\n        ]\n      }\n    ],\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"command\": \"'/Users/fixture/bin/telara-memory' 'hook' '--client' 'pi' '--home' '/Users/fixture' '--state-dir' '/Users/fixture/state' '--config-root' '/Users/fixture/.pi/agent'\",\n            \"timeout\": 1,\n            \"type\": \"command\"\n          }\n        ]\n      }\n    ],\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"command\": \"'/Users/fixture/bin/telara-memory' 'hook' '--client' 'pi' '--home' '/Users/fixture' '--state-dir' '/Users/fixture/state' '--config-root' '/Users/fixture/.pi/agent'\",\n            \"timeout\": 1,\n            \"type\": \"command\"\n          }\n        ]\n      }\n    ],\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"command\": \"'/Users/fixture/bin/telara-memory' 'hook' '--client' 'pi' '--home' '/Users/fixture' '--state-dir' '/Users/fixture/state' '--config-root' '/Users/fixture/.pi/agent'\",\n            \"timeout\": 1,\n            \"type\": \"command\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
 }

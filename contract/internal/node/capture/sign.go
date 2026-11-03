@@ -3,8 +3,8 @@ package capture
 import (
 	"crypto/ed25519"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 // KeyID returns the public device key id of this preloaded material.

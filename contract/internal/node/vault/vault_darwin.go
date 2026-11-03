@@ -63,7 +63,7 @@ static OSStatus stableAccess(SecAccessRef *access) {
     if (!s) {
         const void *apps[] = {app};
         CFArrayRef list = CFArrayCreate(NULL, apps, 1, &kCFTypeArrayCallBacks);
-        s = SecAccessCreate(CFSTR("Telara Memory runtime authority"), list, access);
+        s = SecAccessCreate(CFSTR("Hilo runtime authority"), list, access);
         CFRelease(list);
     }
     if (app) CFRelease(app); if (text) CFRelease(text);

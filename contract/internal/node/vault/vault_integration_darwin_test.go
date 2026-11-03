@@ -23,13 +23,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/disclosure"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcp"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/peer"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/shim"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/disclosure"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/mcp"
+	"github.com/Telara-Labs/hilo/contract/internal/node/peer"
+	"github.com/Telara-Labs/hilo/contract/internal/node/shim"
 )
 
 var liveInstalled = flag.Bool("live-installed-authority", false, "Exercise an isolated native keychain and temporary real service installation")

@@ -6,8 +6,8 @@ import (
 	"crypto/ed25519"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
-	"github.com/Telara-Labs/telara-memory/contract/sig"
+	"github.com/Telara-Labs/hilo/contract/record"
+	"github.com/Telara-Labs/hilo/contract/sig"
 )
 
 // authorityError evaluates durable key authority exactly as the disclosure

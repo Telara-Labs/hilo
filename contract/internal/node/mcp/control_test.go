@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
 )
 
 func TestOwnerControlFailsClosedWithoutStore(t *testing.T) {

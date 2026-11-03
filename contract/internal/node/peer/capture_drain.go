@@ -3,7 +3,7 @@ package peer
 import (
 	"context"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/daemon"
+	"github.com/Telara-Labs/hilo/contract/internal/node/daemon"
 )
 
 // Only VerifyAndDrain invokes this after checking the installed peer image.

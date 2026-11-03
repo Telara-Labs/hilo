@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 // Only a successor at least as restrictive everywhere is not a relaxation.

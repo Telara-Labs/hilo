@@ -13,8 +13,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/install"
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/ipc"
+	"github.com/Telara-Labs/hilo/contract/internal/node/install"
+	"github.com/Telara-Labs/hilo/contract/internal/node/ipc"
 )
 
 // creatorReceipt binds one logical handle to one exact native creator. The
@@ -180,7 +180,7 @@ func (v *Vault) newCreator(ctx context.Context, handle string, secret []byte) (c
 		if err := ipc.ValidateDir(dir, true); err != nil {
 			return r, err
 		}
-		retained := filepath.Join(dir, "telara-memory")
+		retained := filepath.Join(dir, "hilo")
 		if _, err := os.Lstat(retained); os.IsNotExist(err) {
 			f, err := os.CreateTemp(dir, ".creator-image-")
 			if err != nil {

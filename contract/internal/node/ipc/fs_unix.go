@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// The short-socket fallback retains the v1 locator namespace across upgrades.
 func platformPaths(data, run string) (Paths, error) {
 	endpoint := filepath.Join(run, "node.sock")
 	if len(endpoint) > 100 {

@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Telara-Labs/telara-memory/contract/invalidate"
-	"github.com/Telara-Labs/telara-memory/contract/record"
+	"github.com/Telara-Labs/hilo/contract/invalidate"
+	"github.com/Telara-Labs/hilo/contract/record"
 )
 
 type exposureFact struct {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Telara-Labs/telara-memory/contract/internal/node/mcpcatalog"
+	"github.com/Telara-Labs/hilo/contract/internal/node/mcpcatalog"
 )
 
 func TestParse(t *testing.T) {
