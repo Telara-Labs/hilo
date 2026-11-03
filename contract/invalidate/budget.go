@@ -17,6 +17,7 @@ type evaluationBudget struct {
 	context.Context
 	work, bytes int
 	affects     []map[string]struct{}
+	roots       map[string][]string
 }
 
 func (b *evaluationBudget) Err() error {
@@ -237,6 +238,39 @@ func (m *Model) downstreamContext(ctx context.Context, it *Item, index int) bool
 		return m.downstreamByContext(it, e)
 	}
 	return ctx.Err() == nil && m.downstream(it, e)
+}
+
+// exposureRoots computes the union once per item for this evaluation. Distinct
+// exposures with the same root contribute the same dependency and cause; keep
+// their first matching root while retaining all distinct roots.
+func (m *Model) exposureRoots(ctx context.Context, it *Item) ([]string, error) {
+	b, cached := ctx.(*evaluationBudget)
+	if cached && b.roots != nil {
+		if roots, ok := b.roots[it.ID]; ok {
+			return roots, ctx.Err()
+		}
+	}
+	var roots []string
+	seen := make(map[string]bool)
+	for i, e := range m.exposures {
+		if !m.downstreamContext(ctx, it, i) {
+			if cached && (b.work > maxEvaluationWork || b.Context.Err() != nil) {
+				return nil, ctx.Err()
+			}
+			continue
+		}
+		if !seen[e.ID] {
+			if err := reserveEvaluation(ctx, 64+len(e.ID)); err != nil {
+				return nil, err
+			}
+			seen[e.ID] = true
+			roots = append(roots, e.ID)
+		}
+	}
+	if cached && b.roots != nil {
+		b.roots[it.ID] = roots
+	}
+	return roots, ctx.Err()
 }
 
 // Err reports a refused legacy result. A refusal never grants liveness or

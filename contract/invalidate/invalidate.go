@@ -313,14 +313,11 @@ func (m *Model) grantSetsContext(ctx context.Context) (map[string]map[string]rec
 				return nil, err
 			}
 			ds := m.depsOf(it)
-			for i, e := range m.exposures {
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
-				if m.downstreamContext(ctx, it, i) {
-					ds = append(ds, e.ID)
-				}
+			roots, err := m.exposureRoots(ctx, it)
+			if err != nil {
+				return nil, err
 			}
+			ds = append(ds, roots...)
 			for _, d := range ds {
 				if err := ctx.Err(); err != nil {
 					return nil, err
@@ -570,6 +567,7 @@ func (m *Model) evaluateContext(ctx context.Context) (*Eval, error) {
 		return nil, err
 	}
 	budget.affects = make([]map[string]struct{}, len(m.exposures))
+	budget.roots = make(map[string][]string, len(m.items))
 	for i, exposure := range m.exposures {
 		budget.affects[i] = make(map[string]struct{}, len(exposure.AffectsIDs))
 		for _, id := range exposure.AffectsIDs {
@@ -952,11 +950,16 @@ func (m *Model) evaluateContext(ctx context.Context) (*Eval, error) {
 				res = true
 			}
 		}
-		for i, e := range m.exposures {
+		roots, err := m.exposureRoots(ctx, it)
+		if err != nil {
+			evaluationErr = err
+			return true
+		}
+		for _, root := range roots {
 			if ctx.Err() != nil {
 				return true
 			}
-			if m.downstreamContext(ctx, it, i) && ev.Tombs[e.ID] == (Tomb{}) && visit(e.ID, path) {
+			if ev.Tombs[root] == (Tomb{}) && visit(root, path) {
 				res = true
 			}
 		}
@@ -1010,31 +1013,32 @@ func (m *Model) evaluateContext(ctx context.Context) (*Eval, error) {
 					add(token)
 				}
 			}
-			for i, e := range m.exposures {
+			roots, err := m.exposureRoots(ctx, it)
+			if err != nil {
+				return nil, err
+			}
+			for _, root := range roots {
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
-				if !m.downstreamContext(ctx, it, i) {
-					continue
-				}
-				causes, ok := exposureCauses[e.ID]
+				causes, ok := exposureCauses[root]
 				if !ok {
 					var err error
-					if causes, err = ev.causesOfContext(ctx, e.ID); err != nil {
+					if causes, err = ev.causesOfContext(ctx, root); err != nil {
 						return nil, err
 					}
 					if err := reserveEvaluation(ctx, 64+24*len(causes)); err != nil {
 						return nil, err
 					}
-					exposureCauses[e.ID] = causes
+					exposureCauses[root] = causes
 				}
 				for _, cause := range causes {
 					if err := ctx.Err(); err != nil {
 						return nil, err
 					}
-					add(e.ID + "/" + cause.Cause)
+					add(root + "/" + cause.Cause)
 				}
-				for token := range holds[e.ID] {
+				for token := range holds[root] {
 					if err := ctx.Err(); err != nil {
 						return nil, err
 					}
